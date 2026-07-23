@@ -8,12 +8,13 @@
   },
   {
     "company": "聚合站转载公司",
-    "url": "https://jobs.example-aggregator.test/1",
+    "url": "https://www.zhipin.com/job_detail/fixture.html",
     "rank": 2
   },
   {
     "company": "待复核 ATS 公司",
-    "url": "https://tenant.mokahr.example/jobs",
+    "url": "https://jobs.lever.co/review-fixture",
+    "verifiedTenant": true,
     "rank": 3
   }
 ]

@@ -1,0 +1,69 @@
+import assert from 'node:assert/strict';
+import { mkdtemp } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const root = path.resolve(fileURLToPath(new URL('../', import.meta.url)));
+const bin = path.join(root, 'bin', 'lite-job-search.mjs');
+const fixtureRoot = path.join(root, 'tests', 'fixtures', 'ai-product-manager');
+
+function run(args, env = {}) {
+  return spawnSync(process.execPath, [bin, ...args], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      PATH: process.env.PATH,
+      SystemRoot: process.env.SystemRoot,
+      TEMP: process.env.TEMP,
+      ...env,
+    },
+  });
+}
+
+test('discover requires role and market', () => {
+  const result = run(['discover', '--market', 'CN', '--json']);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /discover requires --market and --role/);
+});
+
+test('discover runs offline with planning, search and page fixtures', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-discover-cli-'));
+  const result = run([
+    'discover',
+    '--market', 'CN',
+    '--role', 'AI产品经理',
+    '--industry', 'AI,互联网',
+    '--since-days', '90',
+    '--limit', '20',
+    '--planning-fixture', path.join(fixtureRoot, 'planning.json'),
+    '--manual', path.join(fixtureRoot, 'search-results.json'),
+    '--fixture-pages', path.join(fixtureRoot, 'pages.json'),
+    '--database', path.join(directory, 'jobs.sqlite'),
+    '--json',
+  ]);
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.jobsStored, 1);
+  assert.equal(output.portalsVerified, 1);
+  assert.equal(output.reviewRequired, 1);
+  assert.equal(output.rejected, 1);
+  assert.equal(output.liveSearchExecuted, false);
+});
+
+test('discover without an LLM configuration reports not configured', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-discover-none-'));
+  const result = run([
+    'discover',
+    '--market', 'CN',
+    '--role', 'AI产品经理',
+    '--database', path.join(directory, 'jobs.sqlite'),
+    '--json',
+  ]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).status, 'NOT_CONFIGURED');
+});

@@ -34,5 +34,11 @@ export function buildDoctorReport({ config, providers, providerOrder = [] } = {}
     canRunApifyBatch: apifyConfigured,
     liveSearchExecuted: false,
     benchmarkCompleted: false,
+    llmPlanning: config.llm?.configured ? 'configured' : 'not_configured',
+    database: 'ready',
+    marketDiscoveryReady: Boolean(
+      config.llm?.configured
+      && generic.length > 0,
+    ),
   };
 }

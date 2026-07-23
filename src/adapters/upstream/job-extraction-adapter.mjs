@@ -62,15 +62,19 @@ export function createUpstreamJobExtractionAdapter({
       } else {
         const page = await fetchPage(portal.canonicalUrl);
         const finalUrl = page.finalUrl || page.url || portal.canonicalUrl;
-        const provider = await resolvePageProvider(finalUrl);
-        const parsed = provider?.parse(page.html || page.body || '', {
-          requestedUrl: portal.canonicalUrl,
-          finalUrl,
-        });
-        if (Array.isArray(parsed?.activeJobs)) rawJobs = parsed.activeJobs;
-        else if (Array.isArray(parsed?.jobs)) rawJobs = parsed.jobs;
-        else if (Array.isArray(parsed?.positions)) rawJobs = parsed.positions;
-        else if (parsed?.title) rawJobs = [parsed];
+        if (Array.isArray(page.jobs)) {
+          rawJobs = page.jobs;
+        } else {
+          const provider = await resolvePageProvider(finalUrl);
+          const parsed = provider?.parse(page.html || page.body || '', {
+            requestedUrl: portal.canonicalUrl,
+            finalUrl,
+          });
+          if (Array.isArray(parsed?.activeJobs)) rawJobs = parsed.activeJobs;
+          else if (Array.isArray(parsed?.jobs)) rawJobs = parsed.jobs;
+          else if (Array.isArray(parsed?.positions)) rawJobs = parsed.positions;
+          else if (parsed?.title) rawJobs = [parsed];
+        }
       }
 
       return Object.freeze(rawJobs

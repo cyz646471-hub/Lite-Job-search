@@ -2,7 +2,8 @@
   "https://jobs.example.com/openings": {
     "status": 200,
     "finalUrl": "https://jobs.example.com/openings",
-    "html": "<main><h1>招聘职位</h1><a href=\"/positions/ai-pm\">AI 产品经理</a></main>",
+    "html": "<main><h1>招聘职位</h1><a href=\"/positions/ai-pm\">AI 产品经理</a><button>立即申请</button></main>",
+    "officialSiteLinked": true,
     "jobs": [
       {
         "sourceJobId": "ai-pm",
@@ -13,14 +14,14 @@
       }
     ]
   },
-  "https://jobs.example-aggregator.test/1": {
+  "https://www.zhipin.com/job_detail/fixture.html": {
     "status": 200,
-    "finalUrl": "https://jobs.example-aggregator.test/1",
+    "finalUrl": "https://www.zhipin.com/job_detail/fixture.html",
     "html": "<h1>转载招聘信息</h1>"
   },
-  "https://tenant.mokahr.example/jobs": {
+  "https://jobs.lever.co/review-fixture": {
     "status": 200,
-    "finalUrl": "https://tenant.mokahr.example/jobs",
-    "html": "<h1>招聘职位</h1><button>申请</button>"
+    "finalUrl": "https://jobs.lever.co/review-fixture",
+    "html": "<h1>招聘职位</h1><button>立即申请</button>"
   }
 }
