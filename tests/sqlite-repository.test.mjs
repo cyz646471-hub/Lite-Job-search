@@ -260,6 +260,42 @@ test('career portal knowledge retains recruitment types and evidence', async (t)
   assert.equal(stored.evidence[0].code, 'official_domain_match');
 });
 
+test('repository records auditable LLM usage without credentials', async (t) => {
+  const repository = await createRepository();
+  t.after(() => repository.close());
+  repository.recordLlmUsage({
+    id: 'llm-1',
+    runId: 'run-optional',
+    task: 'expand_keywords',
+    provider: 'openai-compatible',
+    model: 'fixture-model',
+    promptHash: 'abc123',
+    cacheHit: false,
+    inputTokens: 100,
+    outputTokens: 25,
+    costUsd: 0.0004,
+    status: 'SUCCESS',
+    errorMessage: null,
+    createdAt: NOW,
+  });
+
+  assert.deepEqual(repository.listLlmUsage(), [{
+    id: 'llm-1',
+    runId: 'run-optional',
+    task: 'expand_keywords',
+    provider: 'openai-compatible',
+    model: 'fixture-model',
+    promptHash: 'abc123',
+    cacheHit: false,
+    inputTokens: 100,
+    outputTokens: 25,
+    costUsd: 0.0004,
+    status: 'SUCCESS',
+    errorMessage: null,
+    createdAt: NOW,
+  }]);
+});
+
 test('downgrading a portal removes its openings from the formal result set', async (t) => {
   const repository = await createRepository('lite-job-market-downgrade-');
   t.after(() => repository.close());

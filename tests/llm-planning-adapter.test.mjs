@@ -64,3 +64,39 @@ test('adapter rejects planning output that claims verification authority', async
     /forbidden LLM field/,
   );
 });
+
+test('adapter caches replaceable planning calls and records observed token cost', async () => {
+  const values = new Map();
+  const usage = [];
+  let requests = 0;
+  const adapter = createOpenAiCompatiblePlanningAdapter({
+    endpoint: 'https://llm.example.test/v1/chat/completions',
+    model: 'fixture-model',
+    inputUsdPerMillionTokens: 2,
+    outputUsdPerMillionTokens: 8,
+    cache: {
+      get: (key) => values.get(key),
+      set: (key, value) => values.set(key, value),
+    },
+    usageRecorder: (record) => usage.push(record),
+    fetcher: async () => {
+      requests += 1;
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: '{"terms":["Backend Engineer"]}' } }],
+        usage: { prompt_tokens: 100, completion_tokens: 25 },
+      }), { status: 200 });
+    },
+  });
+
+  const input = { task: 'expand_keywords', input: { roleType: '后端开发' } };
+  assert.deepEqual(await adapter.generate(input), { terms: ['Backend Engineer'] });
+  assert.deepEqual(await adapter.generate(input), { terms: ['Backend Engineer'] });
+
+  assert.equal(requests, 1);
+  assert.equal(usage.length, 2);
+  assert.equal(usage[0].cacheHit, false);
+  assert.equal(usage[0].costUsd, 0.0004);
+  assert.equal(usage[1].cacheHit, true);
+  assert.equal(usage[1].costUsd, 0);
+  assert.doesNotMatch(JSON.stringify(usage), /fixture-secret/);
+});

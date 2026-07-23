@@ -81,6 +81,15 @@ export async function createMarketDiscoveryRuntime({
     budget: new DailyBudget({ limit: config.search.dailyQueryBudget }),
     cacheTtlMs: config.search.cacheTtlDays * 86_400_000,
   });
+  const file = databaseFile
+    || config.database.file
+    || path.join(PROJECT_ROOT, 'data', 'lite-job-search.sqlite');
+  const repository = openSqliteMarketDiscoveryRepository({ file });
+  repository.migrate();
+  const planningCache = new FileSearchCache({
+    file: env.LITE_JOB_LLM_CACHE_FILE
+      || path.join(env.LITE_JOB_SEARCH_CACHE_DIR || path.join(PROJECT_ROOT, 'cache'), 'llm-cache.json'),
+  });
   const planningModel = planningFixture
     ? fixturePlanningModel(planningFixture)
     : createOpenAiCompatiblePlanningAdapter({
@@ -89,6 +98,10 @@ export async function createMarketDiscoveryRuntime({
       apiKey: env.LITE_JOB_LLM_API_KEY || '',
       timeoutMs: config.llm.timeoutMs,
       fetcher,
+      cache: planningCache,
+      usageRecorder: (record) => repository.recordLlmUsage(record),
+      inputUsdPerMillionTokens: config.llm.inputUsdPerMillionTokens,
+      outputUsdPerMillionTokens: config.llm.outputUsdPerMillionTokens,
     });
   const fetchPage = fixturePages
     ? fixturePageFetcher(fixturePages)
@@ -96,11 +109,6 @@ export async function createMarketDiscoveryRuntime({
       resolver,
       timeoutMs: config.search.timeoutMs,
     });
-  const file = databaseFile
-    || config.database.file
-    || path.join(PROJECT_ROOT, 'data', 'lite-job-search.sqlite');
-  const repository = openSqliteMarketDiscoveryRepository({ file });
-  repository.migrate();
   const verificationAdapter = createOfficialVerificationAdapter({ now });
   const jobExtractor = createUpstreamJobExtractionAdapter({ fetchPage, now });
   const searchSource = createSearchSourceAdapter({ router });

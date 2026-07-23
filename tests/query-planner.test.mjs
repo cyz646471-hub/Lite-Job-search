@@ -37,9 +37,12 @@ test('keyword expansion returns controlled multilingual terms', async () => {
 
   const result = await expandKeywords(intent, { planningModel: model });
 
-  assert.deepEqual(result.terms, ['AI 产品经理', '大模型产品经理']);
-  assert.deepEqual(result.englishTerms, ['AI Product Manager']);
+  assert.ok(result.terms.includes('AI 产品经理'));
+  assert.ok(result.terms.includes('大模型产品经理'));
+  assert.ok(result.englishTerms.includes('AI Product Manager'));
   assert.equal(result.roleFamily, 'PRODUCT_MANAGEMENT');
+  assert.ok(result.terms.includes('产品经理'));
+  assert.ok(result.englishTerms.includes('Product Manager'));
 });
 
 test('planning firewall rejects attempts to decide official truth', async () => {

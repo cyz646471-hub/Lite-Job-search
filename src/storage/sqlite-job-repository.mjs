@@ -275,6 +275,15 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           outcome = excluded.outcome,
           metadata_json = excluded.metadata_json
       `),
+      recordLlmUsage: database.prepare(`
+        INSERT INTO llm_usage_logs (
+          id, run_id, task, provider, model, prompt_hash, cache_hit,
+          input_tokens, output_tokens, cost_usd, status, error_message, created_at
+        ) VALUES (
+          @id, @runId, @task, @provider, @model, @promptHash, @cacheHit,
+          @inputTokens, @outputTokens, @costUsd, @status, @errorMessage, @createdAt
+        )
+      `),
     };
     return repository;
   }
@@ -493,6 +502,42 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     `).all().map(mapLog);
   }
 
+  function recordLlmUsage(record) {
+    requireMigration();
+    statements.recordLlmUsage.run({
+      ...record,
+      runId: record.runId ?? null,
+      cacheHit: record.cacheHit ? 1 : 0,
+      inputTokens: record.inputTokens ?? null,
+      outputTokens: record.outputTokens ?? null,
+      costUsd: record.costUsd ?? null,
+      status: record.status || 'SUCCESS',
+      errorMessage: record.errorMessage ?? null,
+    });
+    return record;
+  }
+
+  function listLlmUsage() {
+    requireMigration();
+    return database.prepare(`
+      SELECT * FROM llm_usage_logs ORDER BY created_at, id
+    `).all().map((row) => ({
+      id: row.id,
+      runId: row.run_id,
+      task: row.task,
+      provider: row.provider,
+      model: row.model,
+      promptHash: row.prompt_hash,
+      cacheHit: row.cache_hit === 1,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      costUsd: row.cost_usd,
+      status: row.status,
+      errorMessage: row.error_message,
+      createdAt: row.created_at,
+    }));
+  }
+
   function close() {
     if (database.open) database.close();
   }
@@ -511,6 +556,8 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     listCareerPortals,
     listJobOpenings,
     listDiscoveryLogs,
+    recordLlmUsage,
+    listLlmUsage,
     close,
   };
 

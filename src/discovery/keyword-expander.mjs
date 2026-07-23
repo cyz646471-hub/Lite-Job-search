@@ -1,4 +1,5 @@
 import { assertPlanningModel, validatePlanningOutput } from '../ports/llm-planner.mjs';
+import { resolveOccupationTaxonomy } from '../taxonomy/occupation-taxonomy.mjs';
 
 function clean(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -15,6 +16,7 @@ function list(value, limit = 20) {
 
 export async function expandKeywords(intent, {
   planningModel,
+  runId = null,
 } = {}) {
   const model = assertPlanningModel(planningModel);
   const raw = validatePlanningOutput(await model.generate({
@@ -25,16 +27,23 @@ export async function expandKeywords(intent, {
       market: intent.market,
       locale: intent.locale,
     },
+    context: { runId },
   }));
+  const taxonomy = resolveOccupationTaxonomy(intent);
   const primaryRole = clean(raw.primaryRole || intent.roleType);
-  const terms = list(raw.terms);
+  const terms = list([
+    ...(raw.terms || []),
+    ...taxonomy.chineseTerms,
+    ...taxonomy.industryTerms,
+  ]);
   return Object.freeze({
     primaryRole,
-    roleFamily: clean(raw.roleFamily) || 'OTHER',
+    roleFamily: clean(raw.roleFamily) || taxonomy.roleFamily,
     terms: terms.length ? terms : Object.freeze([primaryRole]),
-    englishTerms: list(raw.englishTerms),
-    synonyms: list(raw.synonyms),
-    exclusions: list(raw.exclusions, 10),
+    englishTerms: list([...(raw.englishTerms || []), ...taxonomy.englishTerms]),
+    synonyms: list([...(raw.synonyms || []), ...taxonomy.synonyms]),
+    exclusions: list([...(raw.exclusions || []), ...taxonomy.exclusions], 20),
+    taxonomyVersion: taxonomy.version,
     promptVersion: clean(raw.promptVersion) || 'keyword-expansion-v1',
   });
 }

@@ -106,10 +106,11 @@ export async function discoverMarketJobs(input, dependencies = {}) {
   };
 
   try {
-    const keywords = await expandKeywords(intent, { planningModel });
+    const keywords = await expandKeywords(intent, { planningModel, runId });
     const queryPlan = await planQueries(intent, keywords, {
       planningModel,
       maxQueries,
+      runId,
     });
     const discovery = await discoverCompanies({
       intent,
@@ -328,6 +329,9 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         rejectedCount: counters.rejected,
         extractedJobCount: counters.jobsStored,
         failures: Object.freeze(failures),
+        llmUsage: typeof repository.listLlmUsage === 'function'
+          ? Object.freeze(repository.listLlmUsage().filter((item) => item.runId === runId))
+          : Object.freeze([]),
       }),
     });
   } catch (error) {

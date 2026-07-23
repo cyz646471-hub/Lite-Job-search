@@ -1,4 +1,5 @@
 import { validatePlanningOutput } from '../../ports/llm-planner.mjs';
+import { createHash, randomUUID } from 'node:crypto';
 
 const MAX_INPUT_BYTES = 64 * 1024;
 const MAX_OUTPUT_TOKENS = 2_000;
@@ -37,6 +38,11 @@ export function createOpenAiCompatiblePlanningAdapter({
   apiKey = '',
   timeoutMs = 30_000,
   fetcher = globalThis.fetch,
+  cache = null,
+  usageRecorder = null,
+  inputUsdPerMillionTokens = 0,
+  outputUsdPerMillionTokens = 0,
+  cacheTtlMs = 30 * 86_400_000,
 } = {}) {
   const normalizedEndpoint = validateEndpoint(String(endpoint || '').trim());
   const normalizedModel = String(model || '').trim();
@@ -44,13 +50,36 @@ export function createOpenAiCompatiblePlanningAdapter({
 
   return Object.freeze({
     configured,
-    async generate({ task, input } = {}) {
+    async generate({ task, input, context = {} } = {}) {
       if (!configured) throw new Error('planning model is not configured');
       if (typeof fetcher !== 'function') throw new Error('LLM fetcher is required');
 
       const prompt = JSON.stringify({ task, input });
       if (Buffer.byteLength(prompt, 'utf8') > MAX_INPUT_BYTES) {
         throw new Error('LLM planning input is too large');
+      }
+      const promptHash = createHash('sha256')
+        .update(`${normalizedModel}|${prompt}`)
+        .digest('hex');
+      const cacheKey = `llm-planning|${promptHash}`;
+      const cached = cache?.get(cacheKey);
+      if (cached) {
+        await usageRecorder?.({
+          id: randomUUID(),
+          runId: context.runId || null,
+          task: String(task || ''),
+          provider: 'openai-compatible',
+          model: normalizedModel,
+          promptHash,
+          cacheHit: true,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          status: 'SUCCESS',
+          errorMessage: null,
+          createdAt: new Date().toISOString(),
+        });
+        return structuredClone(cached);
       }
 
       const controller = new AbortController();
@@ -95,7 +124,53 @@ export function createOpenAiCompatiblePlanningAdapter({
         } catch {
           throw new Error('LLM response body must be JSON');
         }
-        return parseContent(payload);
+        const output = parseContent(payload);
+        const inputTokens = Number.isInteger(payload?.usage?.prompt_tokens)
+          ? payload.usage.prompt_tokens
+          : null;
+        const outputTokens = Number.isInteger(payload?.usage?.completion_tokens)
+          ? payload.usage.completion_tokens
+          : null;
+        const costUsd = inputTokens == null || outputTokens == null
+          ? null
+          : Number((
+            inputTokens * Number(inputUsdPerMillionTokens || 0)
+            + outputTokens * Number(outputUsdPerMillionTokens || 0)
+          ) / 1_000_000);
+        cache?.set(cacheKey, output, { ttlMs: cacheTtlMs });
+        await usageRecorder?.({
+          id: randomUUID(),
+          runId: context.runId || null,
+          task: String(task || ''),
+          provider: 'openai-compatible',
+          model: normalizedModel,
+          promptHash,
+          cacheHit: false,
+          inputTokens,
+          outputTokens,
+          costUsd,
+          status: 'SUCCESS',
+          errorMessage: null,
+          createdAt: new Date().toISOString(),
+        });
+        return output;
+      } catch (error) {
+        await usageRecorder?.({
+          id: randomUUID(),
+          runId: context.runId || null,
+          task: String(task || ''),
+          provider: 'openai-compatible',
+          model: normalizedModel,
+          promptHash,
+          cacheHit: false,
+          inputTokens: null,
+          outputTokens: null,
+          costUsd: null,
+          status: 'FAILED',
+          errorMessage: String(error?.message || error).slice(0, 240),
+          createdAt: new Date().toISOString(),
+        });
+        throw error;
       } finally {
         clearTimeout(timeout);
       }

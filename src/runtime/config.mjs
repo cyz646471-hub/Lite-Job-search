@@ -30,6 +30,8 @@ export function loadRuntimeConfig(env = process.env) {
       model: String(env.LITE_JOB_LLM_MODEL || ''),
       configured: Boolean(env.LITE_JOB_LLM_ENDPOINT && env.LITE_JOB_LLM_MODEL),
       timeoutMs: positiveInteger(env.LITE_JOB_LLM_TIMEOUT_MS, 30_000),
+      inputUsdPerMillionTokens: Number(env.LITE_JOB_LLM_INPUT_USD_PER_MILLION || 0),
+      outputUsdPerMillionTokens: Number(env.LITE_JOB_LLM_OUTPUT_USD_PER_MILLION || 0),
     },
     database: {
       file: String(env.LITE_JOB_DATABASE_FILE || ''),

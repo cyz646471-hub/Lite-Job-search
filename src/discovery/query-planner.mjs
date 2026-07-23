@@ -8,11 +8,13 @@ export async function planQueries(intent, keywords, {
   planningModel,
   providerAllowlist = ['baidu', 'tavily', 'brave', 'manual'],
   maxQueries = 12,
+  runId = null,
 } = {}) {
   const model = assertPlanningModel(planningModel);
   const raw = validatePlanningOutput(await model.generate({
     task: 'plan_queries',
     input: { intent, keywords },
+    context: { runId },
   }));
   const allowedProviders = new Set(providerAllowlist);
   const seen = new Set();
