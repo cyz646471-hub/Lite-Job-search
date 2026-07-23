@@ -1,6 +1,38 @@
 import { describeSearchMode } from '../search/router.mjs';
+import { openSqliteMarketDiscoveryRepository } from '../storage/sqlite-job-repository.mjs';
 
-export function buildDoctorReport({ config, providers, providerOrder = [] } = {}) {
+export function probeMarketDiscoveryDatabase(file) {
+  let repository;
+  const rollback = new Error('doctor rollback');
+  try {
+    repository = openSqliteMarketDiscoveryRepository({ file });
+    repository.migrate();
+    try {
+      repository.withTransaction(() => {
+        repository.beginRun({
+          id: `doctor-${process.pid}`,
+          intent: { probe: true },
+          startedAt: new Date().toISOString(),
+        });
+        throw rollback;
+      });
+    } catch (error) {
+      if (error !== rollback) throw error;
+    }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    repository?.close();
+  }
+}
+
+export function buildDoctorReport({
+  config,
+  providers,
+  providerOrder = [],
+  databaseReady = false,
+} = {}) {
   const generic = providerOrder.filter((provider) => provider?.configured);
   const mode = describeSearchMode(generic);
   const apifyConfigured = providers.apify?.configured === true || config.providers.apify.configured;
@@ -35,10 +67,11 @@ export function buildDoctorReport({ config, providers, providerOrder = [] } = {}
     liveSearchExecuted: false,
     benchmarkCompleted: false,
     llmPlanning: config.llm?.configured ? 'configured' : 'not_configured',
-    database: 'ready',
+    database: databaseReady ? 'ready' : 'not_ready',
     marketDiscoveryReady: Boolean(
       config.llm?.configured
-      && generic.length > 0,
+      && generic.length > 0
+      && databaseReady
     ),
   };
 }

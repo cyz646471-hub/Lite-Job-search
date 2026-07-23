@@ -11,7 +11,7 @@ export function createSearchSourceAdapter({
         market: intent.market,
         topK: query.topK,
         freshnessDays: intent.freshnessDays,
-        cacheKey: `market-discovery|${intent.market}|${query.text}`,
+        cacheKey: `market-discovery|${intent.market}|${intent.freshnessDays}|${query.topK}|${query.text}`,
       });
     },
   });

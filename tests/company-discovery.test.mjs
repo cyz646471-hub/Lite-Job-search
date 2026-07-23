@@ -28,7 +28,7 @@ test('SearchRouter adapter maps a planned query without changing freshness', asy
     market: 'CN',
     topK: 12,
     freshnessDays: 90,
-    cacheKey: 'market-discovery|CN|"AI 产品经理" 招聘',
+    cacheKey: 'market-discovery|CN|90|12|"AI 产品经理" 招聘',
   });
 });
 
@@ -141,4 +141,26 @@ test('not configured remains distinct from an empty successful search', async ()
   });
 
   assert.equal(result.status, 'NOT_CONFIGURED');
+});
+
+test('provider access controls remain BLOCKED instead of becoming partial', async () => {
+  const result = await discoverCompanies({
+    intent,
+    queryPlan: { queries: [{ text: 'query', topK: 10 }] },
+    runId: 'run-blocked',
+    searchSource: {
+      async search() {
+        return {
+          status: 'forbidden',
+          provider: 'fixture',
+          items: [],
+          attempts: [{ provider: 'fixture', status: 'forbidden', networkRequest: true }],
+          liveSearchExecuted: true,
+        };
+      },
+    },
+    now: '2026-07-24T00:00:00.000Z',
+  });
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.liveSearchExecuted, true);
 });

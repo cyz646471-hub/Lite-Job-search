@@ -17,7 +17,15 @@ const INTENT = {
   targetCount: 20,
 };
 
-async function createHarness({ publishedAt = '2026-07-20T00:00:00.000Z' } = {}) {
+async function createHarness({
+  publishedAt = '2026-07-20T00:00:00.000Z',
+  title = 'AI 产品经理',
+  status = 'ACTIVE',
+  jobDetailUrl = 'https://jobs.example.com/positions/ai-pm',
+  blockedOfficial = false,
+  searchItems = null,
+  finalUrls = {},
+} = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-discovery-'));
   const repository = openSqliteMarketDiscoveryRepository({
     file: path.join(directory, 'jobs.sqlite'),
@@ -61,7 +69,7 @@ async function createHarness({ publishedAt = '2026-07-20T00:00:00.000Z' } = {}) 
           provider: 'manual',
           attempts: [{ provider: 'manual', status: 'ok', networkRequest: false }],
           liveSearchExecuted: false,
-          items: [
+          items: searchItems || [
             {
               company: '示例智能科技',
               url: 'https://jobs.example.com/openings',
@@ -85,7 +93,7 @@ async function createHarness({ publishedAt = '2026-07-20T00:00:00.000Z' } = {}) 
     },
     fetchPage: async (url) => ({
       status: 200,
-      finalUrl: url,
+      finalUrl: finalUrls[url] || url,
       html: '<h1>招聘职位</h1>',
     }),
     verificationAdapter: {
@@ -110,7 +118,15 @@ async function createHarness({ publishedAt = '2026-07-20T00:00:00.000Z' } = {}) 
             ],
           };
         }
-        return {
+        return blockedOfficial ? {
+          pageType: 'UNKNOWN',
+          atsType: '',
+          registrableDomain: 'example.com',
+          evidence: [
+            { code: 'official_domain_match' },
+            { code: 'blocked_page' },
+          ],
+        } : {
           pageType: 'JOB_LIST',
           atsType: '',
           registrableDomain: 'example.com',
@@ -129,14 +145,14 @@ async function createHarness({ publishedAt = '2026-07-20T00:00:00.000Z' } = {}) 
           companyId: company.id,
           careerPortalId: portal.id,
           sourceJobId: 'ai-pm',
-          title: 'AI 产品经理',
-          normalizedTitle: 'AI 产品经理',
+          title,
+          normalizedTitle: title,
           roleFamily: 'PRODUCT_MANAGEMENT',
           locations: ['上海'],
           publishedAt,
-          jobDetailUrl: 'https://jobs.example.com/positions/ai-pm',
-          status: 'ACTIVE',
-          sourceUrl: 'https://jobs.example.com/positions/ai-pm',
+          jobDetailUrl,
+          status,
+          sourceUrl: jobDetailUrl || 'https://jobs.example.com/openings',
         }, { now: NOW })];
       },
     },
@@ -180,4 +196,84 @@ test('unknown publication dates do not satisfy a recent-only result', async (t) 
 
   assert.equal(result.jobsStored, 0);
   assert.ok(repository.listDiscoveryLogs().some((item) => item.outcome === 'NO_RECENT_JOBS'));
+});
+
+test('formal results require role relevance, ACTIVE status and a usable job entry', async (t) => {
+  const cases = [
+    { title: '财务总监' },
+    { title: '产品经理' },
+    { status: 'CLOSED' },
+    { status: 'UNKNOWN' },
+    { jobDetailUrl: null },
+  ];
+  for (const options of cases) {
+    const { repository, dependencies } = await createHarness(options);
+    t.after(() => repository.close());
+    const result = await discoverMarketJobs(INTENT, dependencies);
+    assert.equal(result.jobsStored, 0, JSON.stringify(options));
+    assert.equal(repository.listJobOpenings().length, 0, JSON.stringify(options));
+  }
+});
+
+test('access-controlled candidates remain BLOCKED instead of ordinary partial results', async (t) => {
+  const { repository, dependencies } = await createHarness({ blockedOfficial: true });
+  t.after(() => repository.close());
+  const result = await discoverMarketJobs(INTENT, dependencies);
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.blocked, 1);
+  assert.equal(result.jobsStored, 0);
+});
+
+test('redirect aliases converge on one canonical portal without failing the run', async (t) => {
+  const first = 'https://redirect.example/jobs-a';
+  const second = 'https://redirect.example/jobs-b';
+  const finalUrl = 'https://jobs.example.com/openings';
+  const { repository, dependencies } = await createHarness({
+    searchItems: [
+      {
+        company: '示例智能科技',
+        url: first,
+        confirmedOfficialDomain: 'example.com',
+        officialDomainSource: 'manual_verified',
+        rank: 1,
+      },
+      {
+        company: '示例智能科技',
+        url: second,
+        confirmedOfficialDomain: 'example.com',
+        officialDomainSource: 'manual_verified',
+        rank: 2,
+      },
+    ],
+    finalUrls: { [first]: finalUrl, [second]: finalUrl },
+  });
+  t.after(() => repository.close());
+  const result = await discoverMarketJobs(INTENT, dependencies);
+  assert.equal(result.status, 'PARTIAL');
+  assert.equal(repository.listCareerPortals().length, 1);
+  assert.equal(repository.listJobOpenings().length, 1);
+});
+
+test('failures after search preserve whether live search actually executed', async (t) => {
+  const { repository, dependencies } = await createHarness();
+  t.after(() => repository.close());
+  dependencies.searchSource.search = async () => ({
+    status: 'ok',
+    provider: 'fixture-live',
+    attempts: [{ provider: 'fixture-live', status: 'ok', networkRequest: true }],
+    liveSearchExecuted: true,
+    items: [{
+      company: '示例智能科技',
+      url: 'https://jobs.example.com/openings',
+      confirmedOfficialDomain: 'example.com',
+      officialDomainSource: 'manual_verified',
+    }],
+  });
+  dependencies.repository.withTransaction = () => {
+    throw new Error('fixture database failure');
+  };
+  await assert.rejects(
+    discoverMarketJobs(INTENT, dependencies),
+    (error) => error.liveSearchExecuted === true,
+  );
 });

@@ -35,7 +35,7 @@ function detailUrlOf(raw = {}, portal) {
 function openingStatus(raw = {}) {
   if (raw.status === 'CLOSED' || raw.livenessStatus === 'expired') return 'CLOSED';
   if (raw.status === 'ACTIVE' || raw.livenessStatus === 'active') return 'ACTIVE';
-  return 'ACTIVE';
+  return 'UNKNOWN';
 }
 
 export function createUpstreamJobExtractionAdapter({
@@ -70,7 +70,9 @@ export function createUpstreamJobExtractionAdapter({
             requestedUrl: portal.canonicalUrl,
             finalUrl,
           });
-          if (Array.isArray(parsed?.activeJobs)) rawJobs = parsed.activeJobs;
+          if (Array.isArray(parsed?.activeJobs)) {
+            rawJobs = parsed.activeJobs.map((job) => ({ status: 'ACTIVE', ...job }));
+          }
           else if (Array.isArray(parsed?.jobs)) rawJobs = parsed.jobs;
           else if (Array.isArray(parsed?.positions)) rawJobs = parsed.positions;
           else if (parsed?.title) rawJobs = [parsed];

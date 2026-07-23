@@ -165,6 +165,31 @@ test('job extraction refuses an unverified portal', async () => {
   }), /verified CareerPortal/);
 });
 
+test('job extraction preserves an unknown liveness state', async () => {
+  const extractor = createUpstreamJobExtractionAdapter({
+    fetchPage: async () => ({
+      status: 200,
+      finalUrl: 'https://jobs.example.com/openings',
+      jobs: [{
+        id: 'unknown-state',
+        title: 'AI 产品经理',
+        detailUrl: 'https://jobs.example.com/positions/unknown-state',
+      }],
+    }),
+  });
+  const [opening] = await extractor.extract({
+    company: { id: 'company-1' },
+    portal: {
+      id: 'portal-1',
+      companyId: 'company-1',
+      canonicalUrl: 'https://jobs.example.com/openings',
+      pageType: 'JOB_LIST',
+      verificationStatus: 'VERIFIED',
+    },
+  });
+  assert.equal(opening.status, 'UNKNOWN');
+});
+
 test('legacy projection preserves the actual portal URL role', () => {
   const result = toLegacyJobResult({
     company: { canonicalName: '示例科技', market: 'CN' },

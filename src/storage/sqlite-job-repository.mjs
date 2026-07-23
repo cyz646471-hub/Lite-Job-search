@@ -132,15 +132,17 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         ON CONFLICT(id) DO UPDATE SET
           canonical_name = excluded.canonical_name,
           market = excluded.market,
-          primary_official_domain = excluded.primary_official_domain,
+          primary_official_domain = COALESCE(
+            excluded.primary_official_domain,
+            companies.primary_official_domain
+          ),
           industry_tags_json = excluded.industry_tags_json,
           updated_at = excluded.updated_at
       `),
-      deleteAliases: database.prepare('DELETE FROM company_aliases WHERE company_id = ?'),
+      companyById: database.prepare('SELECT * FROM companies WHERE id = ?'),
       insertAlias: database.prepare(`
         INSERT OR IGNORE INTO company_aliases (company_id, alias) VALUES (?, ?)
       `),
-      deleteDomains: database.prepare('DELETE FROM company_domains WHERE company_id = ?'),
       insertDomain: database.prepare(`
         INSERT OR IGNORE INTO company_domains (company_id, domain, market) VALUES (?, ?, ?)
       `),
@@ -165,6 +167,14 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       `),
       portalStatus: database.prepare(`
         SELECT company_id, verification_status FROM career_portals WHERE id = ?
+      `),
+      portalIdentity: database.prepare(`
+        SELECT id, company_id FROM career_portals
+        WHERE id = ? OR canonical_url = ?
+        LIMIT 1
+      `),
+      deletePortalOpenings: database.prepare(`
+        DELETE FROM job_openings WHERE career_portal_id = ?
       `),
       deleteEvidence: database.prepare(`
         DELETE FROM verification_evidence WHERE career_portal_id = ?
@@ -252,20 +262,25 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
   function upsertCompany(company) {
     requireMigration();
     return withTransaction(() => {
+      const existing = statements.companyById.get(company.id);
+      const industryTags = [
+        ...new Set([
+          ...decode(existing?.industry_tags_json, []),
+          ...(company.industryTags || []),
+        ]),
+      ];
       statements.upsertCompany.run({
         id: company.id,
         canonicalName: company.canonicalName,
         market: company.market,
         primaryOfficialDomain: company.primaryOfficialDomain ?? null,
-        industryTagsJson: encode(company.industryTags, []),
+        industryTagsJson: encode(industryTags, []),
         createdAt: company.createdAt,
         updatedAt: company.updatedAt,
       });
-      statements.deleteAliases.run(company.id);
       for (const alias of [...new Set(company.aliases || [])]) {
         statements.insertAlias.run(company.id, alias);
       }
-      statements.deleteDomains.run(company.id);
       for (const domain of [...new Set(company.officialDomains || [])]) {
         statements.insertDomain.run(company.id, domain, company.market);
       }
@@ -275,12 +290,24 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
 
   function upsertCareerPortal(portal) {
     requireMigration();
-    statements.upsertPortal.run({
-      ...portal,
-      atsType: portal.atsType || '',
-      lastVerifiedAt: portal.lastVerifiedAt ?? null,
+    return withTransaction(() => {
+      const existing = statements.portalIdentity.get(portal.id, portal.canonicalUrl);
+      if (existing && existing.company_id !== portal.companyId) {
+        throw new Error('CareerPortal canonical URL conflicts with another company');
+      }
+      if (existing && existing.id !== portal.id) {
+        throw new Error('CareerPortal canonical URL already has a different stable id');
+      }
+      statements.upsertPortal.run({
+        ...portal,
+        atsType: portal.atsType || '',
+        lastVerifiedAt: portal.lastVerifiedAt ?? null,
+      });
+      if (portal.verificationStatus !== 'VERIFIED') {
+        statements.deletePortalOpenings.run(portal.id);
+      }
+      return portal;
     });
-    return portal;
   }
 
   function replaceVerificationEvidence(careerPortalId, evidence = []) {
@@ -390,7 +417,13 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
 
   function listJobOpenings() {
     requireMigration();
-    return database.prepare('SELECT * FROM job_openings ORDER BY title, id').all().map(mapOpening);
+    return database.prepare(`
+      SELECT jobs.*
+      FROM job_openings AS jobs
+      INNER JOIN career_portals AS portals ON portals.id = jobs.career_portal_id
+      WHERE portals.verification_status = 'VERIFIED'
+      ORDER BY jobs.title, jobs.id
+    `).all().map(mapOpening);
   }
 
   function listDiscoveryLogs() {

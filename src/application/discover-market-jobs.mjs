@@ -31,6 +31,24 @@ function boundedError(error) {
   return String(error?.message || error || 'unknown error').slice(0, 240);
 }
 
+function normalizedRole(value) {
+  return String(value || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+function matchesRequestedRole(opening, intent) {
+  const title = normalizedRole(opening?.title);
+  const requestedRole = normalizedRole(intent.roleType);
+  return Boolean(title && requestedRole && title.includes(requestedRole));
+}
+
+function hasUsableJobEntry(opening, portal) {
+  return Boolean(
+    opening?.applyUrl
+    || opening?.jobDetailUrl
+    || (['JOB_DETAIL', 'APPLY'].includes(portal?.pageType) && opening?.sourceUrl),
+  );
+}
+
 export async function discoverMarketJobs(input, dependencies = {}) {
   assertDependencies(dependencies);
   const {
@@ -54,8 +72,11 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     jobsStored: 0,
     reviewRequired: 0,
     rejected: 0,
+    blocked: 0,
+    usableApplyEntries: 0,
   };
   repository.beginRun({ id: runId, intent, startedAt: now() });
+  let liveSearchExecuted = false;
 
   const appendLog = (candidate, keywords, outcome, metadata = {}, resultUrl = null) => {
     repository.appendDiscoveryLog(createDiscoveryLog({
@@ -86,6 +107,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       searchSource,
       now: now(),
     });
+    liveSearchExecuted = discovery.liveSearchExecuted;
     for (const log of discovery.logs) repository.appendDiscoveryLog(log);
 
     for (const candidate of discovery.candidates) {
@@ -153,7 +175,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
           observedAt: item.observedAt || observedAt,
         }));
       const portal = createCareerPortal({
-        id: ids.portal(candidate),
+        id: ids.portal({ ...candidate, url: page.finalUrl || candidate.url }),
         companyId: company.id,
         url: candidate.url,
         canonicalUrl: page.finalUrl || candidate.url,
@@ -187,6 +209,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       if (['REVIEW', 'BLOCKED'].includes(decision.verificationStatus)) {
         counters.reviewRequired += 1;
       }
+      if (decision.verificationStatus === 'BLOCKED') counters.blocked += 1;
       if (decision.verificationStatus === 'REJECTED') counters.rejected += 1;
       if (decision.verificationStatus !== 'VERIFIED') continue;
 
@@ -205,17 +228,26 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       let storedForPortal = 0;
       for (const opening of openings || []) {
         if (counters.jobsStored >= intent.targetCount) break;
-        if (!isRecentOpening(opening, {
+        const rejectionReason = opening.status !== 'ACTIVE'
+          ? 'opening_not_active'
+          : !matchesRequestedRole(opening, intent)
+            ? 'role_mismatch'
+            : !hasUsableJobEntry(opening, portal)
+              ? 'usable_job_entry_missing'
+              : null;
+        if (rejectionReason || !isRecentOpening(opening, {
           freshnessDays: intent.freshnessDays,
           now: Date.parse(now()),
         })) {
           appendLog(candidate, keywords, 'NO_RECENT_JOBS', {
             publishedAt: opening.publishedAt,
+            reason: rejectionReason || 'outside_freshness_window',
           }, opening.sourceUrl);
           continue;
         }
         repository.upsertJobOpening(opening);
         counters.jobsStored += 1;
+        if (opening.applyUrl) counters.usableApplyEntries += 1;
         storedForPortal += 1;
       }
       if (storedForPortal > 0) {
@@ -230,9 +262,11 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     }
 
     const quantityStatus = counters.jobsStored >= intent.targetCount ? 'COMPLETE' : 'PARTIAL';
-    const terminalStatus = ['DEFERRED_BY_BUDGET', 'NOT_CONFIGURED'].includes(discovery.status)
+    const terminalStatus = ['DEFERRED_BY_BUDGET', 'NOT_CONFIGURED', 'BLOCKED'].includes(discovery.status)
       ? discovery.status
-      : quantityStatus;
+      : counters.blocked > 0 && counters.jobsStored < intent.targetCount
+        ? 'BLOCKED'
+        : quantityStatus;
     repository.completeRun({ id: runId, status: terminalStatus, completedAt: now() });
     return Object.freeze({
       runId,
@@ -243,12 +277,14 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       liveSearchExecuted: discovery.liveSearchExecuted,
     });
   } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
     repository.completeRun({
       id: runId,
       status: 'FAILED',
       completedAt: now(),
-      error,
+      error: failure,
     });
-    throw error;
+    failure.liveSearchExecuted = liveSearchExecuted;
+    throw failure;
   }
 }

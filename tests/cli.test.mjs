@@ -46,6 +46,19 @@ test('doctor distinguishes Apify batch availability from single-query CLI search
   assert.doesNotMatch(result.stdout, /fixture-secret/);
 });
 
+test('doctor reports an unusable database path as not ready', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-doctor-db-'));
+  const parentFile = path.join(directory, 'not-a-directory');
+  await writeFile(parentFile, 'x');
+  const result = run(['doctor', '--json'], {
+    LITE_JOB_DATABASE_FILE: path.join(parentFile, 'jobs.sqlite'),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const doctor = JSON.parse(result.stdout);
+  assert.equal(doctor.database, 'not_ready');
+  assert.equal(doctor.marketDiscoveryReady, false);
+});
+
 test('search and batch run through a manual provider without network access', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-search-cli-'));
   const manual = path.join(directory, 'manual.json');

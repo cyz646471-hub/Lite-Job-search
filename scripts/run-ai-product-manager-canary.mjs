@@ -45,7 +45,7 @@ try {
   process.stdout.write(`${JSON.stringify({
     status: blocked ? 'BLOCKED' : 'ERROR',
     reason: blocked ? 'PUBLIC_ACCESS_BLOCKED' : 'CANARY_FAILED',
-    liveSearchExecuted: true,
+    liveSearchExecuted: error?.liveSearchExecuted === true,
     error: message,
   }, null, 2)}\n`);
   if (!blocked) process.exitCode = 1;

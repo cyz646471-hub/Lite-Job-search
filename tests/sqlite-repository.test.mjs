@@ -81,12 +81,21 @@ test('SQLite repositories upsert a complete verified chain idempotently', async 
 
   repository.upsertCompany(createCompany());
   repository.upsertCompany(createCompany({ aliases: ['示例', 'Example Tech'] }));
+  repository.upsertCompany(createCompany({
+    aliases: [],
+    primaryOfficialDomain: null,
+    officialDomains: [],
+    industryTags: [],
+  }));
   repository.upsertCareerPortal(createPortal());
   repository.upsertJobOpening(createOpening());
   repository.upsertJobOpening(createOpening({ lastSeenAt: '2026-07-24T01:00:00.000Z' }));
 
   assert.equal(repository.listCompanies().length, 1);
   assert.deepEqual(repository.listCompanies()[0].aliases, ['Example Tech', '示例']);
+  assert.deepEqual(repository.listCompanies()[0].officialDomains, ['example.com']);
+  assert.equal(repository.listCompanies()[0].primaryOfficialDomain, 'example.com');
+  assert.deepEqual(repository.listCompanies()[0].industryTags, ['AI']);
   assert.equal(repository.listCareerPortals().length, 1);
   assert.equal(repository.listJobOpenings().length, 1);
   assert.equal(repository.listJobOpenings()[0].lastSeenAt, '2026-07-24T01:00:00.000Z');
@@ -170,4 +179,21 @@ test('runs, logs and evidence round-trip structured fields', async (t) => {
   }]);
   assert.deepEqual(repository.listDiscoveryLogs()[0].expandedKeywords, ['AI PM']);
   assert.deepEqual(repository.listDiscoveryLogs()[0].metadata, { score: 80 });
+});
+
+test('downgrading a portal removes its openings from the formal result set', async (t) => {
+  const repository = await createRepository('lite-job-market-downgrade-');
+  t.after(() => repository.close());
+
+  repository.upsertCompany(createCompany());
+  repository.upsertCareerPortal(createPortal());
+  repository.upsertJobOpening(createOpening());
+  assert.equal(repository.listJobOpenings().length, 1);
+
+  repository.upsertCareerPortal(createPortal({
+    verificationStatus: 'REVIEW',
+    confidenceScore: 50,
+  }));
+
+  assert.equal(repository.listJobOpenings().length, 0);
 });

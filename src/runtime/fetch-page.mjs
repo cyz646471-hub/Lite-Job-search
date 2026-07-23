@@ -1,5 +1,8 @@
 import { lookup } from 'node:dns/promises';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
+import { Readable } from 'node:stream';
 
 function normalizeIp(value) {
   return String(value || '').replace(/^\[|\]$/g, '').toLowerCase();
@@ -80,14 +83,42 @@ async function readBoundedBody(response, { maxBytes, controller }) {
   return new TextDecoder().decode(body);
 }
 
+function pinnedHttpFetch(url, options, address) {
+  return new Promise((resolve, reject) => {
+    const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
+    const req = request(url, {
+      method: options.method,
+      headers: options.headers,
+      signal: options.signal,
+      lookup(_hostname, lookupOptions, callback) {
+        if (lookupOptions?.all) {
+          callback(null, [{ address: address.address, family: address.family }]);
+        } else {
+          callback(null, address.address, address.family);
+        }
+      },
+    }, (response) => {
+      const body = [204, 205, 304].includes(response.statusCode)
+        ? null
+        : Readable.toWeb(response);
+      resolve(new Response(body, {
+        status: response.statusCode,
+        headers: response.headers,
+      }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 export function createPageFetcher({
-  fetcher = globalThis.fetch,
+  fetcher = null,
   timeoutMs = 15_000,
   maxBytes = 5 * 1024 * 1024,
   maxRedirects = 5,
   resolver = (hostname) => lookup(hostname, { all: true, verbatim: true }),
 } = {}) {
-  if (typeof fetcher !== 'function') throw new Error('page fetcher is required');
+  if (fetcher != null && typeof fetcher !== 'function') throw new Error('page fetcher is required');
   return async function fetchPage(rawUrl) {
     const controller = new AbortController();
     const timeout = setTimeout(
@@ -106,14 +137,17 @@ export function createPageFetcher({
         ) {
           throw new Error('URL must resolve to a public host');
         }
-        const response = await fetcher(current, {
+        const requestOptions = {
           method: 'GET',
           redirect: 'manual',
           signal: controller.signal,
           headers: {
             'user-agent': 'Lite-Job-Search/0.2 (+public recruitment discovery)',
           },
-        });
+        };
+        const response = fetcher
+          ? await fetcher(current, requestOptions, { pinnedAddress: addresses[0] })
+          : await pinnedHttpFetch(current, requestOptions, addresses[0]);
         if (response.status >= 300 && response.status < 400) {
           const location = response.headers.get('location');
           if (!location) throw new Error('redirect response missing location');

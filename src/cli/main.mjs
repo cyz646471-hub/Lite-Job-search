@@ -10,7 +10,7 @@ import { SearchRouter } from '../search/router.mjs';
 import { searchBatch } from '../pipeline/search-batch.mjs';
 import { searchCompany } from '../pipeline/search-company.mjs';
 import { verifyCandidates } from '../pipeline/verify-candidates.mjs';
-import { buildDoctorReport } from './doctor.mjs';
+import { buildDoctorReport, probeMarketDiscoveryDatabase } from './doctor.mjs';
 import { runDiscoverCommand } from './discover.mjs';
 import { readRecords, writeRecords } from './io.mjs';
 
@@ -104,10 +104,13 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (options.command === 'doctor') {
     const state = await runtime(options, options.market);
+    const databaseFile = state.config.database.file
+      || path.join(root, 'data', 'lite-job-search.sqlite');
     return print(buildDoctorReport({
       config: state.config,
       providers: state.providers,
       providerOrder: state.order,
+      databaseReady: probeMarketDiscoveryDatabase(databaseFile),
     }));
   }
 

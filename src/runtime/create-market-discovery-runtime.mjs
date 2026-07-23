@@ -93,7 +93,6 @@ export async function createMarketDiscoveryRuntime({
   const fetchPage = fixturePages
     ? fixturePageFetcher(fixturePages)
     : createPageFetcher({
-      fetcher,
       resolver,
       timeoutMs: config.search.timeoutMs,
     });

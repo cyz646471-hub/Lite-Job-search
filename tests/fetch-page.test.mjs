@@ -15,8 +15,12 @@ test('page fetcher validates every redirect target and strips credentials', asyn
   const calls = [];
   const fetchPage = createPageFetcher({
     resolver: async () => [{ address: '93.184.216.34' }],
-    fetcher: async (url, options) => {
-      calls.push({ url: String(url), headers: [...new Headers(options.headers).keys()] });
+    fetcher: async (url, options, connection) => {
+      calls.push({
+        url: String(url),
+        headers: [...new Headers(options.headers).keys()],
+        pinnedAddress: connection.pinnedAddress.address,
+      });
       return new Response('', {
         status: 302,
         headers: { location: 'http://127.0.0.1/admin' },
@@ -26,6 +30,7 @@ test('page fetcher validates every redirect target and strips credentials', asyn
 
   await assert.rejects(fetchPage('https://example.com/jobs'), /public/i);
   assert.deepEqual(calls[0].headers, ['user-agent']);
+  assert.equal(calls[0].pinnedAddress, '93.184.216.34');
 });
 
 test('page fetcher enforces declared and streamed response size', async () => {

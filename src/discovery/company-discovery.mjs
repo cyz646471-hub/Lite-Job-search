@@ -71,6 +71,10 @@ export async function discoverCompanies({
       status = 'NOT_CONFIGURED';
       break;
     }
+    if (['forbidden', 'rate_limited', 'browser_unavailable'].includes(response.status)) {
+      status = 'BLOCKED';
+      break;
+    }
     if (!['ok', 'success'].includes(response.status)) {
       status = 'PARTIAL';
       continue;
