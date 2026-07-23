@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "sourceProject": "career-ops",
+  "entrypoints": {
+    "cn": [
+      "planner/cn-discovery.mjs",
+      "planner/cn-index-discovery.mjs",
+      "planner/cn-official-search.mjs",
+      "planner/cn-search-providers.mjs",
+      "planner/cn-deterministic-official-discovery.mjs",
+      "planner/cn-surface-drill.mjs",
+      "planner/cn-identity-verifier.mjs",
+      "planner/cn-ats-fingerprint.mjs",
+      "planner/cn-recruitment-entry-selection.mjs",
+      "planner/cn-candidate-pipeline.mjs",
+      "planner/cn-apply-entry.mjs",
+      "planner/cn-job-database.mjs",
+      "planner/cn-source-adapters.mjs",
+      "planner/cn-business-output.mjs",
+      "scripts/chrome-baidu-search.mjs"
+    ],
+    "na": [
+      "scan.mjs",
+      "scan-ats-full.mjs",
+      "planner/discovery.mjs",
+      "planner/site-discovery.mjs",
+      "planner/search-plan.mjs",
+      "planner/detail-fetchers.mjs"
+    ],
+    "shared": [
+      "planner/core.mjs",
+      "planner/storage.mjs",
+      "providers/_registry.mjs",
+      "providers/_http.mjs",
+      "providers/_trust-validator.mjs"
+    ]
+  },
+  "includeDirectories": [
+    "providers",
+    "planner/page-providers",
+    "planner/detail-providers"
+  ],
+  "excludePatterns": [
+    "node_modules/",
+    "data/",
+    "output/",
+    "outputs/",
+    "reports/",
+    "logs/",
+    ".env",
+    ".env.local"
+  ],
+  "publicCommands": [
+    "doctor",
+    "search",
+    "batch",
+    "verify",
+    "export"
+  ]
+}

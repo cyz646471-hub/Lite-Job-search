@@ -1,0 +1,38 @@
+{
+  "name": "lite-job-search",
+  "version": "0.1.0",
+  "description": "Standalone China and North America job discovery, official-site verification and ATS crawling skill.",
+  "type": "module",
+  "private": false,
+  "bin": {
+    "lite-job-search": "./bin/lite-job-search.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "doctor": "node ./bin/lite-job-search.mjs doctor",
+    "sync:career-ops": "node ./scripts/sync-from-career-ops.mjs",
+    "validate:skill": "python \"C:/Users/陈逸之/.codex/skills/.system/skill-creator/scripts/quick_validate.py\" ./.agents/skills/lite-job-search"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "job-search",
+    "career",
+    "china",
+    "north-america",
+    "ats",
+    "agent-skill"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.0.0",
+    "exceljs": "^4.4.0",
+    "js-yaml": "^4.1.1",
+    "playwright": "1.61.1",
+    "tldts": "7.4.9"
+  }
+}
