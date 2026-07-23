@@ -29,7 +29,21 @@ test('doctor reports a redacted no-provider mode without keys', () => {
   assert.equal(doctor.searchMode, 'no_provider');
   assert.equal(doctor.canRunLiveSearch, false);
   assert.equal(doctor.providers.tavily, 'not_configured');
+  assert.equal(doctor.connectivityVerified, false);
+  assert.equal(doctor.liveSearchExecuted, false);
+  assert.equal(doctor.benchmarkCompleted, false);
+  assert.ok(doctor.providerCodeImplemented.includes('apify_google'));
   assert.doesNotMatch(result.stdout, /api[_-]?key|bearer/i);
+});
+
+test('doctor distinguishes Apify batch availability from single-query CLI search', () => {
+  const result = run(['doctor', '--json'], { APIFY_TOKEN: 'fixture-secret' });
+  assert.equal(result.status, 0, result.stderr);
+  const doctor = JSON.parse(result.stdout);
+  assert.equal(doctor.searchMode, 'no_provider');
+  assert.equal(doctor.canRunLiveSearch, false);
+  assert.equal(doctor.canRunApifyBatch, true);
+  assert.doesNotMatch(result.stdout, /fixture-secret/);
 });
 
 test('search and batch run through a manual provider without network access', async () => {

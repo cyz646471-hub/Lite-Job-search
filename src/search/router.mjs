@@ -35,7 +35,9 @@ export class SearchRouter {
 
   async search(request = {}) {
     const query = String(request.query || '').trim();
-    const cacheKey = request.cacheKey || `${request.market || ''}|${query}|${request.topK || 8}`;
+    const routeNamespace = this.providers.map((provider) => provider.name).join('>') || 'none';
+    const requestKey = request.cacheKey || `${request.market || ''}|${query}|${request.topK || 8}`;
+    const cacheKey = `${routeNamespace}|${requestKey}`;
     const cached = this.cache?.get(cacheKey);
     if (cached) return { ...cached, cacheHit: true, liveSearchExecuted: false };
     if (!this.providers.length) {

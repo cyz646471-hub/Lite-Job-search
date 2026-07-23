@@ -23,6 +23,7 @@ test('skill documents every CLI workflow and safety boundary', async () => {
 
 test('skill bundles runnable script and progressive market references', async () => {
   for (const relative of [
+    'scripts/run-search.mjs',
     'scripts/run-search.ps1',
     'references/china-market.md',
     'references/north-america-market.md',
@@ -31,4 +32,3 @@ test('skill bundles runnable script and progressive market references', async ()
     await access(new URL(relative, skillRoot));
   }
 });
-

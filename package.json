@@ -10,6 +10,14 @@
   "exports": {
     ".": "./src/index.mjs"
   },
+  "files": [
+    ".agents/skills/lite-job-search",
+    "bin",
+    "config",
+    "engine",
+    "scripts",
+    "src"
+  ],
   "scripts": {
     "test": "node --test",
     "doctor": "node ./bin/lite-job-search.mjs doctor",
@@ -30,7 +38,6 @@
   "license": "MIT",
   "dependencies": {
     "dotenv": "^17.0.0",
-    "exceljs": "^4.4.0",
     "js-yaml": "^4.1.1",
     "playwright": "1.61.1",
     "tldts": "7.4.9"

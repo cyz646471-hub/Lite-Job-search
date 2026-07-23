@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { SearchRouter, describeSearchMode } from '../src/search/router.mjs';
+import { MemorySearchCache } from '../src/runtime/cache.mjs';
 
 test('describeSearchMode distinguishes no, single and fallback providers', () => {
   assert.equal(describeSearchMode([]).mode, 'no_provider');
@@ -62,4 +63,23 @@ test('SearchRouter does not claim live search for manual providers', async () =>
   }]);
   const result = await router.search({ query: 'Acme careers' });
   assert.equal(result.liveSearchExecuted, false);
+});
+
+test('SearchRouter isolates cache entries by provider route', async () => {
+  const cache = new MemorySearchCache();
+  const manual = new SearchRouter([{
+    name: 'manual',
+    configured: true,
+    search: async () => ({ status: 'ok', items: [{ url: 'https://manual.example' }], networkRequests: 0 }),
+  }], { cache });
+  await manual.search({ query: 'Acme', cacheKey: 'NA|Acme' });
+
+  const api = new SearchRouter([{
+    name: 'tavily',
+    configured: true,
+    search: async () => ({ status: 'ok', items: [{ url: 'https://api.example' }], networkRequests: 1 }),
+  }], { cache });
+  const result = await api.search({ query: 'Acme', cacheKey: 'NA|Acme' });
+  assert.equal(result.items[0].url, 'https://api.example');
+  assert.equal(result.cacheHit, undefined);
 });

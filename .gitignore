@@ -9,6 +9,6 @@ logs/
 *.log
 *.tmp
 *.xlsx
+*.tgz
 .DS_Store
 Thumbs.db
-

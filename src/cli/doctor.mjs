@@ -6,6 +6,15 @@ export function buildDoctorReport({ config, providers, providerOrder = [] } = {}
   const apifyConfigured = providers.apify?.configured === true || config.providers.apify.configured;
   const browserSessionRequired = config.browser.baiduMode === 'chrome';
   return {
+    providerCodeImplemented: [
+      'baidu',
+      'baidu_chrome',
+      'tavily',
+      'brave',
+      'apify_google',
+      'manual',
+      'deterministic_official_discovery',
+    ],
     searchMode: mode.mode,
     primaryProvider: mode.primary,
     fallbackProvider: mode.fallback,
@@ -14,14 +23,16 @@ export function buildDoctorReport({ config, providers, providerOrder = [] } = {}
     ),
     browserBaidu: browserSessionRequired ? 'browser_session_required' : 'disabled',
     networkConnectivity: 'not_tested',
+    connectivityVerified: false,
     timeoutMs: config.search.timeoutMs,
     dailyQueryBudget: config.search.dailyQueryBudget,
     cache: {
       status: 'configured',
       ttlDays: config.search.cacheTtlDays,
     },
-    canRunLiveSearch: generic.length > 0 || apifyConfigured,
+    canRunLiveSearch: generic.length > 0,
+    canRunApifyBatch: apifyConfigured,
     liveSearchExecuted: false,
+    benchmarkCompleted: false,
   };
 }
-

@@ -130,10 +130,10 @@ Preserve audit fields and all source URLs during conversion.
 Run a single search from any working directory:
 
 ```powershell
-& ".agents\skills\lite-job-search\scripts\run-search.ps1" -Market CN -Company "小红书"
+node ".agents\skills\lite-job-search\scripts\run-search.mjs" search --market CN --company "小红书" --json
 ```
 
-The script resolves the repository root and invokes the same CLI; it does not use global Career OP state.
+The Node runner is preferred because it is not affected by PowerShell execution policy. `run-search.ps1` remains available on Windows. Both resolve the repository root and invoke the same CLI; neither uses global Career OP state.
 
 ## Report results
 

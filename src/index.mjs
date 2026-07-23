@@ -21,6 +21,16 @@ export {
   scoreCandidate,
 } from '../engine/upstream/planner/site-discovery.mjs';
 export {
+  buildScanArgs,
+  parseScannerJson,
+  runAtsDiscovery,
+} from '../engine/upstream/planner/discovery.mjs';
+export {
+  normalizeCnSources,
+  runCnDiscovery,
+} from '../engine/upstream/planner/cn-discovery.mjs';
+export { runCnIndexDiscovery } from '../engine/upstream/planner/cn-index-discovery.mjs';
+export {
   boundedSurfaceDrill,
   classifySurfacePage,
 } from '../engine/upstream/planner/cn-surface-drill.mjs';
