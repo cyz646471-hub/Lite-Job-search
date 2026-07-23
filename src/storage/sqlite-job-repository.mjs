@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -6,9 +6,7 @@ import Database from 'better-sqlite3';
 
 import { assertMarketDiscoveryRepository } from '../ports/job-repository.mjs';
 
-const MIGRATION_FILE = fileURLToPath(
-  new URL('./migrations/001-market-discovery.sql', import.meta.url),
-);
+const MIGRATION_DIRECTORY = fileURLToPath(new URL('./migrations/', import.meta.url));
 
 function encode(value, fallback) {
   return JSON.stringify(value ?? fallback);
@@ -32,10 +30,13 @@ function mapCompany(row, aliases = [], domains = []) {
   return {
     id: row.id,
     canonicalName: row.canonical_name,
+    chineseName: row.chinese_name || null,
+    englishName: row.english_name || null,
     aliases,
     primaryOfficialDomain: row.primary_official_domain,
     officialDomains: domains,
     industryTags: decode(row.industry_tags_json, []),
+    countryRegion: row.country_region || null,
     market: row.market,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -64,6 +65,7 @@ function mapPortal(row, evidence = []) {
     pageType: row.page_type,
     verificationStatus: row.verification_status,
     confidenceScore: row.confidence_score,
+    recruitmentTypes: decode(row.recruitment_types_json, []),
     evidence,
     firstSeenAt: row.first_seen_at,
     lastVerifiedAt: row.last_verified_at,
@@ -119,24 +121,48 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
   let statements;
 
   function migrate() {
-    database.exec(readFileSync(MIGRATION_FILE, 'utf8'));
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        name TEXT PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      )
+    `);
+    const applied = database.prepare('SELECT name FROM schema_migrations');
+    const markApplied = database.prepare(`
+      INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)
+    `);
+    const appliedNames = new Set(applied.all().map((row) => row.name));
+    for (const name of readdirSync(MIGRATION_DIRECTORY)
+      .filter((entry) => entry.endsWith('.sql'))
+      .sort()) {
+      if (appliedNames.has(name)) continue;
+      database.transaction(() => {
+        database.exec(readFileSync(path.join(MIGRATION_DIRECTORY, name), 'utf8'));
+        markApplied.run(name, new Date().toISOString());
+      })();
+    }
     statements = {
       upsertCompany: database.prepare(`
         INSERT INTO companies (
-          id, canonical_name, market, primary_official_domain,
-          industry_tags_json, created_at, updated_at
+          id, canonical_name, chinese_name, english_name, market,
+          primary_official_domain, industry_tags_json, country_region,
+          created_at, updated_at
         ) VALUES (
-          @id, @canonicalName, @market, @primaryOfficialDomain,
-          @industryTagsJson, @createdAt, @updatedAt
+          @id, @canonicalName, @chineseName, @englishName, @market,
+          @primaryOfficialDomain, @industryTagsJson, @countryRegion,
+          @createdAt, @updatedAt
         )
         ON CONFLICT(id) DO UPDATE SET
           canonical_name = excluded.canonical_name,
+          chinese_name = COALESCE(companies.chinese_name, excluded.chinese_name),
+          english_name = COALESCE(companies.english_name, excluded.english_name),
           market = excluded.market,
           primary_official_domain = COALESCE(
             excluded.primary_official_domain,
             companies.primary_official_domain
           ),
           industry_tags_json = excluded.industry_tags_json,
+          country_region = COALESCE(companies.country_region, excluded.country_region),
           updated_at = excluded.updated_at
       `),
       companyById: database.prepare('SELECT * FROM companies WHERE id = ?'),
@@ -149,10 +175,12 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       upsertPortal: database.prepare(`
         INSERT INTO career_portals (
           id, company_id, url, canonical_url, registrable_domain, ats_type,
-          page_type, verification_status, confidence_score, first_seen_at, last_verified_at
+          page_type, verification_status, confidence_score, recruitment_types_json,
+          first_seen_at, last_verified_at
         ) VALUES (
           @id, @companyId, @url, @canonicalUrl, @registrableDomain, @atsType,
-          @pageType, @verificationStatus, @confidenceScore, @firstSeenAt, @lastVerifiedAt
+          @pageType, @verificationStatus, @confidenceScore, @recruitmentTypesJson,
+          @firstSeenAt, @lastVerifiedAt
         )
         ON CONFLICT(id) DO UPDATE SET
           company_id = excluded.company_id,
@@ -163,6 +191,7 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           page_type = excluded.page_type,
           verification_status = excluded.verification_status,
           confidence_score = excluded.confidence_score,
+          recruitment_types_json = excluded.recruitment_types_json,
           last_verified_at = excluded.last_verified_at
       `),
       portalStatus: database.prepare(`
@@ -262,7 +291,28 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
   function upsertCompany(company) {
     requireMigration();
     return withTransaction(() => {
-      const existing = statements.companyById.get(company.id);
+      const normalized = (value) => String(value || '').replace(/\s+/g, '').toLowerCase();
+      const incomingNames = new Set([
+        company.canonicalName,
+        company.chineseName,
+        company.englishName,
+        ...(company.aliases || []),
+      ].map(normalized).filter(Boolean));
+      const incomingDomains = new Set(company.officialDomains || []);
+      const mergeTarget = listCompanies().find((item) => (
+        item.id === company.id
+        || item.market === company.market && (
+          item.officialDomains.some((domain) => incomingDomains.has(domain))
+          || [
+            item.canonicalName,
+            item.chineseName,
+            item.englishName,
+            ...item.aliases,
+          ].map(normalized).some((name) => incomingNames.has(name))
+        )
+      ));
+      const targetId = mergeTarget?.id || company.id;
+      const existing = statements.companyById.get(targetId);
       const industryTags = [
         ...new Set([
           ...decode(existing?.industry_tags_json, []),
@@ -270,21 +320,30 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         ]),
       ];
       statements.upsertCompany.run({
-        id: company.id,
-        canonicalName: company.canonicalName,
+        id: targetId,
+        canonicalName: mergeTarget?.canonicalName || company.canonicalName,
+        chineseName: mergeTarget?.chineseName || company.chineseName || null,
+        englishName: mergeTarget?.englishName || company.englishName || null,
         market: company.market,
         primaryOfficialDomain: company.primaryOfficialDomain ?? null,
         industryTagsJson: encode(industryTags, []),
-        createdAt: company.createdAt,
+        countryRegion: mergeTarget?.countryRegion || company.countryRegion || null,
+        createdAt: mergeTarget?.createdAt || company.createdAt,
         updatedAt: company.updatedAt,
       });
-      for (const alias of [...new Set(company.aliases || [])]) {
-        statements.insertAlias.run(company.id, alias);
+      const aliases = [
+        ...(company.aliases || []),
+        ...(mergeTarget && normalized(company.canonicalName) !== normalized(mergeTarget.canonicalName)
+          ? [company.canonicalName]
+          : []),
+      ];
+      for (const alias of [...new Set(aliases)]) {
+        statements.insertAlias.run(targetId, alias);
       }
       for (const domain of [...new Set(company.officialDomains || [])]) {
-        statements.insertDomain.run(company.id, domain, company.market);
+        statements.insertDomain.run(targetId, domain, company.market);
       }
-      return company;
+      return listCompanies().find((item) => item.id === targetId);
     });
   }
 
@@ -301,6 +360,7 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       statements.upsertPortal.run({
         ...portal,
         atsType: portal.atsType || '',
+        recruitmentTypesJson: encode(portal.recruitmentTypes, []),
         lastVerifiedAt: portal.lastVerifiedAt ?? null,
       });
       if (portal.verificationStatus !== 'VERIFIED') {

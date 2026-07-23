@@ -75,6 +75,12 @@ async function createRepository(prefix = 'lite-job-market-') {
   return repository;
 }
 
+test('additive database migrations are idempotent', async (t) => {
+  const repository = await createRepository();
+  t.after(() => repository.close());
+  assert.doesNotThrow(() => repository.migrate());
+});
+
 test('SQLite repositories upsert a complete verified chain idempotently', async (t) => {
   const repository = await createRepository();
   t.after(() => repository.close());
@@ -179,6 +185,79 @@ test('runs, logs and evidence round-trip structured fields', async (t) => {
   }]);
   assert.deepEqual(repository.listDiscoveryLogs()[0].expandedKeywords, ['AI PM']);
   assert.deepEqual(repository.listDiscoveryLogs()[0].metadata, { score: 80 });
+});
+
+test('company knowledge base merges aliases and bilingual names by official domain', async (t) => {
+  const repository = await createRepository();
+  t.after(() => repository.close());
+
+  const first = repository.upsertCompany(createCompany({
+    id: 'company-byte-cn',
+    canonicalName: '字节跳动',
+    chineseName: '字节跳动',
+    aliases: ['今日头条'],
+    primaryOfficialDomain: 'bytedance.com',
+    officialDomains: ['bytedance.com'],
+    industryTags: ['互联网'],
+    countryRegion: '中国大陆',
+    market: 'CN',
+  }));
+  const merged = repository.upsertCompany(createCompany({
+    id: 'company-byte-en',
+    canonicalName: 'ByteDance',
+    englishName: 'ByteDance',
+    aliases: ['TikTok parent'],
+    primaryOfficialDomain: 'bytedance.com',
+    officialDomains: ['bytedance.com'],
+    industryTags: ['AI'],
+    countryRegion: 'China',
+    market: 'CN',
+  }));
+
+  assert.equal(merged.id, first.id);
+  assert.equal(repository.listCompanies().length, 1);
+  const stored = repository.listCompanies()[0];
+  assert.equal(stored.id, 'company-byte-cn');
+  assert.equal(stored.canonicalName, '字节跳动');
+  assert.equal(stored.chineseName, '字节跳动');
+  assert.equal(stored.englishName, 'ByteDance');
+  assert.deepEqual(stored.aliases, ['ByteDance', 'TikTok parent', '今日头条']);
+  assert.equal(stored.primaryOfficialDomain, 'bytedance.com');
+  assert.deepEqual(stored.officialDomains, ['bytedance.com']);
+  assert.deepEqual(new Set(stored.industryTags), new Set(['AI', '互联网']));
+  assert.equal(stored.market, 'CN');
+  assert.equal(stored.countryRegion, '中国大陆');
+});
+
+test('career portal knowledge retains recruitment types and evidence', async (t) => {
+  const repository = await createRepository();
+  const company = createCompany();
+  t.after(() => repository.close());
+  repository.upsertCompany(company);
+  const portal = createPortal({
+    id: 'portal-recruitment-types',
+    companyId: company.id,
+    canonicalUrl: 'https://jobs.example.com/',
+    registrableDomain: 'example.com',
+    atsType: 'MOKA',
+    pageType: 'CAREER_HOME',
+    verificationStatus: 'VERIFIED',
+    confidenceScore: 90,
+    recruitmentTypes: ['campus', 'internship'],
+  });
+  repository.upsertCareerPortal(portal);
+  repository.replaceVerificationEvidence(portal.id, [{
+    code: 'official_domain_match',
+    direction: 'POSITIVE',
+    weight: 35,
+    observedValue: 'example.com',
+    sourceUrl: portal.canonicalUrl,
+    observedAt: NOW,
+  }]);
+
+  const stored = repository.listCareerPortals()[0];
+  assert.deepEqual(stored.recruitmentTypes, ['campus', 'internship']);
+  assert.equal(stored.evidence[0].code, 'official_domain_match');
 });
 
 test('downgrading a portal removes its openings from the formal result set', async (t) => {

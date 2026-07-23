@@ -16,6 +16,8 @@ export const VERIFICATION_STATUSES = Object.freeze([
   'BLOCKED',
 ]);
 
+const RECRUITMENT_TYPES = new Set(['campus', 'internship', 'experienced']);
+
 function cleanUrl(value) {
   try {
     const url = new URL(String(value || '').trim());
@@ -47,6 +49,11 @@ export function createCareerPortal(input = {}, {
     pageType: input.pageType,
     verificationStatus: input.verificationStatus,
     confidenceScore: Math.max(0, Math.min(100, Number(input.confidenceScore) || 0)),
+    recruitmentTypes: Object.freeze([
+      ...new Set((input.recruitmentTypes || [])
+        .map((value) => String(value || '').trim().toLowerCase())
+        .filter((value) => RECRUITMENT_TYPES.has(value))),
+    ]),
     evidence: Object.freeze([...(input.evidence || [])]),
     firstSeenAt: input.firstSeenAt || now,
     lastVerifiedAt: input.lastVerifiedAt || null,

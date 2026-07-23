@@ -125,15 +125,18 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     for (const candidate of discovery.candidates) {
       if (counters.jobsStored >= intent.targetCount) break;
 
-      const company = createCompany({
+      let company = createCompany({
         id: ids.company(candidate),
         canonicalName: candidate.company,
+        chineseName: candidate.chineseName || null,
+        englishName: candidate.englishName || null,
         aliases: candidate.aliases || [],
         primaryOfficialDomain: candidate.confirmedOfficialDomain || null,
         officialDomains: candidate.confirmedOfficialDomain
           ? [candidate.confirmedOfficialDomain]
           : [],
         industryTags: intent.industryTags,
+        countryRegion: candidate.countryRegion || (intent.market === 'CN' ? '中国大陆' : null),
         market: intent.market,
       }, { now: now() });
       counters.companiesDiscovered += 1;
@@ -207,6 +210,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
           sourceUrl: item.sourceUrl || page.finalUrl || candidate.url,
           observedAt: item.observedAt || observedAt,
         }));
+      company = repository.upsertCompany(company);
       const portal = createCareerPortal({
         id: ids.portal({ ...candidate, url: page.finalUrl || candidate.url }),
         companyId: company.id,
@@ -217,12 +221,12 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         pageType: decision.pageType,
         verificationStatus: decision.verificationStatus,
         confidenceScore: decision.confidenceScore,
+        recruitmentTypes: candidate.recruitmentTypes || [],
         evidence: portalEvidence,
         lastVerifiedAt: observedAt,
       }, { now: observedAt });
 
       repository.withTransaction(() => {
-        repository.upsertCompany(company);
         repository.upsertCareerPortal(portal);
         repository.replaceVerificationEvidence(portal.id, portalEvidence);
       });

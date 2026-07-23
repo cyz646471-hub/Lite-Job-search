@@ -79,6 +79,24 @@ test('Company normalizes domains and protects input arrays', () => {
   assert.ok(Object.isFrozen(company));
 });
 
+test('Company carries bilingual identity and country region', () => {
+  const company = createCompany({
+    id: 'company-bilingual',
+    canonicalName: 'ByteDance',
+    chineseName: '字节跳动',
+    englishName: 'ByteDance',
+    aliases: ['抖音集团'],
+    officialDomains: ['bytedance.com'],
+    industryTags: ['互联网'],
+    countryRegion: '中国大陆',
+    market: 'CN',
+  });
+
+  assert.equal(company.chineseName, '字节跳动');
+  assert.equal(company.englishName, 'ByteDance');
+  assert.equal(company.countryRegion, '中国大陆');
+});
+
 test('CareerPortal validates page and verification status', () => {
   const portal = createCareerPortal({
     id: 'portal-1',
@@ -100,6 +118,22 @@ test('CareerPortal validates page and verification status', () => {
     pageType: 'LIST',
     verificationStatus: 'VERIFIED',
   }), /pageType/);
+});
+
+test('CareerPortal preserves recruitment types', () => {
+  const portal = createCareerPortal({
+    id: 'portal-types',
+    companyId: 'company-1',
+    canonicalUrl: 'https://jobs.example.com/',
+    registrableDomain: 'example.com',
+    atsType: 'MOKA',
+    pageType: 'CAREER_HOME',
+    verificationStatus: 'VERIFIED',
+    confidenceScore: 90,
+    recruitmentTypes: ['campus', 'internship', 'experienced', 'campus'],
+  });
+
+  assert.deepEqual(portal.recruitmentTypes, ['campus', 'internship', 'experienced']);
 });
 
 test('JobOpening uses source job id before URL fallback', () => {

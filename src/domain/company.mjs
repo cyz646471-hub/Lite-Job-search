@@ -33,10 +33,13 @@ export function createCompany(input = {}, {
   return Object.freeze({
     id: String(input.id),
     canonicalName,
+    chineseName: clean(input.chineseName) || null,
+    englishName: clean(input.englishName) || null,
     aliases: Object.freeze(uniqueStrings(input.aliases)),
     primaryOfficialDomain,
     officialDomains: Object.freeze(officialDomains),
     industryTags: Object.freeze(uniqueStrings(input.industryTags)),
+    countryRegion: clean(input.countryRegion) || null,
     market: normalizeMarket(input.market),
     createdAt: input.createdAt || now,
     updatedAt: input.updatedAt || now,
