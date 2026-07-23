@@ -101,6 +101,10 @@ export async function discoverMarketJobs(input, dependencies = {}) {
   const extractionSuccessPortalIds = new Set();
   const storedJobIds = new Set();
   const usableApplyJobIds = new Set();
+  const confidenceByPortalId = new Map();
+  const portalDecisionsById = new Map();
+  const storedJobsById = new Map();
+  const jobIdsByPortalId = new Map();
   repository.beginRun({ id: runId, intent, startedAt: now() });
   let liveSearchExecuted = false;
 
@@ -152,6 +156,10 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         searchQueries: Object.freeze([]),
         candidateUrlCount: 0,
         candidateCompanyCount: 0,
+        candidateUrls: Object.freeze([]),
+        candidateCompanies: Object.freeze([]),
+        portalDecisions: Object.freeze([]),
+        extractedJobs: Object.freeze([]),
         officialVerifiedCount: 0,
         reviewCount: 0,
         rejectedCount: 0,
@@ -334,8 +342,20 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       if (!evaluatedPortalIds.has(portal.id)) {
         evaluatedPortalIds.add(portal.id);
         qualityObservations.portalsEvaluated = evaluatedPortalIds.size;
-        qualityObservations.confidenceScores.push(decision.confidenceScore);
       }
+      confidenceByPortalId.set(portal.id, decision.confidenceScore);
+      qualityObservations.confidenceScores = [...confidenceByPortalId.values()];
+      portalDecisionsById.set(portal.id, Object.freeze({
+        portalId: portal.id,
+        companyId: company.id,
+        companyName: company.canonicalName,
+        url: portal.canonicalUrl,
+        atsType: portal.atsType,
+        pageType: portal.pageType,
+        verificationStatus: portal.verificationStatus,
+        confidenceScore: portal.confidenceScore,
+        evidence: portal.evidence,
+      }));
 
       const outcome = decision.verificationStatus === 'VERIFIED'
         ? 'VERIFIED_PORTAL'
@@ -349,18 +369,32 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         llmAdvisory: advisory?.observedValue || null,
       }, portal.canonicalUrl);
 
-      if (['REVIEW', 'BLOCKED'].includes(decision.verificationStatus)) {
-        reviewPortalIds.add(portal.id);
-        counters.reviewRequired = reviewPortalIds.size;
-      }
+      reviewPortalIds.delete(portal.id);
+      rejectedPortalIds.delete(portal.id);
+      blockedPortalIds.delete(portal.id);
       if (decision.verificationStatus === 'BLOCKED') {
         blockedPortalIds.add(portal.id);
-        counters.blocked = blockedPortalIds.size;
+        reviewPortalIds.add(portal.id);
       }
-      if (decision.verificationStatus === 'REJECTED') {
-        rejectedPortalIds.add(portal.id);
-        counters.rejected = rejectedPortalIds.size;
+      if (decision.verificationStatus === 'REVIEW') reviewPortalIds.add(portal.id);
+      if (decision.verificationStatus === 'REJECTED') rejectedPortalIds.add(portal.id);
+      if (decision.verificationStatus !== 'VERIFIED') {
+        verifiedPortalIds.delete(portal.id);
+        extractionSuccessPortalIds.delete(portal.id);
+        for (const jobId of jobIdsByPortalId.get(portal.id) || []) {
+          storedJobIds.delete(jobId);
+          usableApplyJobIds.delete(jobId);
+          storedJobsById.delete(jobId);
+        }
+        jobIdsByPortalId.delete(portal.id);
       }
+      counters.reviewRequired = reviewPortalIds.size;
+      counters.blocked = blockedPortalIds.size;
+      counters.rejected = rejectedPortalIds.size;
+      counters.portalsVerified = verifiedPortalIds.size;
+      counters.jobsStored = storedJobIds.size;
+      counters.usableApplyEntries = usableApplyJobIds.size;
+      qualityObservations.extractionSuccesses = extractionSuccessPortalIds.size;
       if (decision.verificationStatus !== 'VERIFIED') continue;
 
       const firstVerifiedObservation = !verifiedPortalIds.has(portal.id);
@@ -412,6 +446,10 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         if (storedJobIds.has(opening.id)) continue;
         repository.upsertJobOpening(opening);
         storedJobIds.add(opening.id);
+        storedJobsById.set(opening.id, opening);
+        const portalJobIds = jobIdsByPortalId.get(portal.id) || new Set();
+        portalJobIds.add(opening.id);
+        jobIdsByPortalId.set(portal.id, portalJobIds);
         counters.jobsStored = storedJobIds.size;
         if (opening.applyUrl) usableApplyJobIds.add(opening.id);
         counters.usableApplyEntries = usableApplyJobIds.size;
@@ -448,6 +486,20 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         searchQueries: discovery.searchQueries,
         candidateUrlCount: discovery.candidateUrlCount,
         candidateCompanyCount: discovery.candidateCompanyCount,
+        candidateUrls: Object.freeze(discovery.candidates.map((candidate) => candidate.url)),
+        candidateCompanies: Object.freeze([
+          ...new Map(discovery.candidates.map((candidate) => [
+            candidate.companyIdentityKey || candidate.company,
+            Object.freeze({
+              identityKey: candidate.companyIdentityKey || candidate.company,
+              name: candidate.company,
+              aliases: Object.freeze([...(candidate.aliases || [])]),
+              confirmedOfficialDomain: candidate.confirmedOfficialDomain || null,
+            }),
+          ])).values(),
+        ]),
+        portalDecisions: Object.freeze([...portalDecisionsById.values()]),
+        extractedJobs: Object.freeze([...storedJobsById.values()]),
         officialVerifiedCount: counters.portalsVerified,
         reviewCount: counters.reviewRequired,
         rejectedCount: counters.rejected,

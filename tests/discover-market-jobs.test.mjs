@@ -186,6 +186,11 @@ test('AI 产品经理 intent stores only jobs from verified portals', async (t) 
   assert.equal(result.report.quality.jobExtractionSuccessRate.value, 1);
   assert.equal(result.report.quality.falsePositiveRate.numerator, 1);
   assert.equal(result.report.quality.averageConfidenceScore.sampleSize, 3);
+  assert.equal(result.report.candidateUrls.length, 3);
+  assert.equal(result.report.candidateCompanies.length, 3);
+  assert.equal(result.report.portalDecisions.length, 3);
+  assert.equal(result.report.extractedJobs.length, 1);
+  assert.equal(result.report.extractedJobs[0].title, 'AI 产品经理');
   assert.equal(repository.listJobOpenings()[0].title, 'AI 产品经理');
   assert.ok(repository.listDiscoveryLogs().some((item) => item.outcome === 'VERIFIED_PORTAL'));
 });
@@ -330,6 +335,65 @@ test('redirect aliases converge on one canonical portal without failing the run'
   assert.equal(result.portalsVerified, 1);
   assert.equal(result.jobsStored, 1);
   assert.equal(result.report.quality.officialVerificationRate.denominator, 1);
+});
+
+test('later rejection of a canonical portal reconciles report counters with storage', async (t) => {
+  const first = 'https://redirect.example/jobs-a';
+  const second = 'https://redirect.example/jobs-b';
+  const finalUrl = 'https://jobs.example.com/openings';
+  const { repository, dependencies } = await createHarness({
+    searchItems: [
+      {
+        company: '示例智能科技',
+        url: first,
+        confirmedOfficialDomain: 'example.com',
+        officialDomainSource: 'manual_verified',
+        rank: 1,
+      },
+      {
+        company: '示例智能科技',
+        url: second,
+        confirmedOfficialDomain: 'example.com',
+        officialDomainSource: 'manual_verified',
+        rank: 2,
+      },
+    ],
+    finalUrls: { [first]: finalUrl, [second]: finalUrl },
+  });
+  t.after(() => repository.close());
+  dependencies.verificationAdapter.inspect = async ({ candidate }) => (
+    candidate.url === second
+      ? {
+        pageType: 'JOB_LIST',
+        atsType: '',
+        registrableDomain: 'example.com',
+        evidence: [{ code: 'aggregator_domain' }],
+      }
+      : {
+        pageType: 'JOB_LIST',
+        atsType: '',
+        registrableDomain: 'example.com',
+        evidence: [
+          { code: 'official_domain_match' },
+          { code: 'recruitment_structure' },
+          { code: 'apply_action' },
+          { code: 'official_site_backlink' },
+        ],
+      }
+  );
+
+  const result = await discoverMarketJobs(INTENT, dependencies);
+
+  assert.equal(result.portalsVerified, 0);
+  assert.equal(result.rejected, 1);
+  assert.equal(result.jobsStored, 0);
+  assert.equal(repository.listCareerPortals()[0].verificationStatus, 'REJECTED');
+  assert.equal(repository.listJobOpenings().length, 0);
+  assert.equal(result.report.portalDecisions.length, 1);
+  assert.equal(result.report.portalDecisions[0].verificationStatus, 'REJECTED');
+  assert.deepEqual(result.report.extractedJobs, []);
+  assert.equal(result.report.quality.officialVerificationRate.value, 0);
+  assert.equal(result.report.quality.jobExtractionSuccessRate.value, 0);
 });
 
 test('failures after search preserve whether live search actually executed', async (t) => {

@@ -245,6 +245,31 @@ test('company knowledge base merges aliases and bilingual names by official doma
   assert.equal(stored.countryRegion, '中国大陆');
 });
 
+test('company knowledge base matches an incoming alias to an existing formal name', async (t) => {
+  const repository = await createRepository();
+  t.after(() => repository.close());
+  const first = repository.upsertCompany(createCompany({
+    id: 'company-byte',
+    canonicalName: 'ByteDance',
+    aliases: [],
+    primaryOfficialDomain: null,
+    officialDomains: [],
+    market: 'CN',
+  }));
+  const merged = repository.upsertCompany(createCompany({
+    id: 'company-alias-claim',
+    canonicalName: '字节跳动',
+    chineseName: '字节跳动',
+    aliases: ['ByteDance'],
+    primaryOfficialDomain: null,
+    officialDomains: [],
+    market: 'CN',
+  }));
+
+  assert.equal(merged.id, first.id);
+  assert.equal(repository.listCompanies().length, 1);
+});
+
 test('career portal knowledge retains recruitment types and evidence', async (t) => {
   const repository = await createRepository();
   const company = createCompany();

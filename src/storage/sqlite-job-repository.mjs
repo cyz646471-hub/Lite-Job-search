@@ -360,7 +360,13 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         ].map(normalized).some((name) => incomingCanonicalNames.has(name))),
         candidates.filter((item) => {
           const itemAliases = new Set((item.aliases || []).map(normalized).filter(Boolean));
+          const itemCanonicalNames = new Set([
+            item.canonicalName,
+            item.chineseName,
+            item.englishName,
+          ].map(normalized).filter(Boolean));
           return [...incomingAliases].some((alias) => itemAliases.has(alias))
+            || [...incomingAliases].some((alias) => itemCanonicalNames.has(alias))
             || [...incomingCanonicalNames].some((name) => itemAliases.has(name));
         }),
       ].filter((group) => group.length > 0);
