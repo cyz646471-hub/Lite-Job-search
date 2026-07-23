@@ -131,7 +131,11 @@ export async function createMarketDiscoveryRuntime({
     searchSource,
     verificationAdapter,
     pageAdvisoryClassifier: planningModel.configured
-      ? (page) => classifyPageAdvisory(page, { planningModel, observedAt: now() })
+      ? (page, { runId } = {}) => classifyPageAdvisory(page, {
+        planningModel,
+        observedAt: now(),
+        runId,
+      })
       : null,
     jobExtractor,
     repository,

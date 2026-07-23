@@ -164,3 +164,36 @@ test('provider access controls remain BLOCKED instead of becoming partial', asyn
   assert.equal(result.status, 'BLOCKED');
   assert.equal(result.liveSearchExecuted, true);
 });
+
+test('a later successful query makes earlier provider failure PARTIAL, not FAILED', async () => {
+  let calls = 0;
+  const result = await discoverCompanies({
+    intent,
+    runId: 'run-ordered-status',
+    queryPlan: {
+      queries: [{ text: 'first', topK: 5 }, { text: 'second', topK: 5 }],
+    },
+    searchSource: {
+      async search() {
+        calls += 1;
+        return calls === 1
+          ? {
+            status: 'provider_error',
+            provider: 'fixture',
+            error: 'temporary failure',
+            liveSearchExecuted: true,
+            items: [],
+          }
+          : {
+            status: 'ok',
+            provider: 'fixture',
+            liveSearchExecuted: true,
+            items: [{ company: 'Example', url: 'https://example.com/jobs' }],
+          };
+      },
+    },
+  });
+
+  assert.equal(result.status, 'PARTIAL');
+  assert.equal(result.candidates.length, 1);
+});

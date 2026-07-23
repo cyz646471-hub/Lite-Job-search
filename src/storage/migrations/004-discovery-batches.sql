@@ -24,4 +24,3 @@ CREATE TABLE IF NOT EXISTS batch_items (
 
 CREATE INDEX IF NOT EXISTS idx_batch_items_status
   ON batch_items(batch_id, status, position);
-

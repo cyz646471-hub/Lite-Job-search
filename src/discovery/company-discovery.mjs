@@ -92,7 +92,6 @@ export async function discoverCompanies({
           || 'search failed',
         ).slice(0, 240),
       }));
-      status = successfulQueries > 0 ? 'PARTIAL' : 'FAILED';
       continue;
     }
     successfulQueries += 1;
@@ -151,6 +150,16 @@ export async function discoverCompanies({
         metadata: { sourceType: candidate.sourceType },
       });
     }
+  }
+
+  if (!new Set([
+    'DEFERRED_BY_BUDGET',
+    'NOT_CONFIGURED',
+    'BLOCKED',
+  ]).has(status)) {
+    status = failures.length > 0
+      ? (successfulQueries > 0 ? 'PARTIAL' : 'FAILED')
+      : 'COMPLETE';
   }
 
   return Object.freeze({

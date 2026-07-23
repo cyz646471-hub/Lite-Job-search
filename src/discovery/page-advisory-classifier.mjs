@@ -11,6 +11,7 @@ const LABELS = new Set([
 export async function classifyPageAdvisory(page, {
   planningModel,
   observedAt = new Date().toISOString(),
+  runId = null,
 } = {}) {
   const model = assertPlanningModel(planningModel);
   const raw = validatePlanningOutput(await model.generate({
@@ -20,6 +21,7 @@ export async function classifyPageAdvisory(page, {
       title: String(page.title || '').slice(0, 300),
       text: String(page.text || '').slice(0, 2_000),
     },
+    context: { runId },
   }));
   const label = LABELS.has(raw.label) ? raw.label : 'UNKNOWN';
   return createVerificationEvidence({

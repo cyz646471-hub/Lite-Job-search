@@ -3,6 +3,26 @@ import { createHash, randomUUID } from 'node:crypto';
 
 const MAX_INPUT_BYTES = 64 * 1024;
 const MAX_OUTPUT_TOKENS = 2_000;
+const VOLATILE_CACHE_KEYS = new Set([
+  'id',
+  'createdAt',
+  'updatedAt',
+  'startedAt',
+  'completedAt',
+]);
+
+function semanticCacheValue(value) {
+  if (Array.isArray(value)) return value.map(semanticCacheValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value)
+        .filter((key) => !VOLATILE_CACHE_KEYS.has(key))
+        .sort()
+        .map((key) => [key, semanticCacheValue(value[key])]),
+    );
+  }
+  return value;
+}
 
 function validateEndpoint(endpoint) {
   if (!endpoint) return null;
@@ -40,8 +60,8 @@ export function createOpenAiCompatiblePlanningAdapter({
   fetcher = globalThis.fetch,
   cache = null,
   usageRecorder = null,
-  inputUsdPerMillionTokens = 0,
-  outputUsdPerMillionTokens = 0,
+  inputUsdPerMillionTokens = null,
+  outputUsdPerMillionTokens = null,
   cacheTtlMs = 30 * 86_400_000,
 } = {}) {
   const normalizedEndpoint = validateEndpoint(String(endpoint || '').trim());
@@ -59,7 +79,7 @@ export function createOpenAiCompatiblePlanningAdapter({
         throw new Error('LLM planning input is too large');
       }
       const promptHash = createHash('sha256')
-        .update(`${normalizedModel}|${prompt}`)
+        .update(`${normalizedModel}|${task}|${JSON.stringify(semanticCacheValue(input))}`)
         .digest('hex');
       const cacheKey = `llm-planning|${promptHash}`;
       const cached = cache?.get(cacheKey);
@@ -79,7 +99,7 @@ export function createOpenAiCompatiblePlanningAdapter({
           errorMessage: null,
           createdAt: new Date().toISOString(),
         });
-        return structuredClone(cached);
+        return validatePlanningOutput(structuredClone(cached));
       }
 
       const controller = new AbortController();
@@ -131,11 +151,22 @@ export function createOpenAiCompatiblePlanningAdapter({
         const outputTokens = Number.isInteger(payload?.usage?.completion_tokens)
           ? payload.usage.completion_tokens
           : null;
-        const costUsd = inputTokens == null || outputTokens == null
+        const inputPrice = inputUsdPerMillionTokens == null
+          ? null
+          : Number(inputUsdPerMillionTokens);
+        const outputPrice = outputUsdPerMillionTokens == null
+          ? null
+          : Number(outputUsdPerMillionTokens);
+        const costUsd = inputTokens == null
+          || outputTokens == null
+          || inputPrice == null
+          || outputPrice == null
+          || !Number.isFinite(inputPrice)
+          || !Number.isFinite(outputPrice)
           ? null
           : Number((
-            inputTokens * Number(inputUsdPerMillionTokens || 0)
-            + outputTokens * Number(outputUsdPerMillionTokens || 0)
+            inputTokens * inputPrice
+            + outputTokens * outputPrice
           ) / 1_000_000);
         cache?.set(cacheKey, output, { ttlMs: cacheTtlMs });
         await usageRecorder?.({

@@ -3,6 +3,12 @@ function positiveInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function optionalNumber(value) {
+  if (value == null || String(value).trim() === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function loadRuntimeConfig(env = process.env) {
   const primary = String(env.SEARCH_PROVIDER_PRIMARY || 'none').toLowerCase();
   const fallback = String(env.SEARCH_PROVIDER_FALLBACK || 'none').toLowerCase();
@@ -30,8 +36,8 @@ export function loadRuntimeConfig(env = process.env) {
       model: String(env.LITE_JOB_LLM_MODEL || ''),
       configured: Boolean(env.LITE_JOB_LLM_ENDPOINT && env.LITE_JOB_LLM_MODEL),
       timeoutMs: positiveInteger(env.LITE_JOB_LLM_TIMEOUT_MS, 30_000),
-      inputUsdPerMillionTokens: Number(env.LITE_JOB_LLM_INPUT_USD_PER_MILLION || 0),
-      outputUsdPerMillionTokens: Number(env.LITE_JOB_LLM_OUTPUT_USD_PER_MILLION || 0),
+      inputUsdPerMillionTokens: optionalNumber(env.LITE_JOB_LLM_INPUT_USD_PER_MILLION),
+      outputUsdPerMillionTokens: optionalNumber(env.LITE_JOB_LLM_OUTPUT_USD_PER_MILLION),
     },
     database: {
       file: String(env.LITE_JOB_DATABASE_FILE || ''),

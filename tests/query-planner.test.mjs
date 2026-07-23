@@ -117,6 +117,7 @@ test('query planner rejects an empty usable plan', async () => {
 });
 
 test('low-confidence page classification creates neutral advisory evidence', async () => {
+  let observedContext;
   const model = fakePlanningModel({
     classify_page: {
       label: 'LIKELY_CAREER',
@@ -124,6 +125,11 @@ test('low-confidence page classification creates neutral advisory evidence', asy
       rationale: '页面包含职位列表语义',
     },
   });
+  const originalGenerate = model.generate;
+  model.generate = async (request) => {
+    observedContext = request.context;
+    return originalGenerate(request);
+  };
 
   const advisory = await classifyPageAdvisory({
     url: 'https://tenant.example/jobs',
@@ -132,10 +138,12 @@ test('low-confidence page classification creates neutral advisory evidence', asy
   }, {
     planningModel: model,
     observedAt: '2026-07-24T00:00:00.000Z',
+    runId: 'run-advisory',
   });
 
   assert.equal(advisory.code, 'llm_advisory');
   assert.equal(advisory.direction, 'NEUTRAL');
   assert.equal(advisory.weight, 0);
   assert.equal(JSON.parse(advisory.observedValue).label, 'LIKELY_CAREER');
+  assert.equal(observedContext.runId, 'run-advisory');
 });

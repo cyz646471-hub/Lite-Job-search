@@ -100,3 +100,47 @@ test('adapter caches replaceable planning calls and records observed token cost'
   assert.equal(usage[1].costUsd, 0);
   assert.doesNotMatch(JSON.stringify(usage), /fixture-secret/);
 });
+
+test('planning cache ignores volatile intent ids and timestamps', async () => {
+  let requests = 0;
+  const values = new Map();
+  const adapter = createOpenAiCompatiblePlanningAdapter({
+    endpoint: 'https://llm.example.test/v1/chat/completions',
+    model: 'fixture-model',
+    cache: {
+      get: (key) => values.get(key),
+      set: (key, value) => values.set(key, value),
+    },
+    fetcher: async () => {
+      requests += 1;
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: '{"queries":[{"text":"jobs"}]}' } }],
+      }), { status: 200 });
+    },
+  });
+  const base = { roleType: 'Backend Engineer', market: 'CN' };
+  await adapter.generate({
+    task: 'plan_queries',
+    input: { intent: { ...base, id: 'one', createdAt: '2026-01-01' } },
+  });
+  await adapter.generate({
+    task: 'plan_queries',
+    input: { intent: { ...base, id: 'two', createdAt: '2026-07-24' } },
+  });
+  assert.equal(requests, 1);
+});
+
+test('token usage keeps cost null when pricing is not configured', async () => {
+  const usage = [];
+  const adapter = createOpenAiCompatiblePlanningAdapter({
+    endpoint: 'https://llm.example.test/v1/chat/completions',
+    model: 'fixture-model',
+    usageRecorder: (record) => usage.push(record),
+    fetcher: async () => new Response(JSON.stringify({
+      choices: [{ message: { content: '{"terms":["Backend Engineer"]}' } }],
+      usage: { prompt_tokens: 100, completion_tokens: 25 },
+    }), { status: 200 }),
+  });
+  await adapter.generate({ task: 'expand_keywords', input: { roleType: '后端开发' } });
+  assert.equal(usage[0].costUsd, null);
+});

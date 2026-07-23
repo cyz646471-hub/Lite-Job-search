@@ -5,10 +5,17 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { parseTimeRange, runDiscoverCommand } from '../src/cli/discover.mjs';
 
 const root = path.resolve(fileURLToPath(new URL('../', import.meta.url)));
 const bin = path.join(root, 'bin', 'lite-job-search.mjs');
 const fixtureRoot = path.join(root, 'tests', 'fixtures', 'ai-product-manager');
+
+test('time range parser accepts days, weeks and months', () => {
+  assert.equal(parseTimeRange('近3个月'), 90);
+  assert.equal(parseTimeRange('2 weeks'), 14);
+  assert.equal(parseTimeRange('45 days'), 45);
+});
 
 function run(args, env = {}) {
   return spawnSync(process.execPath, [bin, ...args], {
@@ -70,6 +77,26 @@ test('discover without an LLM configuration reports not configured', async () =>
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).status, 'NOT_CONFIGURED');
+  assert.equal(JSON.parse(result.stdout).report.failures[0].code, 'NOT_CONFIGURED');
+});
+
+test('discover returns a structured FAILED report when runtime initialization fails', async () => {
+  const output = await runDiscoverCommand({
+    market: 'CN',
+    role: 'AI产品经理',
+  }, {
+    env: {
+      LITE_JOB_LLM_ENDPOINT: 'https://llm.example.test/v1/chat/completions',
+      LITE_JOB_LLM_MODEL: 'fixture-model',
+    },
+    runtimeFactory: async () => {
+      throw new Error('fixture runtime unavailable');
+    },
+  });
+
+  assert.equal(output.status, 'FAILED');
+  assert.equal(output.liveSearchExecuted, false);
+  assert.equal(output.report.failures[0].stage, 'runtime_initialization');
 });
 
 test('discover-batch checkpoints all items and reports missing configuration', async () => {

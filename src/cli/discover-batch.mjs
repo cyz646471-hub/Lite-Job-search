@@ -5,19 +5,26 @@ import path from 'node:path';
 import { runDiscoveryBatch } from '../application/run-discovery-batch.mjs';
 import { loadRuntimeConfig } from '../runtime/config.mjs';
 import { openSqliteMarketDiscoveryRepository } from '../storage/sqlite-job-repository.mjs';
-import { runDiscoverCommand } from './discover.mjs';
+import { parseTimeRange, runDiscoverCommand } from './discover.mjs';
 
 function normalizeItem(item, defaults = {}) {
   return {
     id: item.id || null,
     market: item.market || defaults.market || 'CN',
-    role: item.role || item.roleType,
-    industry: Array.isArray(item.industry || item.industryTags)
-      ? (item.industry || item.industryTags).join(',')
-      : item.industry || item.industryTags || '',
+    role: item.role || item.roleType || item.role_type,
+    industry: Array.isArray(item.industry || item.industryTags || item.industry_tags)
+      ? (item.industry || item.industryTags || item.industry_tags).join(',')
+      : item.industry || item.industryTags || item.industry_tags || '',
     location: item.location || '',
-    sinceDays: item.sinceDays || item.freshnessDays || item.timeRange || defaults.sinceDays || 90,
-    limit: item.limit || item.targetCount || defaults.limit || 20,
+    sinceDays: parseTimeRange(
+      item.sinceDays
+      || item.freshnessDays
+      || item.timeRange
+      || item.time_range
+      || defaults.sinceDays,
+      90,
+    ),
+    limit: item.limit || item.targetCount || item.target_count || defaults.limit || 20,
   };
 }
 
@@ -59,4 +66,3 @@ export async function runDiscoverBatchCommand(options, {
     repository.close();
   }
 }
-

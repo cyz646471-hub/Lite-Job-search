@@ -14,7 +14,6 @@ function ratio(numerator, denominator) {
       : Number((safeNumerator / safeDenominator).toFixed(4)),
   });
 }
-
 export function buildQualityReport(observations = {}) {
   const scores = (observations.confidenceScores || [])
     .map(Number)
@@ -44,4 +43,3 @@ export function buildQualityReport(observations = {}) {
     }),
   });
 }
-

@@ -41,4 +41,3 @@ test('quality report uses null when a metric has no observed denominator', () =>
   assert.equal(report.falsePositiveRate.value, null);
   assert.equal(report.averageConfidenceScore.value, null);
 });
-

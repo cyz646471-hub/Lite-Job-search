@@ -81,4 +81,3 @@ zero.
 Only public pages are fetched. Existing SSRF, redirect, timeout, response-size,
 access-control, CAPTCHA, and no-application-submission boundaries remain.
 Evidence is retained for verified, review, rejected, and blocked results.
-

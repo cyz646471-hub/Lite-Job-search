@@ -35,4 +35,3 @@ export function resolveOccupationTaxonomy({
     industryTerms: unique(industries.flatMap((item) => item.terms || [])),
   });
 }
-

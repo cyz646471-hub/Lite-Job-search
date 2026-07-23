@@ -220,6 +220,24 @@ test('run report retains provider failure reasons without claiming success', asy
   }]);
 });
 
+test('direct API returns a structured NOT_CONFIGURED report for a missing planner', async (t) => {
+  const { repository, dependencies } = await createHarness();
+  t.after(() => repository.close());
+  dependencies.planningModel = { configured: false };
+  dependencies.searchSource.search = async () => {
+    throw new Error('search must not run');
+  };
+
+  const result = await discoverMarketJobs(INTENT, dependencies);
+
+  assert.equal(result.status, 'NOT_CONFIGURED');
+  assert.equal(result.liveSearchExecuted, false);
+  assert.equal(result.report.candidateUrlCount, 0);
+  assert.equal(result.report.extractedJobCount, 0);
+  assert.equal(result.report.failures[0].stage, 'configuration');
+  assert.equal(result.report.failures[0].code, 'NOT_CONFIGURED');
+});
+
 test('rerunning the same fixture is idempotent', async (t) => {
   const { repository, dependencies } = await createHarness();
   t.after(() => repository.close());
@@ -239,6 +257,20 @@ test('unknown publication dates do not satisfy a recent-only result', async (t) 
 
   assert.equal(result.jobsStored, 0);
   assert.ok(repository.listDiscoveryLogs().some((item) => item.outcome === 'NO_RECENT_JOBS'));
+});
+
+test('location filter excludes openings outside the requested region', async (t) => {
+  const { repository, dependencies } = await createHarness();
+  t.after(() => repository.close());
+  const result = await discoverMarketJobs({
+    ...INTENT,
+    location: '北京',
+  }, dependencies);
+
+  assert.equal(result.jobsStored, 0);
+  assert.ok(repository.listDiscoveryLogs().some((item) => (
+    item.metadata.reason === 'location_mismatch'
+  )));
 });
 
 test('formal results require role relevance, ACTIVE status and a usable job entry', async (t) => {
@@ -295,6 +327,9 @@ test('redirect aliases converge on one canonical portal without failing the run'
   assert.equal(result.status, 'PARTIAL');
   assert.equal(repository.listCareerPortals().length, 1);
   assert.equal(repository.listJobOpenings().length, 1);
+  assert.equal(result.portalsVerified, 1);
+  assert.equal(result.jobsStored, 1);
+  assert.equal(result.report.quality.officialVerificationRate.denominator, 1);
 });
 
 test('failures after search preserve whether live search actually executed', async (t) => {

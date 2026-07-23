@@ -50,4 +50,3 @@ rewriting existing providers.
 - Run pack dry-run, migration compatibility, secret scan, and diff checks.
 - Request independent review, fix Critical/Important findings, and rerun all
   affected verification.
-

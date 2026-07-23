@@ -55,8 +55,8 @@ test('runtime config bounds market discovery and reports LLM readiness', () => {
     model: 'fixture-model',
     configured: true,
     timeoutMs: 1234,
-    inputUsdPerMillionTokens: 0,
-    outputUsdPerMillionTokens: 0,
+    inputUsdPerMillionTokens: null,
+    outputUsdPerMillionTokens: null,
   });
   assert.deepEqual(config.database, { file: './data/test.sqlite' });
   assert.deepEqual(config.discovery, { maxQueries: 20, maxResults: 1000 });

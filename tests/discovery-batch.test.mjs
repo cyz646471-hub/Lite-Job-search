@@ -83,3 +83,15 @@ test('batch resume skips succeeded items and retries failed only when requested'
   assert.equal(attempts, 3);
 });
 
+test('batch rejects duplicate stable item ids', async () => {
+  await assert.rejects(
+    runDiscoveryBatch({
+      batchId: 'batch-duplicate',
+      items: [{ id: 'same', role: 'A' }, { id: 'same', role: 'B' }],
+    }, {
+      repository: memoryCheckpointRepository(),
+      runItem: async () => ({ status: 'COMPLETE' }),
+    }),
+    /duplicate batch item key/,
+  );
+});

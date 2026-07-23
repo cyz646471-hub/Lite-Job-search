@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import Database from 'better-sqlite3';
 
 import { assertMarketDiscoveryRepository } from '../src/ports/job-repository.mjs';
 import { openSqliteMarketDiscoveryRepository } from '../src/storage/sqlite-job-repository.mjs';
@@ -79,6 +80,21 @@ test('additive database migrations are idempotent', async (t) => {
   const repository = await createRepository();
   t.after(() => repository.close());
   assert.doesNotThrow(() => repository.migrate());
+});
+
+test('migration upgrades a database created by the original schema', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-legacy-schema-'));
+  const file = path.join(directory, 'jobs.sqlite');
+  const legacy = new Database(file);
+  legacy.exec(await readFile(new URL('../src/storage/migrations/001-market-discovery.sql', import.meta.url), 'utf8'));
+  legacy.close();
+
+  const repository = openSqliteMarketDiscoveryRepository({ file });
+  t.after(() => repository.close());
+  assert.doesNotThrow(() => repository.migrate());
+  repository.upsertCompany(createCompany());
+  assert.equal(repository.listCompanies()[0].chineseName, null);
+  assert.deepEqual(repository.listBatchItems('missing-batch'), []);
 });
 
 test('SQLite repositories upsert a complete verified chain idempotently', async (t) => {
@@ -340,6 +356,43 @@ test('repository persists batch checkpoints for resume', async (t) => {
     completedAt: NOW,
     createdAt: NOW,
   }]);
+});
+
+test('batch id cannot be silently reused with different inputs', async (t) => {
+  const repository = await createRepository();
+  t.after(() => repository.close());
+  repository.beginBatch({ id: 'batch-stable', inputHash: 'hash-a', startedAt: NOW });
+  assert.throws(
+    () => repository.beginBatch({ id: 'batch-stable', inputHash: 'hash-b', startedAt: NOW }),
+    /input hash mismatch/,
+  );
+});
+
+test('company merge rejects conflicting domain and alias identities', async (t) => {
+  const repository = await createRepository();
+  t.after(() => repository.close());
+  repository.upsertCompany(createCompany({
+    id: 'company-a',
+    canonicalName: 'Company A',
+    aliases: ['Shared Alias'],
+    primaryOfficialDomain: 'a.example',
+    officialDomains: ['a.example'],
+  }));
+  repository.upsertCompany(createCompany({
+    id: 'company-b',
+    canonicalName: 'Company B',
+    aliases: [],
+    primaryOfficialDomain: 'b.example',
+    officialDomains: ['b.example'],
+  }));
+
+  assert.throws(() => repository.upsertCompany(createCompany({
+    id: 'company-new',
+    canonicalName: 'New Claim',
+    aliases: ['Shared Alias'],
+    primaryOfficialDomain: 'b.example',
+    officialDomains: ['b.example'],
+  })), /merge conflict/);
 });
 
 test('downgrading a portal removes its openings from the formal result set', async (t) => {

@@ -40,6 +40,10 @@ export async function runDiscoveryBatch({
   if (!repository || typeof runItem !== 'function') {
     throw new Error('batch repository and runItem are required');
   }
+  const itemKeys = items.map((input) => String(input.id || hash(input)));
+  if (new Set(itemKeys).size !== itemKeys.length) {
+    throw new Error('duplicate batch item key');
+  }
   repository.beginBatch({
     id: batchId,
     inputHash: hash(items),
@@ -47,7 +51,7 @@ export async function runDiscoveryBatch({
   });
 
   for (const [position, input] of items.entries()) {
-    const itemKey = String(input.id || hash(input));
+    const itemKey = itemKeys[position];
     const checkpoint = repository.ensureBatchItem({
       batchId,
       itemKey,
@@ -104,4 +108,3 @@ export async function runDiscoveryBatch({
     items: Object.freeze(checkpoints),
   });
 }
-

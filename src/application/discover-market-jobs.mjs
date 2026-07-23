@@ -42,6 +42,15 @@ function matchesRequestedRole(opening, intent) {
   return Boolean(title && requestedRole && title.includes(requestedRole));
 }
 
+function matchesRequestedLocation(opening, intent) {
+  const requested = normalizedRole(intent.location);
+  if (!requested) return true;
+  return (opening?.locations || []).some((location) => {
+    const observed = normalizedRole(location);
+    return observed && (observed.includes(requested) || requested.includes(observed));
+  });
+}
+
 function hasUsableJobEntry(opening, portal) {
   return Boolean(
     opening?.applyUrl
@@ -83,6 +92,15 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     extractionSuccesses: 0,
     confidenceScores: [],
   };
+  const evaluatedPortalIds = new Set();
+  const verifiedPortalIds = new Set();
+  const reviewPortalIds = new Set();
+  const rejectedPortalIds = new Set();
+  const blockedPortalIds = new Set();
+  const extractionAttemptPortalIds = new Set();
+  const extractionSuccessPortalIds = new Set();
+  const storedJobIds = new Set();
+  const usableApplyJobIds = new Set();
   repository.beginRun({ id: runId, intent, startedAt: now() });
   let liveSearchExecuted = false;
 
@@ -112,13 +130,67 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     }));
   };
 
-  try {
-    const keywords = await expandKeywords(intent, { planningModel, runId });
-    const queryPlan = await planQueries(intent, keywords, {
-      planningModel,
-      maxQueries,
-      runId,
+  if (planningModel?.configured === false) {
+    recordFailure({
+      stage: 'configuration',
+      code: 'NOT_CONFIGURED',
+      message: 'planning model is not configured',
     });
+    repository.completeRun({
+      id: runId,
+      status: 'NOT_CONFIGURED',
+      completedAt: now(),
+    });
+    return Object.freeze({
+      runId,
+      intent,
+      status: 'NOT_CONFIGURED',
+      ...counters,
+      providerAttempts: Object.freeze([]),
+      liveSearchExecuted: false,
+      report: Object.freeze({
+        searchQueries: Object.freeze([]),
+        candidateUrlCount: 0,
+        candidateCompanyCount: 0,
+        officialVerifiedCount: 0,
+        reviewCount: 0,
+        rejectedCount: 0,
+        extractedJobCount: 0,
+        failures: Object.freeze(failures),
+        llmUsage: Object.freeze([]),
+        quality: buildQualityReport({
+          portalsEvaluated: 0,
+          portalsVerified: 0,
+          extractionAttempts: 0,
+          extractionSuccesses: 0,
+          rejectedPortals: 0,
+          validCandidateResults: 0,
+          duplicateCandidateResults: 0,
+          confidenceScores: [],
+        }),
+      }),
+    });
+  }
+
+  try {
+    let keywords;
+    try {
+      keywords = await expandKeywords(intent, { planningModel, runId });
+    } catch (error) {
+      error.failureStage = 'keyword_expansion';
+      throw error;
+    }
+    let queryPlan;
+    try {
+      queryPlan = await planQueries(intent, keywords, {
+        planningModel,
+        maxQueries,
+        runId,
+      });
+    } catch (error) {
+      error.failureStage = 'query_planning';
+      throw error;
+    }
     const discovery = await discoverCompanies({
       intent,
       queryPlan,
@@ -186,8 +258,6 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       }
 
       const decision = verifyCareerPortal(inspected);
-      qualityObservations.portalsEvaluated += 1;
-      qualityObservations.confidenceScores.push(decision.confidenceScore);
       let advisory = null;
       if (
         decision.verificationStatus === 'REVIEW'
@@ -198,7 +268,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
             url: page.finalUrl || candidate.url,
             title: page.title || '',
             text: page.text || page.html || '',
-          });
+          }, { runId });
         } catch (error) {
           recordFailure({
             stage: 'llm_advisory',
@@ -220,7 +290,27 @@ export async function discoverMarketJobs(input, dependencies = {}) {
           sourceUrl: item.sourceUrl || page.finalUrl || candidate.url,
           observedAt: item.observedAt || observedAt,
         }));
-      company = repository.upsertCompany(company);
+      try {
+        company = repository.upsertCompany(company);
+      } catch (error) {
+        if (error?.code !== 'COMPANY_MERGE_CONFLICT') throw error;
+        const reviewKey = page.finalUrl || candidate.url;
+        reviewPortalIds.add(reviewKey);
+        counters.reviewRequired = reviewPortalIds.size;
+        recordFailure({
+          stage: 'company_merge',
+          code: 'COMPANY_MERGE_CONFLICT',
+          query: candidate.query,
+          message: error,
+          url: reviewKey,
+        });
+        appendLog(candidate, keywords, 'REVIEW_REQUIRED', {
+          stage: 'company_merge',
+          reason: 'company_merge_conflict',
+          error: boundedError(error),
+        }, reviewKey);
+        continue;
+      }
       const portal = createCareerPortal({
         id: ids.portal({ ...candidate, url: page.finalUrl || candidate.url }),
         companyId: company.id,
@@ -241,6 +331,12 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         repository.replaceVerificationEvidence(portal.id, portalEvidence);
       });
 
+      if (!evaluatedPortalIds.has(portal.id)) {
+        evaluatedPortalIds.add(portal.id);
+        qualityObservations.portalsEvaluated = evaluatedPortalIds.size;
+        qualityObservations.confidenceScores.push(decision.confidenceScore);
+      }
+
       const outcome = decision.verificationStatus === 'VERIFIED'
         ? 'VERIFIED_PORTAL'
         : decision.verificationStatus === 'REJECTED'
@@ -254,14 +350,25 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       }, portal.canonicalUrl);
 
       if (['REVIEW', 'BLOCKED'].includes(decision.verificationStatus)) {
-        counters.reviewRequired += 1;
+        reviewPortalIds.add(portal.id);
+        counters.reviewRequired = reviewPortalIds.size;
       }
-      if (decision.verificationStatus === 'BLOCKED') counters.blocked += 1;
-      if (decision.verificationStatus === 'REJECTED') counters.rejected += 1;
+      if (decision.verificationStatus === 'BLOCKED') {
+        blockedPortalIds.add(portal.id);
+        counters.blocked = blockedPortalIds.size;
+      }
+      if (decision.verificationStatus === 'REJECTED') {
+        rejectedPortalIds.add(portal.id);
+        counters.rejected = rejectedPortalIds.size;
+      }
       if (decision.verificationStatus !== 'VERIFIED') continue;
 
-      counters.portalsVerified += 1;
-      qualityObservations.extractionAttempts += 1;
+      const firstVerifiedObservation = !verifiedPortalIds.has(portal.id);
+      verifiedPortalIds.add(portal.id);
+      counters.portalsVerified = verifiedPortalIds.size;
+      if (!firstVerifiedObservation) continue;
+      extractionAttemptPortalIds.add(portal.id);
+      qualityObservations.extractionAttempts = extractionAttemptPortalIds.size;
       let openings;
       try {
         openings = await jobExtractor.extract({ company, portal, intent, page });
@@ -287,9 +394,11 @@ export async function discoverMarketJobs(input, dependencies = {}) {
           ? 'opening_not_active'
           : !matchesRequestedRole(opening, intent)
             ? 'role_mismatch'
+            : !matchesRequestedLocation(opening, intent)
+              ? 'location_mismatch'
             : !hasUsableJobEntry(opening, portal)
-              ? 'usable_job_entry_missing'
-              : null;
+                ? 'usable_job_entry_missing'
+                : null;
         if (rejectionReason || !isRecentOpening(opening, {
           freshnessDays: intent.freshnessDays,
           now: Date.parse(now()),
@@ -300,13 +409,17 @@ export async function discoverMarketJobs(input, dependencies = {}) {
           }, opening.sourceUrl);
           continue;
         }
+        if (storedJobIds.has(opening.id)) continue;
         repository.upsertJobOpening(opening);
-        counters.jobsStored += 1;
-        if (opening.applyUrl) counters.usableApplyEntries += 1;
+        storedJobIds.add(opening.id);
+        counters.jobsStored = storedJobIds.size;
+        if (opening.applyUrl) usableApplyJobIds.add(opening.id);
+        counters.usableApplyEntries = usableApplyJobIds.size;
         storedForPortal += 1;
       }
       if (storedForPortal > 0) {
-        qualityObservations.extractionSuccesses += 1;
+        extractionSuccessPortalIds.add(portal.id);
+        qualityObservations.extractionSuccesses = extractionSuccessPortalIds.size;
         appendLog(candidate, keywords, 'JOBS_EXTRACTED', {
           count: storedForPortal,
         }, portal.canonicalUrl);
@@ -361,6 +474,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       error: failure,
     });
     failure.liveSearchExecuted = liveSearchExecuted;
+    failure.runId = runId;
     throw failure;
   }
 }

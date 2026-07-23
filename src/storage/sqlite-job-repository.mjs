@@ -289,8 +289,10 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         VALUES (@id, @inputHash, 'RUNNING', @startedAt)
         ON CONFLICT(id) DO UPDATE SET
           status = 'RUNNING',
-          input_hash = excluded.input_hash,
           completed_at = NULL
+      `),
+      batchById: database.prepare(`
+        SELECT input_hash FROM batch_runs WHERE id = ?
       `),
       ensureBatchItem: database.prepare(`
         INSERT OR IGNORE INTO batch_items (
@@ -336,25 +338,40 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     requireMigration();
     return withTransaction(() => {
       const normalized = (value) => String(value || '').replace(/\s+/g, '').toLowerCase();
-      const incomingNames = new Set([
+      const incomingCanonicalNames = new Set([
         company.canonicalName,
         company.chineseName,
         company.englishName,
-        ...(company.aliases || []),
       ].map(normalized).filter(Boolean));
-      const incomingDomains = new Set(company.officialDomains || []);
-      const mergeTarget = listCompanies().find((item) => (
-        item.id === company.id
-        || item.market === company.market && (
-          item.officialDomains.some((domain) => incomingDomains.has(domain))
-          || [
-            item.canonicalName,
-            item.chineseName,
-            item.englishName,
-            ...item.aliases,
-          ].map(normalized).some((name) => incomingNames.has(name))
-        )
-      ));
+      const incomingAliases = new Set((company.aliases || []).map(normalized).filter(Boolean));
+      const incomingDomains = new Set(
+        (company.officialDomains || []).map(normalized).filter(Boolean),
+      );
+      const candidates = listCompanies().filter((item) => item.market === company.market);
+      const matchGroups = [
+        candidates.filter((item) => item.id === company.id),
+        candidates.filter((item) => (
+          item.officialDomains.some((domain) => incomingDomains.has(normalized(domain)))
+        )),
+        candidates.filter((item) => [
+          item.canonicalName,
+          item.chineseName,
+          item.englishName,
+        ].map(normalized).some((name) => incomingCanonicalNames.has(name))),
+        candidates.filter((item) => {
+          const itemAliases = new Set((item.aliases || []).map(normalized).filter(Boolean));
+          return [...incomingAliases].some((alias) => itemAliases.has(alias))
+            || [...incomingCanonicalNames].some((name) => itemAliases.has(name));
+        }),
+      ].filter((group) => group.length > 0);
+      const matchedIds = new Set(matchGroups.flat().map((item) => item.id));
+      if (matchGroups.some((group) => new Set(group.map((item) => item.id)).size > 1)
+        || matchedIds.size > 1) {
+        const error = new Error('company merge conflict');
+        error.code = 'COMPANY_MERGE_CONFLICT';
+        throw error;
+      }
+      const mergeTarget = matchGroups[0]?.[0] || null;
       const targetId = mergeTarget?.id || company.id;
       const existing = statements.companyById.get(targetId);
       const industryTags = [
@@ -592,6 +609,10 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
 
   function beginBatch(batch) {
     requireMigration();
+    const existing = statements.batchById.get(batch.id);
+    if (existing && existing.input_hash !== batch.inputHash) {
+      throw new Error('batch input hash mismatch');
+    }
     statements.beginBatch.run(batch);
     return batch;
   }

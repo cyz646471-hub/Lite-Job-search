@@ -27,5 +27,14 @@ test('AI product manager canary reports missing configuration without network cl
   const output = JSON.parse(result.stdout);
   assert.equal(output.status, 'NOT_CONFIGURED');
   assert.equal(output.liveSearchExecuted, false);
+  assert.deepEqual(output.report.searchQueries, []);
+  assert.equal(output.report.candidateUrlCount, 0);
+  assert.equal(output.report.candidateCompanyCount, 0);
+  assert.equal(output.report.officialVerifiedCount, 0);
+  assert.equal(output.report.reviewCount, 0);
+  assert.equal(output.report.rejectedCount, 0);
+  assert.equal(output.report.extractedJobCount, 0);
+  assert.equal(output.report.failures[0].code, 'NOT_CONFIGURED');
+  assert.equal(output.report.quality.officialVerificationRate.value, null);
   assert.doesNotMatch(result.stdout + result.stderr, /authorization|bearer|api[_-]?key/i);
 });
