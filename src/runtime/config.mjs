@@ -25,6 +25,19 @@ export function loadRuntimeConfig(env = process.env) {
       baiduMode: String(env.CN_BAIDU_SEARCH_MODE || 'chrome').toLowerCase(),
       playwrightHeadless: String(env.PLAYWRIGHT_HEADLESS || 'true').toLowerCase() !== 'false',
     },
+    llm: {
+      endpoint: String(env.LITE_JOB_LLM_ENDPOINT || ''),
+      model: String(env.LITE_JOB_LLM_MODEL || ''),
+      configured: Boolean(env.LITE_JOB_LLM_ENDPOINT && env.LITE_JOB_LLM_MODEL),
+      timeoutMs: positiveInteger(env.LITE_JOB_LLM_TIMEOUT_MS, 30_000),
+    },
+    database: {
+      file: String(env.LITE_JOB_DATABASE_FILE || ''),
+    },
+    discovery: {
+      maxQueries: Math.min(20, positiveInteger(env.LITE_JOB_DISCOVERY_MAX_QUERIES, 12)),
+      maxResults: Math.min(1000, positiveInteger(env.LITE_JOB_DISCOVERY_MAX_RESULTS, 100)),
+    },
   };
 }
 
