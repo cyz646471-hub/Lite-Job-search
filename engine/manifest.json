@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "sourceProject": "career-ops",
-  "fileCount": 133,
+  "fileCount": 131,
   "files": [
     {
       "path": "classify-tier.mjs",
@@ -404,11 +404,6 @@
       "sha256": "6eae370853f55d0b8549d5255c6cb05cd634d146ff88b457f86e4d88fffbe20b"
     },
     {
-      "path": "providers/gank-interview.mjs.bak",
-      "bytes": 2,
-      "sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6"
-    },
-    {
       "path": "providers/getonbrd.mjs",
       "bytes": 5666,
       "sha256": "774fb3754a864d58682f93f3b1a63abb8f6981759db3d33e238e1c2e30c223ad"
@@ -477,11 +472,6 @@
       "path": "providers/landingjobs.mjs",
       "bytes": 5184,
       "sha256": "7123058dae2864347371c618215085c4a0042f52155e7e067e48a8fadf5afdce"
-    },
-    {
-      "path": "providers/langlang-wangshen.mjs",
-      "bytes": 2898,
-      "sha256": "441619ecf1a3b7412f3287ebb124a61969157321cc91bb2c3723269488525f1d"
     },
     {
       "path": "providers/larajobs.mjs",

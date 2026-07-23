@@ -47,6 +47,8 @@
     "outputs/",
     "reports/",
     "logs/",
+    ".bak",
+    "providers/langlang-wangshen.mjs",
     ".env",
     ".env.local"
   ],

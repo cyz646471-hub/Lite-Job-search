@@ -37,4 +37,6 @@ test('generated engine manifest is portable and does not expose a local source p
   assert.equal('sourcePath' in manifest, false);
   assert.equal('generatedAt' in manifest, false);
   assert.ok(manifest.fileCount > 100);
+  assert.equal(manifest.files.some(({ path }) => path.endsWith('.bak')), false);
+  assert.equal(manifest.files.some(({ path }) => path.includes('langlang-wangshen')), false);
 });
