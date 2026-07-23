@@ -23,6 +23,7 @@ function emptyReport(failure) {
     rejectedCount: 0,
     extractedJobCount: 0,
     failures: [failure],
+    providerAttempts: [],
     llmUsage: [],
     quality: buildQualityReport({}),
   };
@@ -94,21 +95,23 @@ export async function runDiscoverCommand(options, {
     }, runtime);
   } catch (error) {
     const message = String(error?.message || error || 'unknown error').slice(0, 240);
+    const report = error?.report || emptyReport({
+      stage: error?.failureStage || (runtime ? 'discovery' : 'runtime_initialization'),
+      code: 'FAILED',
+      provider: null,
+      query: null,
+      message,
+      url: null,
+    });
     return {
       status: 'FAILED',
       reason: message,
       runId: error?.runId || null,
       liveSearchExecuted: error?.liveSearchExecuted === true,
-      jobsStored: 0,
-      portalsVerified: 0,
-      report: emptyReport({
-        stage: error?.failureStage || (runtime ? 'discovery' : 'runtime_initialization'),
-        code: 'FAILED',
-        provider: null,
-        query: null,
-        message,
-        url: null,
-      }),
+      jobsStored: error?.partialResult?.jobsStored || 0,
+      portalsVerified: error?.partialResult?.portalsVerified || 0,
+      providerAttempts: report.providerAttempts || [],
+      report,
     };
   } finally {
     runtime?.close();

@@ -393,7 +393,8 @@ test('later rejection of a canonical portal reconciles report counters with stor
   assert.equal(result.report.portalDecisions[0].verificationStatus, 'REJECTED');
   assert.deepEqual(result.report.extractedJobs, []);
   assert.equal(result.report.quality.officialVerificationRate.value, 0);
-  assert.equal(result.report.quality.jobExtractionSuccessRate.value, 0);
+  assert.equal(result.report.quality.jobExtractionSuccessRate.denominator, 0);
+  assert.equal(result.report.quality.jobExtractionSuccessRate.value, null);
 });
 
 test('failures after search preserve whether live search actually executed', async (t) => {
@@ -414,8 +415,11 @@ test('failures after search preserve whether live search actually executed', asy
   dependencies.repository.withTransaction = () => {
     throw new Error('fixture database failure');
   };
-  await assert.rejects(
-    discoverMarketJobs(INTENT, dependencies),
-    (error) => error.liveSearchExecuted === true,
-  );
+  const result = await discoverMarketJobs(INTENT, dependencies);
+  assert.equal(result.status, 'FAILED');
+  assert.equal(result.liveSearchExecuted, true);
+  assert.equal(result.report.candidateUrls.length, 1);
+  assert.equal(result.report.candidateCompanies.length, 1);
+  assert.equal(result.report.providerAttempts.length, 1);
+  assert.equal(result.report.failures.at(-1).code, 'FAILED');
 });

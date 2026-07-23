@@ -107,6 +107,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
   const jobIdsByPortalId = new Map();
   repository.beginRun({ id: runId, intent, startedAt: now() });
   let liveSearchExecuted = false;
+  let discovery = null;
 
   const appendLog = (candidate, keywords, outcome, metadata = {}, resultUrl = null) => {
     repository.appendDiscoveryLog(createDiscoveryLog({
@@ -133,6 +134,46 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       url: failure.url || null,
     }));
   };
+  const buildRunReport = () => {
+    const candidates = discovery?.candidates || [];
+    let llmUsage = [];
+    if (typeof repository.listLlmUsage === 'function') {
+      llmUsage = repository.listLlmUsage().filter((item) => item.runId === runId);
+    }
+    return Object.freeze({
+      searchQueries: Object.freeze([...(discovery?.searchQueries || [])]),
+      candidateUrlCount: discovery?.candidateUrlCount || 0,
+      candidateCompanyCount: discovery?.candidateCompanyCount || 0,
+      candidateUrls: Object.freeze(candidates.map((candidate) => candidate.url)),
+      candidateCompanies: Object.freeze([
+        ...new Map(candidates.map((candidate) => [
+          candidate.companyIdentityKey || candidate.company,
+          Object.freeze({
+            identityKey: candidate.companyIdentityKey || candidate.company,
+            name: candidate.company,
+            aliases: Object.freeze([...(candidate.aliases || [])]),
+            confirmedOfficialDomain: candidate.confirmedOfficialDomain || null,
+          }),
+        ])).values(),
+      ]),
+      portalDecisions: Object.freeze([...portalDecisionsById.values()]),
+      extractedJobs: Object.freeze([...storedJobsById.values()]),
+      officialVerifiedCount: counters.portalsVerified,
+      reviewCount: counters.reviewRequired,
+      rejectedCount: counters.rejected,
+      extractedJobCount: counters.jobsStored,
+      failures: Object.freeze([...failures]),
+      providerAttempts: Object.freeze([...(discovery?.providerAttempts || [])]),
+      llmUsage: Object.freeze(llmUsage),
+      quality: buildQualityReport({
+        ...qualityObservations,
+        portalsVerified: counters.portalsVerified,
+        rejectedPortals: counters.rejected,
+        validCandidateResults: discovery?.validCandidateResults || 0,
+        duplicateCandidateResults: discovery?.duplicateCandidateResults || 0,
+      }),
+    });
+  };
 
   if (planningModel?.configured === false) {
     recordFailure({
@@ -152,31 +193,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       ...counters,
       providerAttempts: Object.freeze([]),
       liveSearchExecuted: false,
-      report: Object.freeze({
-        searchQueries: Object.freeze([]),
-        candidateUrlCount: 0,
-        candidateCompanyCount: 0,
-        candidateUrls: Object.freeze([]),
-        candidateCompanies: Object.freeze([]),
-        portalDecisions: Object.freeze([]),
-        extractedJobs: Object.freeze([]),
-        officialVerifiedCount: 0,
-        reviewCount: 0,
-        rejectedCount: 0,
-        extractedJobCount: 0,
-        failures: Object.freeze(failures),
-        llmUsage: Object.freeze([]),
-        quality: buildQualityReport({
-          portalsEvaluated: 0,
-          portalsVerified: 0,
-          extractionAttempts: 0,
-          extractionSuccesses: 0,
-          rejectedPortals: 0,
-          validCandidateResults: 0,
-          duplicateCandidateResults: 0,
-          confidenceScores: [],
-        }),
-      }),
+      report: buildRunReport(),
     });
   }
 
@@ -199,7 +216,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       error.failureStage = 'query_planning';
       throw error;
     }
-    const discovery = await discoverCompanies({
+    discovery = await discoverCompanies({
       intent,
       queryPlan,
       runId,
@@ -380,6 +397,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       if (decision.verificationStatus === 'REJECTED') rejectedPortalIds.add(portal.id);
       if (decision.verificationStatus !== 'VERIFIED') {
         verifiedPortalIds.delete(portal.id);
+        extractionAttemptPortalIds.delete(portal.id);
         extractionSuccessPortalIds.delete(portal.id);
         for (const jobId of jobIdsByPortalId.get(portal.id) || []) {
           storedJobIds.delete(jobId);
@@ -394,6 +412,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       counters.portalsVerified = verifiedPortalIds.size;
       counters.jobsStored = storedJobIds.size;
       counters.usableApplyEntries = usableApplyJobIds.size;
+      qualityObservations.extractionAttempts = extractionAttemptPortalIds.size;
       qualityObservations.extractionSuccesses = extractionSuccessPortalIds.size;
       if (decision.verificationStatus !== 'VERIFIED') continue;
 
@@ -482,51 +501,37 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       ...counters,
       providerAttempts: discovery.providerAttempts,
       liveSearchExecuted: discovery.liveSearchExecuted,
-      report: Object.freeze({
-        searchQueries: discovery.searchQueries,
-        candidateUrlCount: discovery.candidateUrlCount,
-        candidateCompanyCount: discovery.candidateCompanyCount,
-        candidateUrls: Object.freeze(discovery.candidates.map((candidate) => candidate.url)),
-        candidateCompanies: Object.freeze([
-          ...new Map(discovery.candidates.map((candidate) => [
-            candidate.companyIdentityKey || candidate.company,
-            Object.freeze({
-              identityKey: candidate.companyIdentityKey || candidate.company,
-              name: candidate.company,
-              aliases: Object.freeze([...(candidate.aliases || [])]),
-              confirmedOfficialDomain: candidate.confirmedOfficialDomain || null,
-            }),
-          ])).values(),
-        ]),
-        portalDecisions: Object.freeze([...portalDecisionsById.values()]),
-        extractedJobs: Object.freeze([...storedJobsById.values()]),
-        officialVerifiedCount: counters.portalsVerified,
-        reviewCount: counters.reviewRequired,
-        rejectedCount: counters.rejected,
-        extractedJobCount: counters.jobsStored,
-        failures: Object.freeze(failures),
-        llmUsage: typeof repository.listLlmUsage === 'function'
-          ? Object.freeze(repository.listLlmUsage().filter((item) => item.runId === runId))
-          : Object.freeze([]),
-        quality: buildQualityReport({
-          ...qualityObservations,
-          portalsVerified: counters.portalsVerified,
-          rejectedPortals: counters.rejected,
-          validCandidateResults: discovery.validCandidateResults,
-          duplicateCandidateResults: discovery.duplicateCandidateResults,
-        }),
-      }),
+      report: buildRunReport(),
     });
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
-    repository.completeRun({
-      id: runId,
-      status: 'FAILED',
-      completedAt: now(),
-      error: failure,
+    recordFailure({
+      stage: failure.failureStage || (discovery ? 'discovery_processing' : 'discovery'),
+      code: 'FAILED',
+      message: failure,
     });
-    failure.liveSearchExecuted = liveSearchExecuted;
-    failure.runId = runId;
-    throw failure;
+    try {
+      repository.completeRun({
+        id: runId,
+        status: 'FAILED',
+        completedAt: now(),
+        error: failure,
+      });
+    } catch (completionError) {
+      completionError.liveSearchExecuted = liveSearchExecuted;
+      completionError.runId = runId;
+      completionError.report = buildRunReport();
+      completionError.partialResult = { ...counters };
+      throw completionError;
+    }
+    return Object.freeze({
+      runId,
+      intent,
+      status: 'FAILED',
+      ...counters,
+      providerAttempts: Object.freeze([...(discovery?.providerAttempts || [])]),
+      liveSearchExecuted,
+      report: buildRunReport(),
+    });
   }
 }
