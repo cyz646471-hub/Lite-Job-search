@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lite Job Search"
+  short_description: "Discover and verify CN and North America jobs"
+  default_prompt: "Use $lite-job-search to find and verify current public job openings."
