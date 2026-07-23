@@ -24,11 +24,25 @@ test('SearchIntent normalizes role, industry and locale', () => {
     market: 'CN',
     roleType: 'AI 产品经理',
     industryTags: ['AI', '互联网'],
+    location: null,
     freshnessDays: 90,
     targetCount: 20,
     locale: 'zh-CN',
     createdAt: NOW,
   });
+});
+
+test('SearchIntent preserves an optional location filter', () => {
+  const intent = createSearchIntent({
+    market: 'CN',
+    roleType: 'Backend Engineer',
+    industryTags: [],
+    location: ' 上海 ',
+    freshnessDays: 90,
+    targetCount: 10,
+  }, { id: 'intent-location' });
+
+  assert.equal(intent.location, '上海');
 });
 
 test('SearchIntent rejects invalid role and bounds', () => {

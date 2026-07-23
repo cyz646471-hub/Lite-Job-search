@@ -75,6 +75,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     blocked: 0,
     usableApplyEntries: 0,
   };
+  const failures = [];
   repository.beginRun({ id: runId, intent, startedAt: now() });
   let liveSearchExecuted = false;
 
@@ -93,6 +94,16 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       metadata,
     }));
   };
+  const recordFailure = (failure) => {
+    failures.push(Object.freeze({
+      stage: failure.stage,
+      code: failure.code || 'FAILED',
+      provider: failure.provider || null,
+      query: failure.query || null,
+      message: boundedError(failure.message),
+      url: failure.url || null,
+    }));
+  };
 
   try {
     const keywords = await expandKeywords(intent, { planningModel });
@@ -108,6 +119,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       now: now(),
     });
     liveSearchExecuted = discovery.liveSearchExecuted;
+    failures.push(...discovery.failures);
     for (const log of discovery.logs) repository.appendDiscoveryLog(log);
 
     for (const candidate of discovery.candidates) {
@@ -130,6 +142,13 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       try {
         page = await fetchPage(candidate.url);
       } catch (error) {
+        recordFailure({
+          stage: 'page_fetch',
+          code: 'FETCH_FAILED',
+          query: candidate.query,
+          message: error,
+          url: candidate.url,
+        });
         appendLog(candidate, keywords, 'FETCH_FAILED', {
           stage: 'page_fetch',
           error: boundedError(error),
@@ -141,6 +160,13 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       try {
         inspected = await verificationAdapter.inspect({ company, candidate, page });
       } catch (error) {
+        recordFailure({
+          stage: 'verification_inspection',
+          code: 'FAILED',
+          query: candidate.query,
+          message: error,
+          url: page.finalUrl || candidate.url,
+        });
         appendLog(candidate, keywords, 'FETCH_FAILED', {
           stage: 'verification_inspection',
           error: boundedError(error),
@@ -161,6 +187,13 @@ export async function discoverMarketJobs(input, dependencies = {}) {
             text: page.text || page.html || '',
           });
         } catch (error) {
+          recordFailure({
+            stage: 'llm_advisory',
+            code: 'FAILED',
+            query: candidate.query,
+            message: error,
+            url: page.finalUrl || candidate.url,
+          });
           appendLog(candidate, keywords, 'REVIEW_REQUIRED', {
             stage: 'llm_advisory',
             error: boundedError(error),
@@ -218,6 +251,13 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       try {
         openings = await jobExtractor.extract({ company, portal, intent, page });
       } catch (error) {
+        recordFailure({
+          stage: 'job_extraction',
+          code: 'FAILED',
+          query: candidate.query,
+          message: error,
+          url: portal.canonicalUrl,
+        });
         appendLog(candidate, keywords, 'FETCH_FAILED', {
           stage: 'job_extraction',
           error: boundedError(error),
@@ -262,7 +302,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     }
 
     const quantityStatus = counters.jobsStored >= intent.targetCount ? 'COMPLETE' : 'PARTIAL';
-    const terminalStatus = ['DEFERRED_BY_BUDGET', 'NOT_CONFIGURED', 'BLOCKED'].includes(discovery.status)
+    const terminalStatus = ['DEFERRED_BY_BUDGET', 'NOT_CONFIGURED', 'BLOCKED', 'FAILED'].includes(discovery.status)
       ? discovery.status
       : counters.blocked > 0 && counters.jobsStored < intent.targetCount
         ? 'BLOCKED'
@@ -275,6 +315,16 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       ...counters,
       providerAttempts: discovery.providerAttempts,
       liveSearchExecuted: discovery.liveSearchExecuted,
+      report: Object.freeze({
+        searchQueries: discovery.searchQueries,
+        candidateUrlCount: discovery.candidateUrlCount,
+        candidateCompanyCount: discovery.candidateCompanyCount,
+        officialVerifiedCount: counters.portalsVerified,
+        reviewCount: counters.reviewRequired,
+        rejectedCount: counters.rejected,
+        extractedJobCount: counters.jobsStored,
+        failures: Object.freeze(failures),
+      }),
     });
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));

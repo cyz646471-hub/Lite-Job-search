@@ -29,6 +29,7 @@ export function createSearchIntent(input = {}, {
     market,
     roleType,
     industryTags: Object.freeze(uniqueStrings(input.industryTags)),
+    location: clean(input.location) || null,
     freshnessDays,
     targetCount,
     locale: clean(input.locale) || (market === 'CN' ? 'zh-CN' : 'en-US'),

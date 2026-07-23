@@ -173,8 +173,46 @@ test('AI 产品经理 intent stores only jobs from verified portals', async (t) 
   assert.equal(result.reviewRequired, 1);
   assert.equal(result.rejected, 1);
   assert.equal(result.liveSearchExecuted, false);
+  assert.deepEqual(result.report.searchQueries, ['"AI 产品经理" 招聘']);
+  assert.equal(result.report.candidateUrlCount, 3);
+  assert.equal(result.report.candidateCompanyCount, 3);
+  assert.equal(result.report.officialVerifiedCount, 1);
+  assert.equal(result.report.reviewCount, 1);
+  assert.equal(result.report.rejectedCount, 1);
+  assert.equal(result.report.extractedJobCount, 1);
+  assert.deepEqual(result.report.failures, []);
   assert.equal(repository.listJobOpenings()[0].title, 'AI 产品经理');
   assert.ok(repository.listDiscoveryLogs().some((item) => item.outcome === 'VERIFIED_PORTAL'));
+});
+
+test('run report retains provider failure reasons without claiming success', async (t) => {
+  const { repository, dependencies } = await createHarness();
+  t.after(() => repository.close());
+  dependencies.searchSource.search = async () => ({
+    status: 'provider_error',
+    provider: 'fixture-live',
+    attempts: [{
+      provider: 'fixture-live',
+      status: 'provider_error',
+      networkRequest: true,
+      error: 'upstream unavailable',
+    }],
+    error: 'upstream unavailable',
+    liveSearchExecuted: true,
+    items: [],
+  });
+
+  const result = await discoverMarketJobs(INTENT, dependencies);
+
+  assert.equal(result.status, 'FAILED');
+  assert.equal(result.liveSearchExecuted, true);
+  assert.deepEqual(result.report.failures, [{
+    stage: 'search',
+    code: 'provider_error',
+    provider: 'fixture-live',
+    query: '"AI 产品经理" 招聘',
+    message: 'upstream unavailable',
+  }]);
 });
 
 test('rerunning the same fixture is idempotent', async (t) => {

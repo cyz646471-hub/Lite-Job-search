@@ -45,6 +45,7 @@ export async function runDiscoverCommand(options, {
         .split(',')
         .map((value) => value.trim())
         .filter(Boolean),
+      location: options.location || null,
       freshnessDays: Number(options.sinceDays || 90),
       targetCount: Number(options.limit || 20),
     }, runtime);

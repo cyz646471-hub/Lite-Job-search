@@ -36,6 +36,7 @@ test('discover runs offline with planning, search and page fixtures', async () =
     '--market', 'CN',
     '--role', 'AI产品经理',
     '--industry', 'AI,互联网',
+    '--location', '上海',
     '--since-days', '90',
     '--limit', '20',
     '--planning-fixture', path.join(fixtureRoot, 'planning.json'),
@@ -52,6 +53,9 @@ test('discover runs offline with planning, search and page fixtures', async () =
   assert.equal(output.reviewRequired, 1);
   assert.equal(output.rejected, 1);
   assert.equal(output.liveSearchExecuted, false);
+  assert.equal(output.intent.location, '上海');
+  assert.equal(output.report.searchQueries.length, 1);
+  assert.equal(output.report.candidateUrlCount, 3);
 });
 
 test('discover without an LLM configuration reports not configured', async () => {

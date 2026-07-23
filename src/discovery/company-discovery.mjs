@@ -48,6 +48,10 @@ export async function discoverCompanies({
   const providerAttempts = [];
   let status = 'COMPLETE';
   let liveSearchExecuted = false;
+  let successfulQueries = 0;
+  let validCandidateResults = 0;
+  let duplicateCandidateResults = 0;
+  const failures = [];
 
   const appendLog = (input) => {
     logs.push(createDiscoveryLog({
@@ -76,9 +80,22 @@ export async function discoverCompanies({
       break;
     }
     if (!['ok', 'success'].includes(response.status)) {
-      status = 'PARTIAL';
+      failures.push(Object.freeze({
+        stage: 'search',
+        code: response.status || 'provider_error',
+        provider: response.provider || 'unknown',
+        query: query.text,
+        message: String(
+          response.error
+          || response.attempts?.at(-1)?.error
+          || response.status
+          || 'search failed',
+        ).slice(0, 240),
+      }));
+      status = successfulQueries > 0 ? 'PARTIAL' : 'FAILED';
       continue;
     }
+    successfulQueries += 1;
 
     for (const [index, item] of (response.items || []).entries()) {
       const canonicalUrl = canonicalUrlOf(item.url);
@@ -120,7 +137,9 @@ export async function discoverCompanies({
         query: query.text,
         confirmedOfficialDomain: confirmedOfficialDomainOf(item),
       };
+      validCandidateResults += 1;
       const prior = candidatesByUrl.get(canonicalUrl);
+      if (prior) duplicateCandidateResults += 1;
       if (!prior || candidate.rank < prior.rank) candidatesByUrl.set(canonicalUrl, candidate);
       appendLog({
         query: query.text,
@@ -142,5 +161,15 @@ export async function discoverCompanies({
     logs: Object.freeze(logs),
     providerAttempts: Object.freeze(providerAttempts),
     liveSearchExecuted,
+    searchQueries: Object.freeze((queryPlan?.queries || []).map((query) => query.text)),
+    candidateUrlCount: candidatesByUrl.size,
+    candidateCompanyCount: new Set(
+      [...candidatesByUrl.values()].map((candidate) => (
+        candidate.companyIdentityKey || candidate.company
+      )),
+    ).size,
+    validCandidateResults,
+    duplicateCandidateResults,
+    failures: Object.freeze(failures),
   });
 }
