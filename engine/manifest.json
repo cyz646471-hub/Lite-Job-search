@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "sourceProject": "career-ops",
-  "fileCount": 131,
+  "fileCount": 132,
   "files": [
     {
       "path": "classify-tier.mjs",
@@ -22,6 +22,11 @@
       "path": "liveness-core.mjs",
       "bytes": 5968,
       "sha256": "7f0d31bfcd89066942ba8b565d55cf6e2aaa20addc2387a21202fa6567ff7c77"
+    },
+    {
+      "path": "planner/cn-apify.mjs",
+      "bytes": 20688,
+      "sha256": "a36e88c2be80e250160a18a744a88ae01f0c3b8a005e17975a6d819f3888d1fb"
     },
     {
       "path": "planner/cn-apply-entry.mjs",

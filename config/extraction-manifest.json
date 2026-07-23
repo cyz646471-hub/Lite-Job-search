@@ -13,6 +13,7 @@
       "planner/cn-ats-fingerprint.mjs",
       "planner/cn-recruitment-entry-selection.mjs",
       "planner/cn-candidate-pipeline.mjs",
+      "planner/cn-apify.mjs",
       "planner/cn-apply-entry.mjs",
       "planner/cn-job-database.mjs",
       "planner/cn-source-adapters.mjs",
