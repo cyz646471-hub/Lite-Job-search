@@ -72,6 +72,25 @@ node bin/lite-job-search.mjs verify --input .\candidates.json --output .\verifie
 node bin/lite-job-search.mjs export --input .\verified.json --output .\verified.csv --format csv --json
 ```
 
+按岗位和行业发现招聘市场：
+
+```powershell
+node bin/lite-job-search.mjs discover `
+  --market CN `
+  --role "AI产品经理" `
+  --industry "AI,互联网" `
+  --since-days 90 `
+  --limit 20 `
+  --database ".\data\lite-job-search.sqlite" `
+  --json
+```
+
+该流程为：岗位关键词输入 → LLM 扩展关键词与 Query → 搜索候选公司/URL → 程序验证官网与 ATS → 抽取岗位 → 写入 SQLite。LLM 不参与官网真实性、验证状态或置信度评分。
+
+系统分别统计 Candidate、Verified Portal 和 Usable Apply Entry。聚合站、高校就业网、新闻转载和培训机构不能作为官方招聘入口；未知发布日期不计入近期岗位。数量不足时返回 `PARTIAL`，不会用低置信度页面补足。
+
+学生投递 XLSX 作为下游固定输出：从已验证 `JobOpening` 兼容投影生成，每个岗位一行，投递/详情地址使用 Excel 超链接，隐藏内部 ID、证据和原始元数据。本阶段保留现有 XLSX 消费边界，不在发现引擎内复制表格实现。
+
 输入支持 JSON、JSONL 和 CSV。无搜索 API 时，可用 `--manual manual-candidates.json` 导入浏览器或人工确认的候选。
 
 ## 作为 Skill 使用
@@ -124,6 +143,29 @@ const result = await searchCompany({
   company: 'Stripe',
   router,
 });
+```
+
+岗位驱动 API：
+
+```js
+import {
+  createMarketDiscoveryRuntime,
+  discoverMarketJobs,
+} from 'lite-job-search';
+
+const runtime = await createMarketDiscoveryRuntime({ market: 'CN' });
+try {
+  const result = await discoverMarketJobs({
+    market: 'CN',
+    roleType: 'AI 产品经理',
+    industryTags: ['AI', '互联网'],
+    freshnessDays: 90,
+    targetCount: 20,
+  }, runtime);
+  console.log(result);
+} finally {
+  runtime.close();
+}
 ```
 
 高级调用可直接导入 `runCnDiscovery()`、`runAtsDiscovery()`、`ApifyGoogleSearchProvider` 和招聘页面下钻函数。

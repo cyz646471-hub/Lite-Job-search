@@ -25,6 +25,7 @@ lite-job-search search
 lite-job-search batch
 lite-job-search verify
 lite-job-search export
+lite-job-search discover
 ```
 
 ## Choose the workflow
@@ -79,6 +80,27 @@ Manual records use:
 
 Mark these as `discoveryMethod=manual`. Do not count them as API search evidence.
 
+## Discover the market from a role
+
+Use this workflow when the user starts with a role, industry, freshness window, and target count:
+
+```powershell
+node bin/lite-job-search.mjs discover `
+  --market CN `
+  --role "AI产品经理" `
+  --industry "AI,互联网" `
+  --since-days 90 `
+  --limit 20 `
+  --database ".\data\lite-job-search.sqlite" `
+  --json
+```
+
+The LLM may only expand job 关键词 and generate search Query. LLM 不能决定官网真实性、verification status、evidence weight 或 confidence score. Deterministic code fetches candidates, validates identity and page role, extracts jobs, and writes the accepted chain to SQLite.
+
+Count candidate companies, verified career portals, and usable apply entries separately. A candidate URL cannot prove itself official. Aggregators, university employment sites, news reprints, and training providers are rejected as official portals. Unknown `publishedAt` values do not satisfy a recent-only request.
+
+Return `PARTIAL` when verified recent openings do not reach the requested count. Return `NOT_CONFIGURED`, `DEFERRED_BY_BUDGET`, or `BLOCKED` literally; none means “no jobs”.
+
 ## Search a batch
 
 Input JSON or CSV must include `company` and `market`:
@@ -124,6 +146,8 @@ node bin/lite-job-search.mjs export --input .\verified.json --output .\verified.
 ```
 
 Preserve audit fields and all source URLs during conversion.
+
+Student-facing XLSX is a downstream compatibility projection of verified `JobOpening` records. Keep company, role, location, publication date, and the deepest verified apply/detail URL visible; render URLs as Excel hyperlinks and hide audit-only fields. Do not expose rejected or review-only portals as application links.
 
 ## Use the bundled runner
 

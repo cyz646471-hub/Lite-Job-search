@@ -12,13 +12,16 @@ test('skill has complete metadata and no scaffold placeholders', async () => {
 
 test('skill documents every CLI workflow and safety boundary', async () => {
   const content = await readFile(new URL('SKILL.md', skillRoot), 'utf8');
-  for (const command of ['doctor', 'search', 'batch', 'verify', 'export']) {
+  for (const command of ['doctor', 'search', 'batch', 'verify', 'export', 'discover']) {
     assert.match(content, new RegExp(`lite-job-search ${command}`));
   }
   assert.match(content, /中国|CN/);
   assert.match(content, /北美|North America/);
   assert.match(content, /验证码|CAPTCHA/);
   assert.match(content, /不得.*提交|never.*submit/i);
+  assert.match(content, /LLM.*关键词.*Query/s);
+  assert.match(content, /不能.*官网真实性/s);
+  assert.match(content, /SQLite/);
 });
 
 test('skill bundles runnable script and progressive market references', async () => {
@@ -31,4 +34,13 @@ test('skill bundles runnable script and progressive market references', async ()
   ]) {
     await access(new URL(relative, skillRoot));
   }
+});
+
+test('skill data contract documents role-driven market entities', async () => {
+  const content = await readFile(new URL('references/data-contract.md', skillRoot), 'utf8');
+  for (const model of ['Company', 'CareerPortal', 'JobOpening', 'DiscoveryLog']) {
+    assert.match(content, new RegExp(model));
+  }
+  assert.match(content, /XLSX/);
+  assert.match(content, /超链接/);
 });
