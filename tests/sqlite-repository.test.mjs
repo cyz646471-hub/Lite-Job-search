@@ -296,6 +296,52 @@ test('repository records auditable LLM usage without credentials', async (t) => 
   }]);
 });
 
+test('repository persists batch checkpoints for resume', async (t) => {
+  const repository = await createRepository();
+  t.after(() => repository.close());
+  repository.beginBatch({
+    id: 'batch-1',
+    inputHash: 'hash-1',
+    startedAt: NOW,
+  });
+  repository.ensureBatchItem({
+    batchId: 'batch-1',
+    itemKey: 'item-1',
+    position: 0,
+    input: { role: 'AI产品经理' },
+    createdAt: NOW,
+  });
+  repository.startBatchItem({
+    batchId: 'batch-1',
+    itemKey: 'item-1',
+    startedAt: NOW,
+  });
+  repository.completeBatchItem({
+    batchId: 'batch-1',
+    itemKey: 'item-1',
+    status: 'SUCCEEDED',
+    resultStatus: 'PARTIAL',
+    discoveryRunId: 'run-1',
+    errorMessage: null,
+    completedAt: NOW,
+  });
+
+  assert.deepEqual(repository.listBatchItems('batch-1'), [{
+    batchId: 'batch-1',
+    itemKey: 'item-1',
+    position: 0,
+    input: { role: 'AI产品经理' },
+    status: 'SUCCEEDED',
+    resultStatus: 'PARTIAL',
+    attemptCount: 1,
+    discoveryRunId: 'run-1',
+    errorMessage: null,
+    startedAt: NOW,
+    completedAt: NOW,
+    createdAt: NOW,
+  }]);
+});
+
 test('downgrading a portal removes its openings from the formal result set', async (t) => {
   const repository = await createRepository('lite-job-market-downgrade-');
   t.after(() => repository.close());

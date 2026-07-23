@@ -12,7 +12,7 @@ test('skill has complete metadata and no scaffold placeholders', async () => {
 
 test('skill documents every CLI workflow and safety boundary', async () => {
   const content = await readFile(new URL('SKILL.md', skillRoot), 'utf8');
-  for (const command of ['doctor', 'search', 'batch', 'verify', 'export', 'discover']) {
+  for (const command of ['doctor', 'search', 'batch', 'verify', 'export', 'discover', 'discover-batch']) {
     assert.match(content, new RegExp(`lite-job-search ${command}`));
   }
   assert.match(content, /中国|CN/);
@@ -22,6 +22,9 @@ test('skill documents every CLI workflow and safety boundary', async () => {
   assert.match(content, /LLM.*关键词.*Query/s);
   assert.match(content, /不能.*官网真实性/s);
   assert.match(content, /SQLite/);
+  assert.match(content, /NOT_CONFIGURED/);
+  assert.match(content, /quality/i);
+  assert.match(content, /retry-failed/);
 });
 
 test('skill bundles runnable script and progressive market references', async () => {

@@ -12,6 +12,7 @@ import { searchCompany } from '../pipeline/search-company.mjs';
 import { verifyCandidates } from '../pipeline/verify-candidates.mjs';
 import { buildDoctorReport, probeMarketDiscoveryDatabase } from './doctor.mjs';
 import { runDiscoverCommand } from './discover.mjs';
+import { runDiscoverBatchCommand } from './discover-batch.mjs';
 import { readRecords, writeRecords } from './io.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -93,6 +94,7 @@ function help() {
       'lite-job-search verify --input candidates.json [--fixture-pages pages.json] --json',
       'lite-job-search export --input results.json --output results.csv --format csv --json',
       'lite-job-search discover --market CN|NA --role ROLE [--industry TAGS] [--since-days 90] [--limit 20] --json',
+      'lite-job-search discover-batch --input batch.json [--batch-id ID] [--retry-failed] --json',
     ],
   };
 }
@@ -116,6 +118,10 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (options.command === 'discover') {
     return print(await runDiscoverCommand(options));
+  }
+
+  if (options.command === 'discover-batch') {
+    return print(await runDiscoverBatchCommand(options));
   }
 
   if (options.command === 'search') {

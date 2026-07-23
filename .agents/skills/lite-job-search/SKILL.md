@@ -26,6 +26,7 @@ lite-job-search batch
 lite-job-search verify
 lite-job-search export
 lite-job-search discover
+lite-job-search discover-batch
 ```
 
 ## Choose the workflow
@@ -100,6 +101,31 @@ The LLM may only expand job 关键词 and generate search Query. LLM 不能决�
 Count candidate companies, verified career portals, and usable apply entries separately. A candidate URL cannot prove itself official. Aggregators, university employment sites, news reprints, and training providers are rejected as official portals. Unknown `publishedAt` values do not satisfy a recent-only request.
 
 Return `PARTIAL` when verified recent openings do not reach the requested count. Return `NOT_CONFIGURED`, `DEFERRED_BY_BUDGET`, or `BLOCKED` literally; none means “no jobs”.
+
+The run report must include search queries, candidate URL/company counts, portal
+decision counts, extracted jobs, stage failures, provider attempts, LLM usage,
+and observed quality metrics. Never convert `NOT_CONFIGURED` or `FAILED` into a
+successful empty result.
+
+## Discover role and industry batches
+
+Use a JSON array such as `examples/first-data-batch.json`:
+
+```powershell
+node bin/lite-job-search.mjs discover-batch `
+  --input .\examples\first-data-batch.json `
+  --batch-id cn-first-production `
+  --database .\data\lite-job-search.sqlite `
+  --json
+```
+
+Successful items are skipped on resume. Failed items remain checkpointed; use
+`--retry-failed` only after configuration, network, or Provider failures are
+resolved. One failed item must not stop later items.
+
+Quality reporting uses observed denominators for official verification, job
+extraction, duplicates, false positives, and average deterministic confidence.
+An unavailable denominator is `null`.
 
 ## Search a batch
 

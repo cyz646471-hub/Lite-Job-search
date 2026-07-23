@@ -87,6 +87,24 @@ node bin/lite-job-search.mjs discover `
 
 该流程为：岗位关键词输入 → LLM 扩展关键词与 Query → 搜索候选公司/URL → 程序验证官网与 ATS → 抽取岗位 → 写入 SQLite。LLM 不参与官网真实性、验证状态或置信度评分。
 
+完整 Canary 支持 `--location`，并输出 Query、候选 URL/公司、验证结果、
+岗位提取、逐阶段失败、LLM 调用及质量指标。缺少配置返回
+`NOT_CONFIGURED`，Provider 或网络失败返回 `FAILED`/`BLOCKED`，不会被解释为
+“没有岗位”。
+
+首批行业/岗位组合可断点执行：
+
+```powershell
+node bin/lite-job-search.mjs discover-batch `
+  --input .\examples\first-data-batch.json `
+  --batch-id cn-first-production `
+  --database .\data\lite-job-search.sqlite `
+  --json
+```
+
+重复执行会跳过成功条目；修复外部故障后使用 `--retry-failed`。单条失败不会
+中止后续组合。
+
 系统分别统计 Candidate、Verified Portal 和 Usable Apply Entry。聚合站、高校就业网、新闻转载和培训机构不能作为官方招聘入口；未知发布日期不计入近期岗位。数量不足时返回 `PARTIAL`，不会用低置信度页面补足。
 
 学生投递 XLSX 作为下游固定输出：从已验证 `JobOpening` 兼容投影生成，每个岗位一行，投递/详情地址使用 Excel 超链接，隐藏内部 ID、证据和原始元数据。本阶段保留现有 XLSX 消费边界，不在发现引擎内复制表格实现。

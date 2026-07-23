@@ -44,6 +44,16 @@ SQLite → legacy JobResult / student XLSX compatibility projection
 
 SQLite Repository 在写入 `JobOpening` 前再次检查关联 `CareerPortal.verificationStatus === VERIFIED`，形成应用层和存储层双重门禁。未知发布时间不会通过近期窗口判断。
 
+真实数据生产层在该闭环外增加四个增量组件：
+
+- Company Knowledge Base 按市场、官方域名和名称/Alias 合并企业事实；
+- occupation taxonomy 为 Product、Engineering、Marketing、AI、3C 提供确定性词表；
+- LLM 调用通过可替换适配器缓存，并记录 Prompt 哈希、token、成本和失败；
+- batch checkpoints 在 SQLite 中隔离单条失败并支持断点续跑。
+
+质量报告只根据本次运行实际事件计算验证率、提取成功率、重复率、误报率与
+平均 confidence；没有分母时返回 `null`。
+
 ## 同步 Career OP
 
 `config/extraction-manifest.json` 声明入口文件、动态 provider 目录和排除项。

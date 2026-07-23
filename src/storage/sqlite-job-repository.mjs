@@ -284,6 +284,41 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           @inputTokens, @outputTokens, @costUsd, @status, @errorMessage, @createdAt
         )
       `),
+      beginBatch: database.prepare(`
+        INSERT INTO batch_runs (id, input_hash, status, started_at)
+        VALUES (@id, @inputHash, 'RUNNING', @startedAt)
+        ON CONFLICT(id) DO UPDATE SET
+          status = 'RUNNING',
+          input_hash = excluded.input_hash,
+          completed_at = NULL
+      `),
+      ensureBatchItem: database.prepare(`
+        INSERT OR IGNORE INTO batch_items (
+          batch_id, item_key, position, input_json, status, created_at
+        ) VALUES (
+          @batchId, @itemKey, @position, @inputJson, 'PENDING', @createdAt
+        )
+      `),
+      batchItem: database.prepare(`
+        SELECT * FROM batch_items WHERE batch_id = ? AND item_key = ?
+      `),
+      startBatchItem: database.prepare(`
+        UPDATE batch_items
+        SET status = 'RUNNING', attempt_count = attempt_count + 1,
+            started_at = @startedAt, completed_at = NULL, error_message = NULL
+        WHERE batch_id = @batchId AND item_key = @itemKey
+      `),
+      completeBatchItem: database.prepare(`
+        UPDATE batch_items
+        SET status = @status, result_status = @resultStatus,
+            discovery_run_id = @discoveryRunId, error_message = @errorMessage,
+            completed_at = @completedAt
+        WHERE batch_id = @batchId AND item_key = @itemKey
+      `),
+      completeBatch: database.prepare(`
+        UPDATE batch_runs SET status = @status, completed_at = @completedAt
+        WHERE id = @id
+      `),
     };
     return repository;
   }
@@ -538,6 +573,67 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     }));
   }
 
+  function mapBatchItem(row) {
+    return {
+      batchId: row.batch_id,
+      itemKey: row.item_key,
+      position: row.position,
+      input: decode(row.input_json, {}),
+      status: row.status,
+      resultStatus: row.result_status,
+      attemptCount: row.attempt_count,
+      discoveryRunId: row.discovery_run_id,
+      errorMessage: row.error_message,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      createdAt: row.created_at,
+    };
+  }
+
+  function beginBatch(batch) {
+    requireMigration();
+    statements.beginBatch.run(batch);
+    return batch;
+  }
+
+  function ensureBatchItem(item) {
+    requireMigration();
+    statements.ensureBatchItem.run({
+      ...item,
+      inputJson: encode(item.input, {}),
+    });
+    return mapBatchItem(statements.batchItem.get(item.batchId, item.itemKey));
+  }
+
+  function startBatchItem(item) {
+    requireMigration();
+    statements.startBatchItem.run(item);
+    return mapBatchItem(statements.batchItem.get(item.batchId, item.itemKey));
+  }
+
+  function completeBatchItem(item) {
+    requireMigration();
+    statements.completeBatchItem.run({
+      ...item,
+      discoveryRunId: item.discoveryRunId ?? null,
+      errorMessage: item.errorMessage ?? null,
+    });
+    return mapBatchItem(statements.batchItem.get(item.batchId, item.itemKey));
+  }
+
+  function listBatchItems(batchId) {
+    requireMigration();
+    return database.prepare(`
+      SELECT * FROM batch_items WHERE batch_id = ? ORDER BY position, item_key
+    `).all(batchId).map(mapBatchItem);
+  }
+
+  function completeBatch(batch) {
+    requireMigration();
+    statements.completeBatch.run(batch);
+    return batch;
+  }
+
   function close() {
     if (database.open) database.close();
   }
@@ -558,6 +654,12 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     listDiscoveryLogs,
     recordLlmUsage,
     listLlmUsage,
+    beginBatch,
+    ensureBatchItem,
+    startBatchItem,
+    completeBatchItem,
+    listBatchItems,
+    completeBatch,
     close,
   };
 

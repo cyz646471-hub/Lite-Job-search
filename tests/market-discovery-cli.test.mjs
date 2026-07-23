@@ -71,3 +71,27 @@ test('discover without an LLM configuration reports not configured', async () =>
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).status, 'NOT_CONFIGURED');
 });
+
+test('discover-batch checkpoints all items and reports missing configuration', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-discover-batch-'));
+  const database = path.join(directory, 'jobs.sqlite');
+  const args = [
+    'discover-batch',
+    '--input', path.join(root, 'examples', 'first-data-batch.json'),
+    '--batch-id', 'fixture-first-batch',
+    '--database', database,
+    '--json',
+  ];
+  const first = run(args);
+  assert.equal(first.status, 0, first.stderr);
+  const output = JSON.parse(first.stdout);
+  assert.equal(output.status, 'COMPLETE_WITH_ERRORS');
+  assert.equal(output.total, 4);
+  assert.equal(output.failed, 4);
+  assert.ok(output.items.every((item) => item.resultStatus === 'NOT_CONFIGURED'));
+  assert.ok(output.items.every((item) => item.attemptCount === 1));
+
+  const resumed = run(args);
+  assert.equal(resumed.status, 0, resumed.stderr);
+  assert.ok(JSON.parse(resumed.stdout).items.every((item) => item.attemptCount === 1));
+});

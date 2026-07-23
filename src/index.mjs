@@ -21,6 +21,7 @@ export { openSqliteMarketDiscoveryRepository } from './storage/sqlite-job-reposi
 export { createMarketDiscoveryRuntime } from './runtime/create-market-discovery-runtime.mjs';
 export { resolveOccupationTaxonomy } from './taxonomy/occupation-taxonomy.mjs';
 export { buildQualityReport } from './quality/quality-report.mjs';
+export { runDiscoveryBatch } from './application/run-discovery-batch.mjs';
 
 export {
   discoverCompanySites,
