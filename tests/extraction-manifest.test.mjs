@@ -31,3 +31,10 @@ test('extraction manifest excludes Career OP evaluation and application features
   }
 });
 
+test('generated engine manifest is portable and does not expose a local source path', async () => {
+  const manifest = JSON.parse(await readFile(new URL('engine/manifest.json', root), 'utf8'));
+  assert.equal(manifest.sourceProject, 'career-ops');
+  assert.equal('sourcePath' in manifest, false);
+  assert.equal('generatedAt' in manifest, false);
+  assert.ok(manifest.fileCount > 100);
+});
