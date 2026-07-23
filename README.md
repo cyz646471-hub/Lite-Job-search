@@ -1,6 +1,6 @@
 # Lite Job Search
 
-Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具。它面向中国和北美市场，提供公司招聘官网发现、公开 ATS 扫描、候选链接验证、招聘页面下钻、去重、缓存、预算控制和 JSON/JSONL/CSV 导出。
+Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具。它面向中国和北美市场，提供公司招聘官网发现、公开 ATS 扫描、候选链接验证、招聘页面下钻、去重、缓存、预算控制和 JSON/JSONL/CSV/XLSX 导出。
 
 它不包含简历生成、岗位匹配评分、自动申请、申请跟踪、面试准备或薪酬分析。
 
@@ -12,7 +12,7 @@ Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具�
 | 发现源 | Gank Interview、牛客招聘日程、牛企直聘、实习僧等公开线索；浪浪网申已移除 | 企业官网、VC portfolio seeds、公开职位板 |
 | ATS / 招聘系统 | Moka、北森/Hotjob、飞书招聘、智联招聘系统、Moseeker 等 | Greenhouse、Lever、Ashby、Workday、SmartRecruiters、Teamtailor 等 |
 | 验证 | 企业主域、品牌信号、ATS 租户、招聘语义、页面角色 | 企业域名、ATS 租户、职位列表/详情/申请动作 |
-| 输出 | 统一 JSON、JSONL、CSV | 统一 JSON、JSONL、CSV |
+| 输出 | 统一 JSON、JSONL、CSV、学生投递 XLSX | 统一 JSON、JSONL、CSV、学生投递 XLSX |
 
 抽取引擎保留 60+ 个 Career OP provider、8 个招聘页面 provider、5 个职位详情 provider。公开接口只暴露稳定工作流，减少其他模型需要读取的上下文。
 
@@ -109,7 +109,17 @@ node bin/lite-job-search.mjs discover-batch `
 
 学生投递 XLSX 作为下游固定输出：从已验证 `JobOpening` 兼容投影生成，每个岗位一行，投递/详情地址使用 Excel 超链接，隐藏内部 ID、证据和原始元数据。本阶段保留现有 XLSX 消费边界，不在发现引擎内复制表格实现。
 
-输入支持 JSON、JSONL 和 CSV。无搜索 API 时，可用 `--manual manual-candidates.json` 导入浏览器或人工确认的候选。
+学生投递清单（XLSX，投递入口为可点击超链接）：
+
+```powershell
+node bin/lite-job-search.mjs export --input .\verified.json --output .\verified.student.xlsx --format xlsx --json
+```
+
+`batch` 和 `verify` 只要使用非 XLSX 的 `--output`，都会保留该主输出，并自动在同目录创建 `<文件名>.student.xlsx`。工作簿只有学生需要的字段：公司、市场、招聘批次或岗位、地点、时间、岗位方向、投递入口和投递状态；不会把检索证据、来源 URL 等审计字段展示给学生。链接优先级为直接申请页、职位详情、职位列表、招聘活动页、企业招聘主页；没有经过验证的入口时保留空白，不会凭空标为“在招”。
+
+XLSX 导出使用 Codex Desktop 附带的电子表格运行时；在该环境外缺少运行时时，命令会明确报错而不会生成伪 XLSX 文件。
+
+输入支持 JSON、JSONL 和 CSV，也接受包含 `market` 和 `companies` 的持久化招聘报告 JSON。无搜索 API 时，可用 `--manual manual-candidates.json` 导入浏览器或人工确认的候选。
 
 ## 作为 Skill 使用
 
