@@ -1,0 +1,17 @@
+{
+  "expand_keywords": {
+    "primaryRole": "AI 产品经理",
+    "roleFamily": "PRODUCT_MANAGEMENT",
+    "terms": ["AI 产品经理", "人工智能产品经理"],
+    "englishTerms": ["AI Product Manager"]
+  },
+  "plan_queries": {
+    "queries": [
+      {
+        "text": "\"AI 产品经理\" 招聘",
+        "preferredSources": ["manual"],
+        "topK": 10
+      }
+    ]
+  }
+}

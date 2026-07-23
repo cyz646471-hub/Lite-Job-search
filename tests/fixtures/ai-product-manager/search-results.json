@@ -1,0 +1,19 @@
+[
+  {
+    "company": "示例智能科技",
+    "url": "https://jobs.example.com/openings",
+    "confirmedOfficialDomain": "example.com",
+    "officialDomainSource": "manual_verified",
+    "rank": 1
+  },
+  {
+    "company": "聚合站转载公司",
+    "url": "https://jobs.example-aggregator.test/1",
+    "rank": 2
+  },
+  {
+    "company": "待复核 ATS 公司",
+    "url": "https://tenant.mokahr.example/jobs",
+    "rank": 3
+  }
+]

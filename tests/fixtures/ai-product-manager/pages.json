@@ -1,0 +1,26 @@
+{
+  "https://jobs.example.com/openings": {
+    "status": 200,
+    "finalUrl": "https://jobs.example.com/openings",
+    "html": "<main><h1>招聘职位</h1><a href=\"/positions/ai-pm\">AI 产品经理</a></main>",
+    "jobs": [
+      {
+        "sourceJobId": "ai-pm",
+        "title": "AI 产品经理",
+        "location": "上海",
+        "publishedAt": "2026-07-20T00:00:00.000Z",
+        "jobDetailUrl": "https://jobs.example.com/positions/ai-pm"
+      }
+    ]
+  },
+  "https://jobs.example-aggregator.test/1": {
+    "status": 200,
+    "finalUrl": "https://jobs.example-aggregator.test/1",
+    "html": "<h1>转载招聘信息</h1>"
+  },
+  "https://tenant.mokahr.example/jobs": {
+    "status": 200,
+    "finalUrl": "https://tenant.mokahr.example/jobs",
+    "html": "<h1>招聘职位</h1><button>申请</button>"
+  }
+}
