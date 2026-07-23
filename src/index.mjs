@@ -20,6 +20,7 @@ export { verifyCareerPortal } from './verification/verification-engine.mjs';
 export { openSqliteMarketDiscoveryRepository } from './storage/sqlite-job-repository.mjs';
 export { createMarketDiscoveryRuntime } from './runtime/create-market-discovery-runtime.mjs';
 export { resolveOccupationTaxonomy } from './taxonomy/occupation-taxonomy.mjs';
+export { buildQualityReport } from './quality/quality-report.mjs';
 
 export {
   discoverCompanySites,

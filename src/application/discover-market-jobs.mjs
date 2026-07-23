@@ -7,6 +7,7 @@ import { discoverCompanies } from '../discovery/company-discovery.mjs';
 import { expandKeywords } from '../discovery/keyword-expander.mjs';
 import { planQueries } from '../discovery/query-planner.mjs';
 import { assertMarketDiscoveryRepository } from '../ports/job-repository.mjs';
+import { buildQualityReport } from '../quality/quality-report.mjs';
 import { verifyCareerPortal } from '../verification/verification-engine.mjs';
 
 function assertDependencies(dependencies) {
@@ -76,6 +77,12 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     usableApplyEntries: 0,
   };
   const failures = [];
+  const qualityObservations = {
+    portalsEvaluated: 0,
+    extractionAttempts: 0,
+    extractionSuccesses: 0,
+    confidenceScores: [],
+  };
   repository.beginRun({ id: runId, intent, startedAt: now() });
   let liveSearchExecuted = false;
 
@@ -179,6 +186,8 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       }
 
       const decision = verifyCareerPortal(inspected);
+      qualityObservations.portalsEvaluated += 1;
+      qualityObservations.confidenceScores.push(decision.confidenceScore);
       let advisory = null;
       if (
         decision.verificationStatus === 'REVIEW'
@@ -252,6 +261,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       if (decision.verificationStatus !== 'VERIFIED') continue;
 
       counters.portalsVerified += 1;
+      qualityObservations.extractionAttempts += 1;
       let openings;
       try {
         openings = await jobExtractor.extract({ company, portal, intent, page });
@@ -296,6 +306,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         storedForPortal += 1;
       }
       if (storedForPortal > 0) {
+        qualityObservations.extractionSuccesses += 1;
         appendLog(candidate, keywords, 'JOBS_EXTRACTED', {
           count: storedForPortal,
         }, portal.canonicalUrl);
@@ -332,6 +343,13 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         llmUsage: typeof repository.listLlmUsage === 'function'
           ? Object.freeze(repository.listLlmUsage().filter((item) => item.runId === runId))
           : Object.freeze([]),
+        quality: buildQualityReport({
+          ...qualityObservations,
+          portalsVerified: counters.portalsVerified,
+          rejectedPortals: counters.rejected,
+          validCandidateResults: discovery.validCandidateResults,
+          duplicateCandidateResults: discovery.duplicateCandidateResults,
+        }),
       }),
     });
   } catch (error) {

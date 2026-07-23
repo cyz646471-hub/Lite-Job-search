@@ -181,6 +181,11 @@ test('AI 产品经理 intent stores only jobs from verified portals', async (t) 
   assert.equal(result.report.rejectedCount, 1);
   assert.equal(result.report.extractedJobCount, 1);
   assert.deepEqual(result.report.failures, []);
+  assert.equal(result.report.quality.officialVerificationRate.numerator, 1);
+  assert.equal(result.report.quality.officialVerificationRate.denominator, 3);
+  assert.equal(result.report.quality.jobExtractionSuccessRate.value, 1);
+  assert.equal(result.report.quality.falsePositiveRate.numerator, 1);
+  assert.equal(result.report.quality.averageConfidenceScore.sampleSize, 3);
   assert.equal(repository.listJobOpenings()[0].title, 'AI 产品经理');
   assert.ok(repository.listDiscoveryLogs().some((item) => item.outcome === 'VERIFIED_PORTAL'));
 });
