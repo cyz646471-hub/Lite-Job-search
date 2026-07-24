@@ -1,0 +1,36 @@
+{
+  "providerCodeImplemented": [
+    "baidu",
+    "baidu_chrome",
+    "tavily",
+    "brave",
+    "apify_google",
+    "manual",
+    "deterministic_official_discovery"
+  ],
+  "searchMode": "no_provider",
+  "primaryProvider": "none",
+  "fallbackProvider": "none",
+  "providers": {
+    "tavily": "not_configured",
+    "brave": "not_configured",
+    "baidu": "not_configured",
+    "apify": "configured"
+  },
+  "browserBaidu": "browser_session_required",
+  "networkConnectivity": "not_tested",
+  "connectivityVerified": false,
+  "timeoutMs": 15000,
+  "dailyQueryBudget": 300,
+  "cache": {
+    "status": "configured",
+    "ttlDays": 14
+  },
+  "canRunLiveSearch": false,
+  "canRunApifyBatch": true,
+  "liveSearchExecuted": false,
+  "benchmarkCompleted": false,
+  "llmPlanning": "not_configured",
+  "database": "ready",
+  "marketDiscoveryReady": false
+}

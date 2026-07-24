@@ -1,0 +1,58 @@
+{
+  "status": "NOT_CONFIGURED",
+  "reason": "LLM_PLANNING_NOT_CONFIGURED",
+  "liveSearchExecuted": false,
+  "jobsStored": 0,
+  "portalsVerified": 0,
+  "report": {
+    "searchQueries": [],
+    "candidateUrlCount": 0,
+    "candidateCompanyCount": 0,
+    "candidateUrls": [],
+    "candidateCompanies": [],
+    "portalDecisions": [],
+    "extractedJobs": [],
+    "officialVerifiedCount": 0,
+    "reviewCount": 0,
+    "rejectedCount": 0,
+    "extractedJobCount": 0,
+    "failures": [
+      {
+        "stage": "configuration",
+        "code": "NOT_CONFIGURED",
+        "provider": null,
+        "query": null,
+        "message": "LLM_PLANNING_NOT_CONFIGURED",
+        "url": null
+      }
+    ],
+    "providerAttempts": [],
+    "llmUsage": [],
+    "quality": {
+      "officialVerificationRate": {
+        "numerator": 0,
+        "denominator": 0,
+        "value": null
+      },
+      "jobExtractionSuccessRate": {
+        "numerator": 0,
+        "denominator": 0,
+        "value": null
+      },
+      "duplicateRate": {
+        "numerator": 0,
+        "denominator": 0,
+        "value": null
+      },
+      "falsePositiveRate": {
+        "numerator": 0,
+        "denominator": 0,
+        "value": null
+      },
+      "averageConfidenceScore": {
+        "sampleSize": 0,
+        "value": null
+      }
+    }
+  }
+}

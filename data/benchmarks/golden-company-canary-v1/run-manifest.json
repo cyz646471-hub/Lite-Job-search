@@ -1,0 +1,46 @@
+{
+  "benchmarkId": "golden-company-canary-v1",
+  "executedAt": "2026-07-24",
+  "branch": "codex/job-driven-market-discovery",
+  "baseCommit": "ae6ce51b915d3d1109662d3983fd682a3ee4494c",
+  "requestedInput": {
+    "market": "CN",
+    "role": "AI Product Manager",
+    "industry": [
+      "AI",
+      "Product Management"
+    ],
+    "freshnessDays": 90,
+    "targetCount": 20,
+    "chineseKeywords": [
+      "AI产品经理",
+      "产品经理",
+      "大模型产品",
+      "AIGC产品"
+    ],
+    "englishKeywords": [
+      "AI Product Manager",
+      "Product Manager",
+      "LLM Product"
+    ]
+  },
+  "goldenSeed": {
+    "sourcePath": "Z:/mini code/Lite-Job-search/data/company-registry/golden-seed-companies-v1.json",
+    "sha256": "2426e97596d6ef0a5fda177d0ea8f18142cf73b5bb6a55f705d6e0ab208000b5",
+    "recordCount": 100,
+    "status": "AVAILABLE_VALID",
+    "selectedCompanyCount": 20
+  },
+  "execution": {
+    "command": "node ./bin/lite-job-search.mjs discover --market CN --role \"AI Product Manager\" --industry \"AI,Product Management\" --since-days 90 --limit 20 --database <temporary-sqlite> --json",
+    "status": "NOT_CONFIGURED",
+    "liveSearchExecuted": false,
+    "fullGoldenPipelineExecuted": false
+  },
+  "artifacts": [
+    "doctor.json",
+    "canary-run.json",
+    "canary-report.md",
+    "selected-companies.json"
+  ]
+}

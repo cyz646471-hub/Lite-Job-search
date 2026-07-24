@@ -1,0 +1,224 @@
+{
+  "source": {
+    "path": "Z:/mini code/Lite-Job-search/data/company-registry/golden-seed-companies-v1.json",
+    "sha256": "2426e97596d6ef0a5fda177d0ea8f18142cf73b5bb6a55f705d6e0ab208000b5",
+    "recordCount": 100
+  },
+  "selectionMethod": {
+    "eligibleRegions": [
+      "China",
+      "US"
+    ],
+    "score": {
+      "AI": 100,
+      "大模型": 80,
+      "互联网": 30,
+      "云计算": 20,
+      "智能硬件": 10
+    },
+    "tieBreak": "original source order"
+  },
+  "selectedCount": 20,
+  "companies": [
+    {
+      "nameCn": "零一万物",
+      "nameEn": "01.AI",
+      "aliases": ["01.AI", "零一万物", "Zero One AI", "李开复"],
+      "industry": ["AI", "大模型"],
+      "countryRegion": "China",
+      "officialDomains": ["01.ai"],
+      "market": "CN",
+      "selectionScore": 180
+    },
+    {
+      "nameCn": "百川智能",
+      "nameEn": "Baichuan",
+      "aliases": ["Baichuan Inc.", "百川", "Baichuan AI"],
+      "industry": ["AI", "大模型"],
+      "countryRegion": "China",
+      "officialDomains": ["baichuan-ai.com"],
+      "market": "CN",
+      "selectionScore": 180
+    },
+    {
+      "nameCn": "深度求索",
+      "nameEn": "DeepSeek",
+      "aliases": ["DeepSeek AI", "深度求索", "DeepSeek-V3"],
+      "industry": ["AI", "大模型"],
+      "countryRegion": "China",
+      "officialDomains": ["deepseek.com"],
+      "market": "CN",
+      "selectionScore": 180
+    },
+    {
+      "nameCn": "月之暗面",
+      "nameEn": "Moonshot AI",
+      "aliases": ["Moonshot", "Kimi", "月之暗面科技"],
+      "industry": ["AI", "大模型"],
+      "countryRegion": "China",
+      "officialDomains": ["moonshot.cn"],
+      "market": "CN",
+      "selectionScore": 180
+    },
+    {
+      "nameCn": "阶跃星辰",
+      "nameEn": "StepFun",
+      "aliases": ["Stepfun", "阶跃智能"],
+      "industry": ["AI", "大模型", "基础模型"],
+      "countryRegion": "China",
+      "officialDomains": ["stepfun.com"],
+      "market": "CN",
+      "selectionScore": 180
+    },
+    {
+      "nameCn": "智谱AI",
+      "nameEn": "Zhipu AI",
+      "aliases": ["Zhipu", "智谱", "Zhipuai", "GLM"],
+      "industry": ["AI", "大模型"],
+      "countryRegion": "China",
+      "officialDomains": ["zhipuai.cn"],
+      "market": "CN",
+      "selectionScore": 180
+    },
+    {
+      "nameCn": "Anthropic",
+      "nameEn": "Anthropic",
+      "aliases": ["Anthropic Inc.", "Claude"],
+      "industry": ["AI", "大模型", "安全"],
+      "countryRegion": "US",
+      "officialDomains": ["anthropic.com"],
+      "market": "NA",
+      "selectionScore": 180
+    },
+    {
+      "nameCn": "OpenAI",
+      "nameEn": "OpenAI",
+      "aliases": ["OpenAI Inc.", "ChatGPT"],
+      "industry": ["AI", "大模型", "研究"],
+      "countryRegion": "US",
+      "officialDomains": ["openai.com"],
+      "market": "NA",
+      "selectionScore": 180
+    },
+    {
+      "nameCn": "百度",
+      "nameEn": "Baidu",
+      "aliases": ["Baidu Inc.", "百度公司"],
+      "industry": ["搜索引擎", "AI", "互联网"],
+      "countryRegion": "China",
+      "officialDomains": ["baidu.com"],
+      "market": "CN",
+      "selectionScore": 130
+    },
+    {
+      "nameCn": "Meta",
+      "nameEn": "Meta",
+      "aliases": ["Meta Platforms", "Facebook", "META", "Instagram 母公司"],
+      "industry": ["社交", "AI", "互联网"],
+      "countryRegion": "US",
+      "officialDomains": ["meta.com"],
+      "market": "NA",
+      "selectionScore": 130
+    },
+    {
+      "nameCn": "亚马逊",
+      "nameEn": "Amazon",
+      "aliases": ["Amazon.com", "AMZN", "AWS"],
+      "industry": ["电商", "云计算", "AI"],
+      "countryRegion": "US",
+      "officialDomains": ["amazon.com"],
+      "market": "NA",
+      "selectionScore": 120
+    },
+    {
+      "nameCn": "谷歌",
+      "nameEn": "Google",
+      "aliases": ["Google LLC", "Alphabet", "GOOGL"],
+      "industry": ["搜索引擎", "云计算", "AI"],
+      "countryRegion": "US",
+      "officialDomains": ["google.com", "abc.xyz"],
+      "market": "NA",
+      "selectionScore": 120
+    },
+    {
+      "nameCn": "微软",
+      "nameEn": "Microsoft",
+      "aliases": ["MSFT", "Microsoft Corporation"],
+      "industry": ["软件", "云计算", "AI"],
+      "countryRegion": "US",
+      "officialDomains": ["microsoft.com"],
+      "market": "NA",
+      "selectionScore": 120
+    },
+    {
+      "nameCn": "寒武纪",
+      "nameEn": "Cambricon",
+      "aliases": ["Cambricon Technologies", "寒武纪科技"],
+      "industry": ["AI", "芯片", "半导体"],
+      "countryRegion": "China",
+      "officialDomains": ["cambricon.com"],
+      "market": "CN",
+      "selectionScore": 100
+    },
+    {
+      "nameCn": "云从科技",
+      "nameEn": "CloudWalk",
+      "aliases": ["CloudWalk Technology", "云从"],
+      "industry": ["AI", "计算机视觉", "金融科技"],
+      "countryRegion": "China",
+      "officialDomains": ["cloudwalk.com"],
+      "market": "CN",
+      "selectionScore": 100
+    },
+    {
+      "nameCn": "科大讯飞",
+      "nameEn": "iFlytek",
+      "aliases": ["IFLYTEK", "讯飞", "Xunfei"],
+      "industry": ["AI", "语音技术", "教育科技"],
+      "countryRegion": "China",
+      "officialDomains": ["iflytek.com"],
+      "market": "CN",
+      "selectionScore": 100
+    },
+    {
+      "nameCn": "旷视科技",
+      "nameEn": "Megvii",
+      "aliases": ["Megvii Technology", "旷视", "Face++"],
+      "industry": ["AI", "计算机视觉"],
+      "countryRegion": "China",
+      "officialDomains": ["megvii.com"],
+      "market": "CN",
+      "selectionScore": 100
+    },
+    {
+      "nameCn": "商汤科技",
+      "nameEn": "SenseTime",
+      "aliases": ["SenseTime Group", "商汤"],
+      "industry": ["AI", "计算机视觉"],
+      "countryRegion": "China",
+      "officialDomains": ["sensetime.com"],
+      "market": "CN",
+      "selectionScore": 100
+    },
+    {
+      "nameCn": "英伟达",
+      "nameEn": "NVIDIA",
+      "aliases": ["NVDA", "Nvidia Corporation", "英伟達"],
+      "industry": ["半导体", "AI", "硬件"],
+      "countryRegion": "US",
+      "officialDomains": ["nvidia.com"],
+      "market": "NA",
+      "selectionScore": 100
+    },
+    {
+      "nameCn": "阿里巴巴",
+      "nameEn": "Alibaba Group",
+      "aliases": ["Alibaba", "阿里", "Alibaba.com", "BABA"],
+      "industry": ["电商", "云计算", "互联网"],
+      "countryRegion": "China",
+      "officialDomains": ["alibabagroup.com"],
+      "market": "CN",
+      "selectionScore": 50
+    }
+  ]
+}
