@@ -395,6 +395,44 @@ test('unknown publication dates do not satisfy a recent-only result', async (t) 
   assert.ok(repository.listDiscoveryLogs().some((item) => item.outcome === 'NO_RECENT_JOBS'));
 });
 
+test('browser production retains active openings with blank optional fields', async (t) => {
+  const { repository, dependencies } = await createHarness({
+    publishedAt: null,
+    title: 'Backend Engineer',
+  });
+  t.after(() => repository.close());
+  dependencies.openingRetention = 'all_observed_active';
+
+  const result = await discoverMarketJobs(INTENT, dependencies);
+  const [opening] = repository.listJobOpenings();
+
+  assert.equal(result.jobsStored, 1);
+  assert.equal(opening.title, 'Backend Engineer');
+  assert.equal(opening.publishedAt, null);
+  assert.equal(opening.closesAt, null);
+  assert.equal(opening.locations.length, 1);
+  const logs = repository.listDiscoveryLogs();
+  assert.ok(logs.some((log) => (
+    log.metadata.missingFields?.includes('publishedAt')
+    && log.metadata.missingFields?.includes('closesAt')
+    && log.metadata.missingFields?.includes('recruitmentType')
+    && log.metadata.missingFields?.includes('applyUrl')
+  )), JSON.stringify(logs));
+});
+
+test('default discovery still rejects unknown-date and role-mismatch openings', async (t) => {
+  const { repository, dependencies } = await createHarness({
+    publishedAt: null,
+    title: 'Backend Engineer',
+  });
+  t.after(() => repository.close());
+
+  const result = await discoverMarketJobs(INTENT, dependencies);
+
+  assert.equal(result.jobsStored, 0);
+  assert.equal(repository.listJobOpenings().length, 0);
+});
+
 test('location filter excludes openings outside the requested region', async (t) => {
   const { repository, dependencies } = await createHarness();
   t.after(() => repository.close());

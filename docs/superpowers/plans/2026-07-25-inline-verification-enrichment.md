@@ -244,7 +244,7 @@ const missingFields = [
   !opening.locations.length && 'location',
   !opening.publishedAt && 'publishedAt',
   !opening.closesAt && 'closesAt',
-  !opening.employmentType && 'employmentType',
+  !(opening.employmentType || portal.recruitmentTypes.length) && 'recruitmentType',
   !opening.applyUrl && 'applyUrl',
 ].filter(Boolean);
 

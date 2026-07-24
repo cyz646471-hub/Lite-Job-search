@@ -110,6 +110,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     ids,
     now = () => new Date().toISOString(),
     maxQueries = 12,
+    openingRetention = 'requested_recent',
   } = dependencies;
 
   const intent = createSearchIntent(input, { id: ids.intent(), now: now() });
@@ -577,21 +578,37 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       if (observedActiveOpenings.length) activeOpeningPortalIds.add(portal.id);
       else activeOpeningPortalIds.delete(portal.id);
       let storedForPortal = 0;
+      const missingFieldsForPortal = new Set();
+      const fieldCoverage = {
+        location: { present: 0, missing: 0 },
+        publishedAt: { present: 0, missing: 0 },
+        closesAt: { present: 0, missing: 0 },
+        recruitmentType: { present: 0, missing: 0 },
+        applyUrl: { present: 0, missing: 0 },
+      };
+      const retainAllObserved = openingRetention === 'all_observed_active';
       for (const opening of openings || []) {
         if (counters.jobsStored >= intent.targetCount) break;
+        const openingFieldPresence = {
+          location: Boolean(opening.locations?.length),
+          publishedAt: Boolean(opening.publishedAt),
+          closesAt: Boolean(opening.closesAt),
+          recruitmentType: Boolean(opening.employmentType || portal.recruitmentTypes.length),
+          applyUrl: Boolean(opening.applyUrl),
+        };
         const rejectionReason = opening.status !== 'ACTIVE'
           ? 'opening_not_active'
-          : !matchesRequestedRole(opening, intent)
+          : !retainAllObserved && !matchesRequestedRole(opening, intent)
             ? 'role_mismatch'
-            : !matchesRequestedLocation(opening, intent)
+            : !retainAllObserved && !matchesRequestedLocation(opening, intent)
               ? 'location_mismatch'
             : !hasUsableJobEntry(opening, portal)
                 ? 'usable_job_entry_missing'
                 : null;
-        if (rejectionReason || !isRecentOpening(opening, {
+        if (rejectionReason || (!retainAllObserved && !isRecentOpening(opening, {
           freshnessDays: intent.freshnessDays,
           now: Date.parse(now()),
-        })) {
+        }))) {
           appendLog(candidate, keywords, 'NO_RECENT_JOBS', {
             publishedAt: opening.publishedAt,
             reason: rejectionReason || 'outside_freshness_window',
@@ -605,6 +622,10 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         const portalJobIds = jobIdsByPortalId.get(portal.id) || new Set();
         portalJobIds.add(opening.id);
         jobIdsByPortalId.set(portal.id, portalJobIds);
+        for (const [field, present] of Object.entries(openingFieldPresence)) {
+          fieldCoverage[field][present ? 'present' : 'missing'] += 1;
+          if (!present) missingFieldsForPortal.add(field);
+        }
         counters.jobsStored = storedJobIds.size;
         if (opening.applyUrl) usableApplyJobIds.add(opening.id);
         counters.usableApplyEntries = usableApplyJobIds.size;
@@ -617,6 +638,8 @@ export async function discoverMarketJobs(input, dependencies = {}) {
           count: storedForPortal,
           vacancyStatus: 'ACTIVE',
           observedActiveCount: observedActiveOpenings.length,
+          fieldCoverage,
+          missingFields: [...missingFieldsForPortal],
         }, portal.canonicalUrl);
       } else if (!(openings || []).length) {
         appendLog(candidate, keywords, 'NO_RECENT_JOBS', {
