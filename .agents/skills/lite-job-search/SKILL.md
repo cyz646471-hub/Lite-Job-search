@@ -146,6 +146,49 @@ node bin/lite-job-search.mjs batch --input .\companies.json --output .\candidate
 
 Use small batches first. For Apify Google search, use the extracted `ApifyGoogleSearchProvider.runBatch()` in groups of 20–100 queries; never launch one Actor run per company.
 
+## Run browser company discovery
+
+When a public search engine must be inspected in a real browser, use the fixed
+company workflow:
+
+`search → page observation → deterministic verification → recruitment-entry traversal → job extraction → SQLite → run report → student XLSX projection`.
+
+Run:
+
+```powershell
+npm.cmd run discover:browser-companies -- `
+  --input .\data\company-registry\companies.json `
+  --output-dir .\test-output\browser-company-run `
+  --database .\data\lite-job-search.sqlite `
+  --role "公开招聘岗位" `
+  --freshness-days 90 `
+  --target-count 1000 `
+  --batch-id browser-company-run `
+  --headful
+```
+
+Each company is checkpointed only after its browser search result has passed
+through the existing Verification Engine and job-extraction pipeline. Successful
+companies are skipped on resume. Use `--retry-failed` to retry failed or blocked
+items after the external cause is resolved.
+
+The browser classification is candidate recall, not official-site authority.
+Unknown ATS-shaped URLs remain verification candidates. `jobui.com`, ads, news,
+university employment sites, training providers, and unverified aggregators
+must not enter the student application list.
+
+Only explicit page evidence may populate location, `publishedAt`, `closesAt`,
+recruitment type, `jobDetailUrl`, and `applyUrl`. If the page does not state a
+value, keep it blank and record the missing field in `DiscoveryLog.metadata`.
+Never substitute crawl time for publication/start time or company headquarters
+for job location.
+
+The browser run must write `run-report.json` with the actual Query, Provider,
+candidate counts, verification decisions, extracted jobs, field coverage, and
+stage failures. CAPTCHA, network failure, browser disconnection, or an
+unconfigured dependency remains `BLOCKED`, `FAILED`, or `NOT_CONFIGURED`; none
+is a successful empty search.
+
 ## Verify candidates
 
 ```powershell

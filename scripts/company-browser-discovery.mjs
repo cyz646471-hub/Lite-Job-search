@@ -166,6 +166,139 @@ export function buildDiscoveryReport(companyResults = []) {
   return { generatedAt: new Date().toISOString(), summary, companies: companyResults };
 }
 
+function ratio(numerator, denominator) {
+  return {
+    numerator,
+    denominator,
+    value: denominator ? numerator / denominator : null,
+  };
+}
+
+export function buildBrowserRunReport({
+  batch = {},
+  companyResults = [],
+  discoveryRuns = [],
+} = {}) {
+  const decisions = discoveryRuns.flatMap((run) => run?.report?.portalDecisions || []);
+  const jobs = discoveryRuns.flatMap((run) => run?.report?.extractedJobs || []);
+  const candidateUrls = companyResults.flatMap((result) => (
+    result.officialCandidates || []
+  )).map((candidate) => candidate.url).filter(Boolean);
+  const uniqueCandidateUrls = new Set(candidateUrls);
+  const candidateCompanies = new Set(companyResults
+    .filter((result) => result.officialCandidates?.length)
+    .map((result) => result.company));
+  const verifiedDecisions = decisions.filter((item) => item.verificationStatus === 'VERIFIED');
+  const reviewDecisions = decisions.filter((item) => (
+    ['REVIEW', 'BLOCKED'].includes(item.verificationStatus)
+  ));
+  const rejectedDecisions = decisions.filter((item) => item.verificationStatus === 'REJECTED');
+  const jobPortalIds = new Set(jobs.map((job) => job.careerPortalId).filter(Boolean));
+  const companiesWithJobs = new Set(jobs.map((job) => job.companyId).filter(Boolean));
+  const confidenceScores = decisions
+    .map((item) => Number(item.confidenceScore))
+    .filter(Number.isFinite);
+  const fieldDefinitions = {
+    location: (job) => Boolean(job.locations?.length),
+    publishedAt: (job) => Boolean(job.publishedAt),
+    closesAt: (job) => Boolean(job.closesAt),
+    recruitmentType: (job) => Boolean(job.employmentType),
+    applyUrl: (job) => Boolean(job.applyUrl),
+  };
+  const fieldCoverage = Object.fromEntries(Object.entries(fieldDefinitions).map(([field, present]) => {
+    const presentCount = jobs.filter(present).length;
+    return [field, { present: presentCount, missing: jobs.length - presentCount }];
+  }));
+  const failures = [];
+  for (const result of companyResults) {
+    if (['BLOCKED', 'FAILED'].includes(result.status)) {
+      failures.push({
+        company: result.company || null,
+        stage: 'search',
+        code: result.reasonCode || result.status,
+        url: null,
+        message: result.reasonCode || result.status,
+      });
+    }
+    for (const failure of result.failures || []) {
+      failures.push({
+        company: result.company || null,
+        stage: failure.stage || 'browser',
+        code: failure.code || failure.reasonCode || 'FAILED',
+        url: failure.url || null,
+        message: String(failure.message || failure.error || failure.reasonCode || 'FAILED')
+          .slice(0, 240),
+      });
+    }
+  }
+  for (const run of discoveryRuns) {
+    for (const failure of run?.report?.failures || []) {
+      failures.push({
+        company: null,
+        stage: failure.stage || 'pipeline',
+        code: failure.code || 'FAILED',
+        url: failure.url || null,
+        message: String(failure.message || failure.code || 'FAILED').slice(0, 240),
+      });
+    }
+  }
+
+  return Object.freeze({
+    generatedAt: new Date().toISOString(),
+    status: batch.status || 'UNKNOWN',
+    batch: Object.freeze({
+      batchId: batch.batchId || null,
+      total: Number(batch.total) || companyResults.length,
+      succeeded: Number(batch.succeeded) || 0,
+      failed: Number(batch.failed) || 0,
+      pending: Number(batch.pending) || 0,
+    }),
+    discovery: Object.freeze({
+      provider: 'chrome_baidu_visible_search',
+      searchQueries: Object.freeze([
+        ...new Set(companyResults.map((result) => result.query).filter(Boolean)),
+      ]),
+      searchResultCount: companyResults.reduce((sum, result) => (
+        sum
+        + (result.officialCandidates?.length || 0)
+        + (result.leads?.length || 0)
+        + (result.rejected?.length || 0)
+      ), 0),
+      candidateUrlCount: uniqueCandidateUrls.size,
+      candidateCompanyCount: candidateCompanies.size,
+      completedCompanies: companyResults.filter((item) => item.status === 'COMPLETED').length,
+      blockedCompanies: companyResults.filter((item) => item.status === 'BLOCKED').length,
+      failedCompanies: companyResults.filter((item) => item.status === 'FAILED').length,
+    }),
+    verification: Object.freeze({
+      evaluated: decisions.length,
+      verified: verifiedDecisions.length,
+      pendingReview: reviewDecisions.length,
+      rejected: rejectedDecisions.length,
+      blocked: decisions.filter((item) => item.verificationStatus === 'BLOCKED').length,
+      averageConfidenceScore: confidenceScores.length
+        ? confidenceScores.reduce((sum, value) => sum + value, 0) / confidenceScores.length
+        : null,
+    }),
+    extraction: Object.freeze({
+      companiesWithJobs: companiesWithJobs.size,
+      jobsStored: jobs.length,
+      portalsWithJobs: jobPortalIds.size,
+    }),
+    fieldCoverage: Object.freeze(fieldCoverage),
+    quality: Object.freeze({
+      officialVerificationRate: ratio(verifiedDecisions.length, decisions.length),
+      jobExtractionSuccessRate: ratio(jobPortalIds.size, verifiedDecisions.length),
+      falsePositiveRate: ratio(rejectedDecisions.length, decisions.length),
+      duplicateRate: ratio(candidateUrls.length - uniqueCandidateUrls.size, candidateUrls.length),
+      averageConfidenceScore: confidenceScores.length
+        ? confidenceScores.reduce((sum, value) => sum + value, 0) / confidenceScores.length
+        : null,
+    }),
+    failures: Object.freeze(failures),
+  });
+}
+
 export function isSearchBlockedPage(text) {
   return /验证码|安全验证|访问过于频繁|请完成.*验证|captcha|access denied|enable javascript/i.test(String(text || ''));
 }
@@ -447,6 +580,11 @@ async function runCli() {
     });
     const results = batch.companyResults;
     const report = buildDiscoveryReport(results);
+    const runReport = buildBrowserRunReport({
+      batch,
+      companyResults: results,
+      discoveryRuns: batch.discoveryRuns,
+    });
     const candidates = results.flatMap((result) => result.officialCandidates).map(({ company, title, url, sourceUrl, searchQuery, evidence, ...rest }) => ({ company, title, url, sourceUrl, searchQuery, evidence, ...rest, discoveryMethod: 'playwright_search' }));
     const leads = results.flatMap((result) => result.leads).map((lead) => ({ ...lead, discoveryMethod: 'playwright_search' }));
     await fs.mkdir(args['output-dir'], { recursive: true });
@@ -454,8 +592,9 @@ async function runCli() {
       fs.writeFile(path.join(args['output-dir'], 'candidates.json'), `${JSON.stringify(candidates, null, 2)}\n`),
       fs.writeFile(path.join(args['output-dir'], 'leads.json'), `${JSON.stringify(leads, null, 2)}\n`),
       fs.writeFile(path.join(args['output-dir'], 'report.json'), `${JSON.stringify(report, null, 2)}\n`),
+      fs.writeFile(path.join(args['output-dir'], 'run-report.json'), `${JSON.stringify(runReport, null, 2)}\n`),
     ]);
-    process.stdout.write(`${JSON.stringify({ status: batch.status, batchId, databaseFile, outputDir: args['output-dir'], summary: report.summary })}\n`);
+    process.stdout.write(`${JSON.stringify({ status: batch.status, batchId, databaseFile, outputDir: args['output-dir'], summary: report.summary, quality: runReport.quality })}\n`);
     return batch.status === 'COMPLETE_WITH_ERRORS' ? 1 : 0;
   } finally {
     await browser.close();
