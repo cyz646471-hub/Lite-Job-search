@@ -3,6 +3,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { getDomain } from 'tldts';
+import { discoverRecruitmentEntries } from '../src/discovery/recruitment-entry-discovery.mjs';
 
 const THIRD_PARTY_PLATFORMS = [
   ['Liepin', (host) => host === 'liepin.com' || host.endsWith('.liepin.com')],
@@ -102,13 +103,34 @@ export function discoverCareerLinks(baseUrl, links = []) {
 }
 
 export function buildDiscoveryReport(companyResults = []) {
-  const summary = { companies: companyResults.length, completed: 0, blocked: 0, failed: 0, officialCandidates: 0, leadOnly: 0 };
+  const summary = {
+    companies: companyResults.length,
+    completed: 0,
+    blocked: 0,
+    failed: 0,
+    officialCandidates: 0,
+    leadOnly: 0,
+    entriesInspected: 0,
+    activeEntries: 0,
+    noOpeningEntries: 0,
+    unknownEntries: 0,
+    blockedEntries: 0,
+    failedEntries: 0,
+  };
   for (const result of companyResults) {
     if (result.status === 'COMPLETED') summary.completed++;
     else if (result.status === 'BLOCKED') summary.blocked++;
     else summary.failed++;
     summary.officialCandidates += result.officialCandidates?.length || 0;
     summary.leadOnly += result.leads?.length || 0;
+    for (const entry of result.officialCandidates || []) {
+      if (entry.pageStatus && entry.pageStatus !== 'DISCOVERED') summary.entriesInspected++;
+      if (entry.vacancyStatus === 'ACTIVE') summary.activeEntries++;
+      if (entry.vacancyStatus === 'NO_OPENINGS') summary.noOpeningEntries++;
+      if (entry.vacancyStatus === 'UNKNOWN') summary.unknownEntries++;
+      if (entry.pageStatus === 'BLOCKED') summary.blockedEntries++;
+      if (entry.pageStatus === 'FAILED') summary.failedEntries++;
+    }
   }
   return { generatedAt: new Date().toISOString(), summary, companies: companyResults };
 }
@@ -141,7 +163,11 @@ async function readCareerPage(page, url, timeoutMs) {
     const hasJobStructure = /职位|岗位|招聘|job opening|open positions/i.test(text);
     const noOpenings = /暂无(?:职位|岗位|招聘)|没有(?:职位|岗位)|no open positions|no jobs found/i.test(text);
     return {
-      status: 'COMPLETED', url: page.url(), hasJobStructure, vacancyStatus: noOpenings ? 'NO_OPENINGS' : hasJobStructure ? 'UNKNOWN' : 'NOT_A_LIST',
+      status: 'COMPLETED',
+      url: page.url(),
+      title: typeof page.title === 'function' ? await page.title().catch(() => '') : '',
+      hasJobStructure,
+      vacancyStatus: noOpenings ? 'NO_OPENINGS' : hasJobStructure ? 'UNKNOWN' : 'NOT_A_LIST',
       evidence: text.slice(0, 1000), links,
     };
   } catch (error) {
@@ -181,10 +207,75 @@ export async function discoverCompanyWithBrowser({ company, officialDomain = '',
       else if (classification.classification === 'REJECTED') rejected.push(base);
       else {
         const careerPage = await readCareerPage(page, finalUrl, timeoutMs);
-        officialCandidates.push({ ...base, pageStatus: careerPage.status, vacancyStatus: careerPage.vacancyStatus || null, evidence: careerPage.evidence || '' });
+        officialCandidates.push({
+          ...base,
+          url: careerPage.url || finalUrl,
+          pageStatus: careerPage.status,
+          vacancyStatus: careerPage.vacancyStatus || null,
+          evidence: careerPage.evidence || '',
+          depth: 0,
+          parentUrl: null,
+        });
         if (careerPage.status === 'COMPLETED') {
-          for (const link of discoverCareerLinks(careerPage.url, careerPage.links)) {
-            officialCandidates.push({ ...base, title: link.text || row.title, url: link.url, recruitmentType: link.recruitmentType, pageStatus: 'DISCOVERED', discoveryReason: link.discoveryReason });
+          const trustedDomains = [officialDomain].filter(Boolean);
+          const visitedUrls = new Set([careerPage.url || finalUrl]);
+          const queuedUrls = new Set();
+          const queue = [...discoverRecruitmentEntries({
+            baseUrl: careerPage.url || finalUrl,
+            links: careerPage.links,
+            trustedRegistrableDomains: trustedDomains,
+            visitedUrls,
+            parentUrl: careerPage.url || finalUrl,
+            depth: 1,
+            maxDepth: 2,
+            maxEntries: 20,
+          })];
+          for (const entry of queue) queuedUrls.add(entry.url);
+          while (queue.length && visitedUrls.size < 20) {
+            const entry = queue.shift();
+            queuedUrls.delete(entry.url);
+            if (visitedUrls.has(entry.url)) continue;
+            visitedUrls.add(entry.url);
+            const inspectedEntry = await readCareerPage(page, entry.url, timeoutMs);
+            const observedUrl = inspectedEntry.url || entry.url;
+            visitedUrls.add(observedUrl);
+            officialCandidates.push({
+              ...base,
+              title: entry.text || inspectedEntry.title || row.title,
+              url: observedUrl,
+              recruitmentType: entry.recruitmentType,
+              pageStatus: inspectedEntry.status,
+              vacancyStatus: inspectedEntry.vacancyStatus || null,
+              evidence: inspectedEntry.evidence || '',
+              discoveryReason: entry.discoveryReason,
+              parentUrl: entry.parentUrl,
+              depth: entry.depth,
+            });
+            if (inspectedEntry.status !== 'COMPLETED') {
+              failures.push({
+                stage: 'inspect_career_entry',
+                url: entry.url,
+                reasonCode: inspectedEntry.reasonCode || 'career_entry_failed',
+                error: inspectedEntry.error || '',
+              });
+              continue;
+            }
+            const remaining = Math.max(0, 20 - visitedUrls.size - queuedUrls.size);
+            const children = discoverRecruitmentEntries({
+              baseUrl: observedUrl,
+              links: inspectedEntry.links,
+              trustedRegistrableDomains: trustedDomains,
+              visitedUrls: [...visitedUrls, ...queuedUrls],
+              parentUrl: observedUrl,
+              depth: entry.depth + 1,
+              maxDepth: 2,
+              maxEntries: remaining,
+            });
+            for (const child of children) {
+              if (queuedUrls.has(child.url) || visitedUrls.has(child.url)) continue;
+              queue.push(child);
+              queuedUrls.add(child.url);
+            }
           }
         } else failures.push({ stage: 'inspect_career_page', url: finalUrl, reasonCode: careerPage.reasonCode || 'career_page_failed', error: careerPage.error || '' });
       }
