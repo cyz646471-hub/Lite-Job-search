@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildDiscoveryReport, classifySearchResult, discoverCareerLinks, shouldOpenSearchResult } from '../scripts/company-browser-discovery.mjs';
+import { buildDiscoveryReport, classifySearchResult, discoverCareerLinks, isSearchBlockedPage, shouldOpenSearchResult } from '../scripts/company-browser-discovery.mjs';
 
 test('classifies a branded recruitment subdomain as an official candidate', () => {
   const result = classifySearchResult({
@@ -70,4 +70,9 @@ test('does not open ad or news search results in the browser', () => {
   assert.equal(shouldOpenSearchResult({ kind: 'advertisement' }), false);
   assert.equal(shouldOpenSearchResult({ kind: 'news' }), false);
   assert.equal(shouldOpenSearchResult({ kind: 'organic' }), true);
+});
+
+test('detects Baidu safety verification as blocked instead of an empty search', () => {
+  assert.equal(isSearchBlockedPage('百度安全验证\n请完成下方验证后继续操作\n拖动左侧滑块'), true);
+  assert.equal(isSearchBlockedPage('小红书招聘职位列表'), false);
 });

@@ -113,8 +113,8 @@ export function buildDiscoveryReport(companyResults = []) {
   return { generatedAt: new Date().toISOString(), summary, companies: companyResults };
 }
 
-function isBlockedText(text) {
-  return /验证码|安全验证|访问过于频繁|请完成验证|captcha|access denied|enable javascript/i.test(String(text || ''));
+export function isSearchBlockedPage(text) {
+  return /验证码|安全验证|访问过于频繁|请完成.*验证|captcha|access denied|enable javascript/i.test(String(text || ''));
 }
 
 async function readSearchRows(page, maxResults) {
@@ -136,7 +136,7 @@ async function readCareerPage(page, url, timeoutMs) {
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
     await page.waitForTimeout(400);
     const text = await page.locator('body').innerText({ timeout: timeoutMs }).catch(() => '');
-    if (isBlockedText(text) || [401, 403, 429].includes(response?.status?.())) return { status: 'BLOCKED', reasonCode: 'challenge_or_access_blocked', url: page.url(), evidence: text.slice(0, 500) };
+    if (isSearchBlockedPage(text) || [401, 403, 429].includes(response?.status?.())) return { status: 'BLOCKED', reasonCode: 'challenge_or_access_blocked', url: page.url(), evidence: text.slice(0, 500) };
     const links = await page.locator('a[href]').evaluateAll((anchors) => anchors.map((anchor) => ({ text: (anchor.innerText || anchor.textContent || '').trim(), href: anchor.href })).filter((link) => link.text && link.href));
     const hasJobStructure = /职位|岗位|招聘|job opening|open positions/i.test(text);
     const noOpenings = /暂无(?:职位|岗位|招聘)|没有(?:职位|岗位)|no open positions|no jobs found/i.test(text);
@@ -156,8 +156,11 @@ export async function discoverCompanyWithBrowser({ company, officialDomain = '',
   const officialCandidates = [], leads = [], rejected = [], failures = [];
   try {
     await page.goto(`https://www.baidu.com/s?wd=${encodeURIComponent(query)}`, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    // Baidu can redirect to its challenge page immediately after DOM content loads.
+    // Allow that redirect to settle before interpreting a page with no result rows.
+    await page.waitForTimeout(400);
     const bodyText = await page.locator('body').innerText({ timeout: timeoutMs }).catch(() => '');
-    if (isBlockedText(bodyText)) return { company, query, status: 'BLOCKED', reasonCode: 'search_challenge_or_access_blocked', officialCandidates, leads, rejected, failures };
+    if (isSearchBlockedPage(bodyText)) return { company, query, status: 'BLOCKED', reasonCode: 'search_challenge_or_access_blocked', officialCandidates, leads, rejected, failures };
     const rows = await readSearchRows(page, maxResults);
     for (const row of rows) {
       if (!shouldOpenSearchResult(row)) {
