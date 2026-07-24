@@ -4,17 +4,26 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { studentHeaders, toStudentRow } from '../src/cli/student-workbook.mjs';
+import {
+  studentHeaders,
+  studentHyperlinkFormula,
+  toStudentRow,
+} from '../src/cli/student-workbook.mjs';
 import { readRecords, writeRecords } from '../src/cli/io.mjs';
 
 test('toStudentRow exposes only student-facing fields and keeps a verified apply link', () => {
   const row = toStudentRow({
     company: 'Acme',
-    market: 'CN',
     recruitmentBatch: '2027 届校园招聘',
+    title: 'AI 产品经理',
     location: '上海',
-    recruitmentStartAt: '2026-07-01T08:00:00.000Z',
-    roleCategories: ['研发', '产品'],
+    publishedAt: '2026-07-01T08:00:00.000Z',
+    closesAt: '2026-08-31T23:59:59.000Z',
+    companyTypePrediction: {
+      label: '民营企业',
+      confidence: 0.91,
+      source: 'luna',
+    },
     applyUrl: 'https://jobs.acme.example/apply/123',
     applicationActive: true,
     discoveryEvidenceUrl: 'https://search.example/result',
@@ -22,11 +31,14 @@ test('toStudentRow exposes only student-facing fields and keeps a verified apply
   });
 
   assert.deepEqual(studentHeaders, [
-    '公司', '市场', '招聘批次或岗位', '地点', '启动或发布时间', '岗位方向', '投递入口', '投递状态',
+    '公司名称', '公司类型（模型判断）', '开放批次', '开放岗位',
+    '地区', '开始时间', '截止时间', '投递链接',
   ]);
   assert.deepEqual(row, [
-    'Acme', 'CN', '2027 届校园招聘', '上海', new Date('2026-07-01T08:00:00.000Z'), '研发、产品',
-    { text: '查看职位并投递', url: 'https://jobs.acme.example/apply/123' }, '在招',
+    'Acme', '民营企业', '2027 届校园招聘', 'AI 产品经理', '上海',
+    new Date('2026-07-01T08:00:00.000Z'),
+    new Date('2026-08-31T23:59:59.000Z'),
+    { text: '查看岗位并投递', url: 'https://jobs.acme.example/apply/123' },
   ]);
 });
 
@@ -34,8 +46,14 @@ test('toStudentRow supports the persisted CN report shape without treating disco
   const row = toStudentRow({
     company: '示例科技',
     recruitmentBatch: '2026 社招',
+    title: '后端开发工程师',
     sourceUpdatedAt: '2026-07-15',
-    roleCategories: ['工程'],
+    deadlineType: 'until_filled',
+    companyTypePrediction: {
+      label: '民营企业',
+      confidence: 0.62,
+      source: 'luna',
+    },
     recruitmentEntryUrl: 'https://careers.example/jobs',
     entryType: '官方招聘站或受委托 ATS',
     verificationStatus: 'partially_verified',
@@ -43,17 +61,28 @@ test('toStudentRow supports the persisted CN report shape without treating disco
   }, { market: 'CN' });
 
   assert.deepEqual(row, [
-    '示例科技', 'CN', '2026 社招', '', new Date('2026-07-15T00:00:00.000Z'), '工程',
-    { text: '查看职位并投递', url: 'https://careers.example/jobs' }, '待确认',
+    '示例科技', '待确认', '2026 社招', '后端开发工程师', '',
+    new Date('2026-07-15T00:00:00.000Z'), '招满即止',
+    { text: '查看岗位并投递', url: 'https://careers.example/jobs' },
   ]);
 });
 
-test('toStudentRow does not invent a link or an active status when source data is incomplete', () => {
+test('toStudentRow does not invent a link, date, or company type when source data is incomplete', () => {
   const row = toStudentRow({ company: 'No Link Inc.', verificationStatus: 'verified' }, { market: 'NA' });
 
   assert.deepEqual(row, [
-    'No Link Inc.', 'NA', '', '', '', '', '', '已核验',
+    'No Link Inc.', '待确认', '待确认', '', '', '未披露', '未披露', '',
   ]);
+});
+
+test('studentHyperlinkFormula keeps an Excel hyperlink and a renderer-safe label', () => {
+  assert.equal(
+    studentHyperlinkFormula({
+      text: '查看岗位并投递',
+      url: 'https://jobs.example.com/search?q="AI"',
+    }),
+    '=IFERROR(HYPERLINK("https://jobs.example.com/search?q=""AI""","查看岗位并投递"),"查看岗位并投递")',
+  );
 });
 
 test('readRecords accepts the persisted companies report shape and inherits its market', async () => {

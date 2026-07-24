@@ -176,11 +176,13 @@ Preserve audit fields and all source URLs during conversion.
 
 ### Fixed student XLSX workflow
 
-Student-facing XLSX is a downstream compatibility projection of verified `JobOpening` records. For China and North America, `export --format xlsx` creates one `投递清单` worksheet with only student-facing columns. The entry cell is a clickable `查看职位并投递` hyperlink. Do not include evidence URLs, source-provider details, cache data, or other audit-only fields in that sheet, and do not expose rejected or review-only portals as application links.
+Student-facing XLSX is a downstream compatibility projection of verified `JobOpening` records. For China and North America, `export --format xlsx` creates one `投递清单` worksheet with exactly these columns: 公司名称、公司类型（模型判断）、开放批次、开放岗位、地区、开始时间、截止时间、投递链接. The entry cell is a clickable `查看岗位并投递` hyperlink. Do not include evidence URLs, source-provider details, cache data, or other audit-only fields in that sheet, and do not expose rejected or review-only portals as application links.
 
 When `batch` or `verify` receives a non-XLSX `--output`, keep the requested primary JSON/JSONL/CSV output and automatically write the sibling `<basename>.student.xlsx`. A direct XLSX output is not duplicated.
 
-Use the deepest verified official role in this order: direct application, job detail, job list, campaign landing, career home. For persisted report records, `recruitmentEntryUrl` may be used only when `entryType` is an `official_*` value, `官方招聘站或受委托 ATS`, or `企业官方招聘公告（公众号）`; never use a discovery-evidence URL as the student entry. Mark `在招` only when the record has active verification; use `待确认` or `已核验` when evidence is weaker. Leave missing links blank.
+Use the deepest verified official role in this order: direct application, job detail, job list, campaign landing, career home. For persisted report records, `recruitmentEntryUrl` may be used only when `entryType` is an `official_*` value, `官方招聘站或受委托 ATS`, or `企业官方招聘公告（公众号）`; never use a discovery-evidence URL as the student entry. Only active verified openings belong in the final student list. Leave missing links blank rather than substituting discovery evidence.
+
+Company type is a model advisory, not official-site evidence. Display its label only when the recorded confidence is at least `0.8`; otherwise use `待确认`. Preserve classification evidence outside the student sheet. Use `未披露` for missing dates and `招满即止` only when that deadline semantics is explicit.
 
 XLSX export requires the Codex Desktop spreadsheet runtime. If it is unavailable, stop with the runtime error; do not write text content to an `.xlsx` file or substitute another workbook library.
 

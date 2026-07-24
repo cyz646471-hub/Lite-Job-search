@@ -4,14 +4,14 @@ import path from 'node:path';
 import { selectBestEntryUrl } from '../core/contracts.mjs';
 
 export const studentHeaders = [
-  '公司',
-  '市场',
-  '招聘批次或岗位',
-  '地点',
-  '启动或发布时间',
-  '岗位方向',
-  '投递入口',
-  '投递状态',
+  '公司名称',
+  '公司类型（模型判断）',
+  '开放批次',
+  '开放岗位',
+  '地区',
+  '开始时间',
+  '截止时间',
+  '投递链接',
 ];
 
 function text(value) {
@@ -34,32 +34,71 @@ function entryUrl(record) {
     || '';
 }
 
-function applicationStatus(record) {
-  if (record.applicationActive === true || record.verificationStatus === 'active_verified') return '在招';
-  if (record.applicationActive === false) return '已关闭';
-  if (record.verificationStatus === 'verified') return '已核验';
+function companyType(record) {
+  const prediction = record.companyTypePrediction || record.companyTypeAssessment || {};
+  const label = text(prediction.label || prediction.type || record.companyType);
+  const confidence = Number(prediction.confidence ?? record.companyTypeConfidence);
+  if (label && Number.isFinite(confidence) && confidence >= 0.8) return label;
   return '待确认';
+}
+
+function recruitmentBatch(record) {
+  const batch = text(
+    record.recruitmentBatch
+    || record.batchName
+    || record.recruitmentType
+    || record.recruitmentTypes?.[0],
+  );
+  if (!batch) return '待确认';
+  const cohortYear = text(record.cohortYear);
+  if (!cohortYear || batch.includes(cohortYear)) return batch;
+  return `${cohortYear}届${batch}`;
+}
+
+function locations(record) {
+  if (Array.isArray(record.locations)) return record.locations.map(text).filter(Boolean).join('、');
+  return text(record.location);
+}
+
+function deadline(record) {
+  const value = asDate(record.closesAt || record.expiresAt || record.deadline);
+  if (value) return value;
+  if (
+    record.deadlineType === 'until_filled'
+    || /招满|until.?filled/i.test(text(record.deadline))
+  ) return '招满即止';
+  return '未披露';
 }
 
 export function toStudentRow(record, defaults = {}) {
   const url = entryUrl(record);
-  const roleCategories = Array.isArray(record.roleCategories)
-    ? record.roleCategories.join('、')
-    : record.roleCategories || record.roleCategory || '';
   return [
-    text(record.company),
-    text(record.market || defaults.market),
-    text(record.title || record.batchName || record.recruitmentBatch),
-    text(record.location),
-    asDate(record.campaignStartAt || record.recruitmentStartAt || record.publishedAt || record.postedAt || record.sourceUpdatedAt),
-    text(roleCategories),
-    url ? { text: '查看职位并投递', url } : '',
-    applicationStatus(record),
+    text(record.company || record.companyName || defaults.company),
+    companyType(record),
+    recruitmentBatch(record),
+    text(record.title || record.positionTitle || record.roleTitle),
+    locations(record),
+    asDate(
+      record.publishedAt
+      || record.postedAt
+      || record.campaignStartAt
+      || record.recruitmentStartAt
+      || record.sourceUpdatedAt,
+    ) || '未披露',
+    deadline(record),
+    url ? { text: '查看岗位并投递', url } : '',
   ];
 }
 
 function spreadsheetFormulaText(value) {
   return String(value).replace(/"/g, '""');
+}
+
+export function studentHyperlinkFormula(link) {
+  if (!link?.url) return '';
+  const url = spreadsheetFormulaText(link.url);
+  const label = spreadsheetFormulaText(link.text || '查看岗位并投递');
+  return `=IFERROR(HYPERLINK("${url}","${label}"),"${label}")`;
 }
 
 async function loadArtifactTool() {
@@ -82,14 +121,15 @@ export async function writeStudentWorkbook(file, records, defaults = {}) {
 
   sheet.getRange('A1:H1').values = [studentHeaders];
   if (rows.length) {
-    const values = rows.map((row) => row.map((cell, index) => index === 6 && cell ? cell.text : cell));
+    const values = rows.map((row) => row.map((cell, index) => index === 7 && cell ? cell.text : cell));
     const endRow = rows.length + 1;
     sheet.getRange(`A2:H${endRow}`).values = values;
-    sheet.getRange(`G2:G${endRow}`).formulas = rows.map((row) => {
-      const link = row[6];
-      return [link ? `=HYPERLINK("${spreadsheetFormulaText(link.url)}","${spreadsheetFormulaText(link.text)}")` : ''];
+    sheet.getRange(`H2:H${endRow}`).formulas = rows.map((row) => {
+      const link = row[7];
+      return [studentHyperlinkFormula(link)];
     });
-    sheet.getRange(`E2:E${endRow}`).format.numberFormat = 'yyyy-mm-dd';
+    sheet.getRange(`F2:G${endRow}`).format.numberFormat = 'yyyy-mm-dd';
+    sheet.getRange(`2:${endRow}`).format.rowHeight = 30;
     sheet.tables.add(`A1:H${endRow}`, true, 'StudentApplications');
   }
 
@@ -103,14 +143,14 @@ export async function writeStudentWorkbook(file, records, defaults = {}) {
   };
   sheet.getRange(`A1:H${Math.max(rows.length + 1, 2)}`).format.verticalAlignment = 'center';
   sheet.getRange(`A1:H${Math.max(rows.length + 1, 2)}`).format.wrapText = true;
-  sheet.getRange('A:A').format.columnWidth = 20;
-  sheet.getRange('B:B').format.columnWidth = 10;
-  sheet.getRange('C:C').format.columnWidth = 28;
-  sheet.getRange('D:D').format.columnWidth = 18;
-  sheet.getRange('E:E').format.columnWidth = 15;
-  sheet.getRange('F:F').format.columnWidth = 24;
-  sheet.getRange('G:G').format.columnWidth = 22;
-  sheet.getRange('H:H').format.columnWidth = 12;
+  if (rows.length) sheet.getRange(`H2:H${rows.length + 1}`).format.wrapText = false;
+  sheet.getRange('A:A').format.columnWidth = 22;
+  sheet.getRange('B:B').format.columnWidth = 20;
+  sheet.getRange('C:C').format.columnWidth = 18;
+  sheet.getRange('D:D').format.columnWidth = 30;
+  sheet.getRange('E:E').format.columnWidth = 20;
+  sheet.getRange('F:G').format.columnWidth = 15;
+  sheet.getRange('H:H').format.columnWidth = 22;
   sheet.getRange('1:1').format.rowHeight = 28;
 
   const target = path.resolve(file);
