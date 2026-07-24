@@ -76,6 +76,7 @@ export class SearchRouter {
         provider: provider.name,
         status: normalized.status,
         networkRequest: result.networkRequests !== 0,
+        error: result.error ? String(result.error).slice(0, 240) : null,
       });
       if (normalized.status === 'ok' || normalized.status === 'success') {
         const output = {

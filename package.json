@@ -14,6 +14,9 @@
     ".agents/skills/lite-job-search",
     "bin",
     "config",
+    "docs/architecture.md",
+    "docs/migration-from-career-ops.md",
+    "examples",
     "engine",
     "scripts",
     "src"
@@ -22,7 +25,11 @@
     "test": "node --test",
     "doctor": "node ./bin/lite-job-search.mjs doctor",
     "sync:career-ops": "node ./scripts/sync-from-career-ops.mjs",
-    "validate:skill": "node --test tests/skill-package.test.mjs"
+    "validate:skill": "node --test tests/skill-package.test.mjs",
+    "test:market-discovery": "node --test tests/domain-models.test.mjs tests/verification-engine.test.mjs tests/query-planner.test.mjs tests/company-discovery.test.mjs tests/upstream-adapters.test.mjs tests/sqlite-repository.test.mjs tests/discover-market-jobs.test.mjs tests/market-discovery-cli.test.mjs tests/fetch-page.test.mjs tests/llm-planning-adapter.test.mjs tests/occupation-taxonomy.test.mjs tests/quality-report.test.mjs tests/discovery-batch.test.mjs",
+    "canary:ai-product-manager": "node ./scripts/run-ai-product-manager-canary.mjs",
+    "canary": "node ./bin/lite-job-search.mjs discover",
+    "discover:batch": "node ./bin/lite-job-search.mjs discover-batch"
   },
   "engines": {
     "node": ">=20"
@@ -37,6 +44,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "better-sqlite3": "^12.10.0",
     "dotenv": "^17.0.0",
     "js-yaml": "^4.1.1",
     "playwright": "1.61.1",

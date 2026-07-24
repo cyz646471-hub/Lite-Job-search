@@ -1,0 +1,39 @@
+{
+  "version": "2026-07-24",
+  "globalExclusions": ["课程培训", "培训机构", "求职辅导", "猎头职位聚合"],
+  "families": [
+    {
+      "id": "PRODUCT",
+      "match": ["产品经理", "product manager", "产品运营"],
+      "chineseTerms": ["产品经理", "AI产品经理", "数据产品经理", "产品运营"],
+      "englishTerms": ["Product Manager", "AI Product Manager", "Data Product Manager", "Product Operations"],
+      "synonyms": ["人工智能产品经理", "大模型产品经理"]
+    },
+    {
+      "id": "ENGINEERING",
+      "match": ["后端开发", "后端工程师", "backend", "software engineer", "ai engineer", "开发工程师"],
+      "chineseTerms": ["后端开发", "后端工程师", "软件工程师", "AI工程师"],
+      "englishTerms": ["Backend Engineer", "Software Engineer", "AI Engineer"],
+      "synonyms": ["服务端开发", "服务器端开发"]
+    },
+    {
+      "id": "MARKETING",
+      "match": ["市场营销", "海外市场", "marketing", "growth"],
+      "chineseTerms": ["市场营销", "海外市场营销", "增长营销", "品牌营销"],
+      "englishTerms": ["Marketing", "International Marketing", "Growth Marketing", "Brand Marketing"],
+      "synonyms": ["出海营销", "海外市场推广"]
+    }
+  ],
+  "industries": [
+    {
+      "id": "AI",
+      "match": ["ai", "人工智能", "大模型"],
+      "terms": ["AI", "人工智能", "大模型", "machine learning"]
+    },
+    {
+      "id": "3C",
+      "match": ["3c", "消费电子", "智能硬件"],
+      "terms": ["3C", "消费电子", "智能硬件", "consumer electronics"]
+    }
+  ]
+}

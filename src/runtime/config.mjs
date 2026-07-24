@@ -3,6 +3,12 @@ function positiveInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function optionalNumber(value) {
+  if (value == null || String(value).trim() === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function loadRuntimeConfig(env = process.env) {
   const primary = String(env.SEARCH_PROVIDER_PRIMARY || 'none').toLowerCase();
   const fallback = String(env.SEARCH_PROVIDER_FALLBACK || 'none').toLowerCase();
@@ -24,6 +30,21 @@ export function loadRuntimeConfig(env = process.env) {
     browser: {
       baiduMode: String(env.CN_BAIDU_SEARCH_MODE || 'chrome').toLowerCase(),
       playwrightHeadless: String(env.PLAYWRIGHT_HEADLESS || 'true').toLowerCase() !== 'false',
+    },
+    llm: {
+      endpoint: String(env.LITE_JOB_LLM_ENDPOINT || ''),
+      model: String(env.LITE_JOB_LLM_MODEL || ''),
+      configured: Boolean(env.LITE_JOB_LLM_ENDPOINT && env.LITE_JOB_LLM_MODEL),
+      timeoutMs: positiveInteger(env.LITE_JOB_LLM_TIMEOUT_MS, 30_000),
+      inputUsdPerMillionTokens: optionalNumber(env.LITE_JOB_LLM_INPUT_USD_PER_MILLION),
+      outputUsdPerMillionTokens: optionalNumber(env.LITE_JOB_LLM_OUTPUT_USD_PER_MILLION),
+    },
+    database: {
+      file: String(env.LITE_JOB_DATABASE_FILE || ''),
+    },
+    discovery: {
+      maxQueries: Math.min(20, positiveInteger(env.LITE_JOB_DISCOVERY_MAX_QUERIES, 12)),
+      maxResults: Math.min(1000, positiveInteger(env.LITE_JOB_DISCOVERY_MAX_RESULTS, 100)),
     },
   };
 }

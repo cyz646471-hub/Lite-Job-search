@@ -14,6 +14,14 @@ export { SearchRouter, describeSearchMode } from './search/router.mjs';
 export { DailyBudget } from './runtime/budget.mjs';
 export { FileSearchCache, MemorySearchCache } from './runtime/cache.mjs';
 export { loadRuntimeConfig } from './runtime/config.mjs';
+export { discoverMarketJobs } from './application/discover-market-jobs.mjs';
+export { createSearchIntent } from './domain/search-intent.mjs';
+export { verifyCareerPortal } from './verification/verification-engine.mjs';
+export { openSqliteMarketDiscoveryRepository } from './storage/sqlite-job-repository.mjs';
+export { createMarketDiscoveryRuntime } from './runtime/create-market-discovery-runtime.mjs';
+export { resolveOccupationTaxonomy } from './taxonomy/occupation-taxonomy.mjs';
+export { buildQualityReport } from './quality/quality-report.mjs';
+export { runDiscoveryBatch } from './application/run-discovery-batch.mjs';
 
 export {
   discoverCompanySites,

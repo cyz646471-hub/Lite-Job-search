@@ -24,6 +24,36 @@ CAREER_HOME / CAMPAIGN / JOB_LIST / JOB_DETAIL / APPLY
 去重、审计、JSON / JSONL / CSV
 ```
 
+岗位驱动的新入口采用旁路升级，不改写旧 Provider：
+
+```text
+SearchIntent（岗位、行业、时间、数量）
+          ↓
+LLM：关键词扩展与 Query 规划（无验证权）
+          ↓
+SearchRouter → Company 候选与 DiscoveryLog
+          ↓
+受限 HTTP 抓取 → 确定性 Verification Engine
+          ↓
+Company → VERIFIED CareerPortal → recent JobOpening
+          ↓
+SQLite → legacy JobResult / student XLSX compatibility projection
+```
+
+验证引擎的证据码、方向和权重由程序固定。候选 URL 自身域名是中性证据；聚合、高校、新闻、培训和身份冲突是硬拒绝。LLM 对 `REVIEW` 页面只能附加权重为 0 的 advisory。
+
+SQLite Repository 在写入 `JobOpening` 前再次检查关联 `CareerPortal.verificationStatus === VERIFIED`，形成应用层和存储层双重门禁。未知发布时间不会通过近期窗口判断。
+
+真实数据生产层在该闭环外增加四个增量组件：
+
+- Company Knowledge Base 按市场、官方域名和名称/Alias 合并企业事实；
+- occupation taxonomy 为 Product、Engineering、Marketing、AI、3C 提供确定性词表；
+- LLM 调用通过可替换适配器缓存，并记录 Prompt 哈希、token、成本和失败；
+- batch checkpoints 在 SQLite 中隔离单条失败并支持断点续跑。
+
+质量报告只根据本次运行实际事件计算验证率、提取成功率、重复率、误报率与
+平均 confidence；没有分母时返回 `null`。
+
 ## 同步 Career OP
 
 `config/extraction-manifest.json` 声明入口文件、动态 provider 目录和排除项。

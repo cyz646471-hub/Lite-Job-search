@@ -17,6 +17,10 @@ function run(args, env = {}) {
       PATH: process.env.PATH,
       SystemRoot: process.env.SystemRoot,
       TEMP: process.env.TEMP,
+      BAIDU_SEARCH_API_KEY: '',
+      TAVILY_API_KEY: '',
+      BRAVE_SEARCH_API_KEY: '',
+      APIFY_TOKEN: '',
       ...env,
     },
   });
@@ -46,6 +50,19 @@ test('doctor distinguishes Apify batch availability from single-query CLI search
   assert.doesNotMatch(result.stdout, /fixture-secret/);
 });
 
+test('doctor reports an unusable database path as not ready', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-doctor-db-'));
+  const parentFile = path.join(directory, 'not-a-directory');
+  await writeFile(parentFile, 'x');
+  const result = run(['doctor', '--json'], {
+    LITE_JOB_DATABASE_FILE: path.join(parentFile, 'jobs.sqlite'),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const doctor = JSON.parse(result.stdout);
+  assert.equal(doctor.database, 'not_ready');
+  assert.equal(doctor.marketDiscoveryReady, false);
+});
+
 test('search and batch run through a manual provider without network access', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-search-cli-'));
   const manual = path.join(directory, 'manual.json');
@@ -66,6 +83,24 @@ test('search and batch run through a manual provider without network access', as
   const batch = run(['batch', '--input', input, '--manual', manual, '--json']);
   assert.equal(batch.status, 0, batch.stderr);
   assert.equal(JSON.parse(batch.stdout).length, 2);
+});
+
+test('batch keeps its primary output and automatically creates a student XLSX sibling', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-search-student-batch-'));
+  const manual = path.join(directory, 'manual.json');
+  const input = path.join(directory, 'companies.json');
+  const output = path.join(directory, 'results.json');
+  const studentOutput = path.join(directory, 'results.student.xlsx');
+  await writeFile(manual, JSON.stringify([
+    { company: 'Acme', title: 'Acme Careers', url: 'https://acme.com/jobs' },
+  ]));
+  await writeFile(input, JSON.stringify([{ company: 'Acme', market: 'NA' }]));
+
+  const batch = run(['batch', '--input', input, '--manual', manual, '--output', output, '--json']);
+
+  assert.equal(batch.status, 0, batch.stderr);
+  assert.equal(JSON.parse(await readFile(output, 'utf8')).length, 1);
+  assert.equal((await readFile(studentOutput)).subarray(0, 2).toString(), 'PK');
 });
 
 test('verify and export work with offline page fixtures', async () => {

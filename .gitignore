@@ -1,8 +1,11 @@
 node_modules/
+.worktrees/
 .env
 .env.*
 !.env.example
 cache/
+data/
+test-output/
 output/
 outputs/
 logs/

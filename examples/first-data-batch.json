@@ -1,0 +1,34 @@
+[
+  {
+    "id": "ai-product-manager",
+    "market": "CN",
+    "role": "AI产品经理",
+    "industry": ["AI", "互联网"],
+    "sinceDays": 90,
+    "limit": 100
+  },
+  {
+    "id": "3c-product-manager",
+    "market": "CN",
+    "role": "3C产品经理",
+    "industry": ["3C", "消费电子"],
+    "sinceDays": 90,
+    "limit": 100
+  },
+  {
+    "id": "overseas-marketing",
+    "market": "CN",
+    "role": "海外市场营销",
+    "industry": ["出海", "3C"],
+    "sinceDays": 90,
+    "limit": 100
+  },
+  {
+    "id": "backend-engineering",
+    "market": "CN",
+    "role": "后端开发",
+    "industry": ["互联网", "AI"],
+    "sinceDays": 90,
+    "limit": 100
+  }
+]

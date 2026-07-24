@@ -1,6 +1,6 @@
 # Lite Job Search
 
-Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具。它面向中国和北美市场，提供公司招聘官网发现、公开 ATS 扫描、候选链接验证、招聘页面下钻、去重、缓存、预算控制和 JSON/JSONL/CSV 导出。
+Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具。它面向中国和北美市场，提供公司招聘官网发现、公开 ATS 扫描、候选链接验证、招聘页面下钻、去重、缓存、预算控制和 JSON/JSONL/CSV/XLSX 导出。
 
 它不包含简历生成、岗位匹配评分、自动申请、申请跟踪、面试准备或薪酬分析。
 
@@ -12,7 +12,7 @@ Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具�
 | 发现源 | Gank Interview、牛客招聘日程、牛企直聘、实习僧等公开线索；浪浪网申已移除 | 企业官网、VC portfolio seeds、公开职位板 |
 | ATS / 招聘系统 | Moka、北森/Hotjob、飞书招聘、智联招聘系统、Moseeker 等 | Greenhouse、Lever、Ashby、Workday、SmartRecruiters、Teamtailor 等 |
 | 验证 | 企业主域、品牌信号、ATS 租户、招聘语义、页面角色 | 企业域名、ATS 租户、职位列表/详情/申请动作 |
-| 输出 | 统一 JSON、JSONL、CSV | 统一 JSON、JSONL、CSV |
+| 输出 | 统一 JSON、JSONL、CSV、学生投递 XLSX | 统一 JSON、JSONL、CSV、学生投递 XLSX |
 
 抽取引擎保留 60+ 个 Career OP provider、8 个招聘页面 provider、5 个职位详情 provider。公开接口只暴露稳定工作流，减少其他模型需要读取的上下文。
 
@@ -72,7 +72,56 @@ node bin/lite-job-search.mjs verify --input .\candidates.json --output .\verifie
 node bin/lite-job-search.mjs export --input .\verified.json --output .\verified.csv --format csv --json
 ```
 
-输入支持 JSON、JSONL 和 CSV。无搜索 API 时，可用 `--manual manual-candidates.json` 导入浏览器或人工确认的候选。
+按岗位和行业发现招聘市场：
+
+```powershell
+node bin/lite-job-search.mjs discover `
+  --market CN `
+  --role "AI产品经理" `
+  --industry "AI,互联网" `
+  --since-days 90 `
+  --limit 20 `
+  --database ".\data\lite-job-search.sqlite" `
+  --json
+```
+
+该流程为：岗位关键词输入 → LLM 扩展关键词与 Query → 搜索候选公司/URL → 程序验证官网与 ATS → 抽取岗位 → 写入 SQLite。LLM 不参与官网真实性、验证状态或置信度评分。
+
+完整 Canary 支持 `--location`，并输出 Query、候选 URL/公司、验证结果、
+岗位提取、逐阶段失败、LLM 调用及质量指标。缺少配置返回
+`NOT_CONFIGURED`，Provider 或网络失败返回 `FAILED`/`BLOCKED`，不会被解释为
+“没有岗位”。
+
+首批行业/岗位组合可断点执行：
+
+```powershell
+node bin/lite-job-search.mjs discover-batch `
+  --input .\examples\first-data-batch.json `
+  --batch-id cn-first-production `
+  --database .\data\lite-job-search.sqlite `
+  --json
+```
+
+重复执行会跳过成功条目；修复外部故障后使用 `--retry-failed`。单条失败不会
+中止后续组合。
+
+系统分别统计 Candidate、Verified Portal 和 Usable Apply Entry。聚合站、高校就业网、新闻转载和培训机构不能作为官方招聘入口；未知发布日期不计入近期岗位。数量不足时返回 `PARTIAL`，不会用低置信度页面补足。
+
+学生投递 XLSX 作为下游固定输出：从已验证 `JobOpening` 兼容投影生成，每个岗位一行，投递/详情地址使用 Excel 超链接，隐藏内部 ID、证据和原始元数据。本阶段保留现有 XLSX 消费边界，不在发现引擎内复制表格实现。
+
+学生投递清单（XLSX，投递入口为可点击超链接）：
+
+```powershell
+node bin/lite-job-search.mjs export --input .\verified.json --output .\verified.student.xlsx --format xlsx --json
+```
+
+`batch` 和 `verify` 只要使用非 XLSX 的 `--output`，都会保留该主输出，并自动在同目录创建 `<文件名>.student.xlsx`。工作簿固定为八列：公司名称、公司类型（模型判断）、开放批次、开放岗位、地区、开始时间、截止时间、投递链接。每个岗位一行，投递链接显示为“查看岗位并投递”的 Excel 超链接；不会把检索证据、来源 URL 等审计字段展示给学生。
+
+公司类型只展示置信度不低于 `0.8` 的模型分类，否则写为“待确认”。日期缺失时写为“未披露”，明确的 `until_filled` 截止规则写为“招满即止”。链接优先级为直接申请页、职位详情、职位列表、招聘活动页、企业招聘主页；未经验证的入口不会被包装成可投递链接。
+
+XLSX 导出使用 Codex Desktop 附带的电子表格运行时；在该环境外缺少运行时时，命令会明确报错而不会生成伪 XLSX 文件。
+
+输入支持 JSON、JSONL 和 CSV，也接受包含 `market` 和 `companies` 的持久化招聘报告 JSON。无搜索 API 时，可用 `--manual manual-candidates.json` 导入浏览器或人工确认的候选。
 
 ## 作为 Skill 使用
 
@@ -124,6 +173,29 @@ const result = await searchCompany({
   company: 'Stripe',
   router,
 });
+```
+
+岗位驱动 API：
+
+```js
+import {
+  createMarketDiscoveryRuntime,
+  discoverMarketJobs,
+} from 'lite-job-search';
+
+const runtime = await createMarketDiscoveryRuntime({ market: 'CN' });
+try {
+  const result = await discoverMarketJobs({
+    market: 'CN',
+    roleType: 'AI 产品经理',
+    industryTags: ['AI', '互联网'],
+    freshnessDays: 90,
+    targetCount: 20,
+  }, runtime);
+  console.log(result);
+} finally {
+  runtime.close();
+}
 ```
 
 高级调用可直接导入 `runCnDiscovery()`、`runAtsDiscovery()`、`ApifyGoogleSearchProvider` 和招聘页面下钻函数。

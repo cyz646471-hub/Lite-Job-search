@@ -10,7 +10,9 @@ import { SearchRouter } from '../search/router.mjs';
 import { searchBatch } from '../pipeline/search-batch.mjs';
 import { searchCompany } from '../pipeline/search-company.mjs';
 import { verifyCandidates } from '../pipeline/verify-candidates.mjs';
-import { buildDoctorReport } from './doctor.mjs';
+import { buildDoctorReport, probeMarketDiscoveryDatabase } from './doctor.mjs';
+import { runDiscoverCommand } from './discover.mjs';
+import { runDiscoverBatchCommand } from './discover-batch.mjs';
 import { readRecords, writeRecords } from './io.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -91,8 +93,23 @@ function help() {
       'lite-job-search batch --input companies.json|csv [--manual candidates.json] --json',
       'lite-job-search verify --input candidates.json [--fixture-pages pages.json] --json',
       'lite-job-search export --input results.json --output results.csv --format csv --json',
+      'lite-job-search discover --market CN|NA --role ROLE [--industry TAGS] [--since-days 90] [--limit 20] --json',
+      'lite-job-search discover-batch --input batch.json [--batch-id ID] [--retry-failed] --json',
     ],
   };
+}
+
+function studentXlsxSibling(output) {
+  const target = path.resolve(output);
+  const parsed = path.parse(target);
+  return path.join(parsed.dir, `${parsed.name}.student.xlsx`);
+}
+
+async function writeWorkflowOutput(output, records, format) {
+  const selected = String(format || path.extname(output).slice(1) || 'json').toLowerCase();
+  const primary = await writeRecords(output, records, format);
+  if (selected !== 'xlsx') await writeRecords(studentXlsxSibling(output), records, 'xlsx');
+  return primary;
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -102,11 +119,22 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (options.command === 'doctor') {
     const state = await runtime(options, options.market);
+    const databaseFile = state.config.database.file
+      || path.join(root, 'data', 'lite-job-search.sqlite');
     return print(buildDoctorReport({
       config: state.config,
       providers: state.providers,
       providerOrder: state.order,
+      databaseReady: probeMarketDiscoveryDatabase(databaseFile),
     }));
+  }
+
+  if (options.command === 'discover') {
+    return print(await runDiscoverCommand(options));
+  }
+
+  if (options.command === 'discover-batch') {
+    return print(await runDiscoverBatchCommand(options));
   }
 
   if (options.command === 'search') {
@@ -135,7 +163,7 @@ export async function main(argv = process.argv.slice(2)) {
       maxQueries: options.maxQueries,
       concurrency: options.concurrency,
     });
-    if (options.output) await writeRecords(options.output, results, options.format);
+    if (options.output) await writeWorkflowOutput(options.output, results, options.format);
     return print(results);
   }
 
@@ -151,7 +179,7 @@ export async function main(argv = process.argv.slice(2)) {
       };
     }
     const verified = await verifyCandidates(candidates, { fetchPage });
-    if (options.output) await writeRecords(options.output, verified, options.format);
+    if (options.output) await writeWorkflowOutput(options.output, verified, options.format);
     return print(verified);
   }
 
