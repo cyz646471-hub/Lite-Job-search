@@ -17,6 +17,10 @@ function run(args, env = {}) {
       PATH: process.env.PATH,
       SystemRoot: process.env.SystemRoot,
       TEMP: process.env.TEMP,
+      BAIDU_SEARCH_API_KEY: '',
+      TAVILY_API_KEY: '',
+      BRAVE_SEARCH_API_KEY: '',
+      APIFY_TOKEN: '',
       ...env,
     },
   });
