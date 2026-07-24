@@ -24,11 +24,18 @@ function fakeBrowser(pages) {
     url() {
       return pages[currentUrl]?.finalUrl || currentUrl;
     },
+    async title() {
+      return pages[currentUrl]?.title || '';
+    },
     locator(selector) {
       const current = pages[currentUrl] || {};
       return {
         async innerText() {
           return current.text || '';
+        },
+        async evaluate() {
+          if (selector !== 'html') return '';
+          return current.html || `<html><body>${current.text || ''}</body></html>`;
         },
         async evaluateAll() {
           if (selector !== 'a[href]') return [];
@@ -238,4 +245,78 @@ test('does not open ad or news search results in the browser', () => {
 test('detects Baidu safety verification as blocked instead of an empty search', () => {
   assert.equal(isSearchBlockedPage('百度安全验证\n请完成下方验证后继续操作\n拖动左侧滑块'), true);
   assert.equal(isSearchBlockedPage('小红书招聘职位列表'), false);
+});
+test('rejects Jobui before opening it', () => {
+  const decision = classifySearchResult({
+    company: '示例科技',
+    title: '示例科技招聘',
+    url: 'https://www.jobui.com/company/123/jobs/',
+    kind: 'organic',
+  });
+
+  assert.deepEqual(decision, {
+    classification: 'REJECTED',
+    reasonCode: 'excluded_jobui_domain',
+  });
+  assert.equal(shouldOpenSearchResult({
+    url: 'https://www.jobui.com/company/123/jobs/',
+    kind: 'organic',
+  }), false);
+});
+
+test('keeps recruitment-shaped ATS URL as an unverified candidate', () => {
+  const decision = classifySearchResult({
+    company: '示例科技',
+    officialDomain: 'example.com',
+    title: '示例科技招聘',
+    url: 'https://example.jobs.mokahr.com/social-recruitment',
+    kind: 'organic',
+  });
+
+  assert.equal(decision.classification, 'VERIFICATION_CANDIDATE');
+  assert.equal(decision.reasonCode, 'recruitment_url_requires_verification');
+});
+
+test('captures rendered DOM and explicit links for downstream verification', async () => {
+  const socialUrl = 'https://jobs.example.com/social';
+  const campusUrl = 'https://jobs.example.com/campus';
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('示例科技 招聘')}`;
+  const now = '2026-07-25T00:00:00.000Z';
+  const browser = fakeBrowser({
+    [searchUrl]: {
+      text: '示例科技招聘',
+      searchRows: [{
+        title: '示例科技招聘',
+        href: socialUrl,
+        snippet: '示例科技社会招聘',
+        kind: 'organic',
+      }],
+    },
+    [socialUrl]: {
+      title: '示例科技招聘',
+      html: '<html><body><h1>招聘职位</h1><a href="/campus">校园招聘</a></body></html>',
+      text: '招聘职位 校园招聘',
+      links: [{ text: '校园招聘', href: campusUrl }],
+    },
+    [campusUrl]: {
+      title: '校园招聘',
+      html: '<html><body><h1>校园招聘</h1></body></html>',
+      text: '校园招聘',
+      links: [],
+    },
+  });
+
+  const result = await discoverCompanyWithBrowser({
+    company: '示例科技',
+    officialDomain: 'example.com',
+    browser,
+    now: () => now,
+  });
+
+  const observation = result.observations.find((item) => item.finalUrl === socialUrl);
+  assert.match(observation.html, /招聘职位/);
+  assert.equal(observation.status, 200);
+  assert.equal(observation.fetchStatus, 'COMPLETED');
+  assert.equal(observation.observedAt, now);
+  assert.deepEqual(observation.links[0], { text: '校园招聘', href: campusUrl });
 });
