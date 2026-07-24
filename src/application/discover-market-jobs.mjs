@@ -6,6 +6,7 @@ import { createSearchIntent } from '../domain/search-intent.mjs';
 import { discoverCompanies } from '../discovery/company-discovery.mjs';
 import { expandKeywords } from '../discovery/keyword-expander.mjs';
 import { planQueries } from '../discovery/query-planner.mjs';
+import { discoverRecruitmentEntries } from '../discovery/recruitment-entry-discovery.mjs';
 import { assertMarketDiscoveryRepository } from '../ports/job-repository.mjs';
 import { buildQualityReport } from '../quality/quality-report.mjs';
 import { verifyCareerPortal } from '../verification/verification-engine.mjs';
@@ -59,6 +60,43 @@ function hasUsableJobEntry(opening, portal) {
   );
 }
 
+function canonicalHttpUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    if (!['http:', 'https:'].includes(url.protocol)) return '';
+    url.hash = '';
+    return url.href;
+  } catch {
+    return '';
+  }
+}
+
+function linksFromPage(page = {}) {
+  if (Array.isArray(page.links)) return page.links;
+  const html = String(page.html || page.body || '');
+  const links = [];
+  const anchor = /<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
+  for (const match of html.matchAll(anchor)) {
+    links.push({
+      href: match[1] || match[2] || match[3] || '',
+      text: String(match[4] || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+    });
+  }
+  return links;
+}
+
+function entryLogMetadata(candidate = {}) {
+  if (!candidate.parentUrl && !candidate.entryDepth && !candidate.recruitmentTypes?.length) {
+    return {};
+  }
+  return {
+    parentUrl: candidate.parentUrl || null,
+    entryDepth: candidate.entryDepth || 0,
+    recruitmentType: candidate.recruitmentTypes?.[0] || null,
+    discoveryReason: candidate.discoveryReason || null,
+  };
+}
+
 export async function discoverMarketJobs(input, dependencies = {}) {
   assertDependencies(dependencies);
   const {
@@ -105,6 +143,13 @@ export async function discoverMarketJobs(input, dependencies = {}) {
   const portalDecisionsById = new Map();
   const storedJobsById = new Map();
   const jobIdsByPortalId = new Map();
+  const discoveredCompanyKeys = new Set();
+  const processedCandidateUrls = new Set();
+  const queuedCandidateUrls = new Set();
+  const childEntriesByCompany = new Map();
+  const noOpeningPortalIds = new Set();
+  const unknownVacancyPortalIds = new Set();
+  const activeOpeningPortalIds = new Set();
   repository.beginRun({ id: runId, intent, startedAt: now() });
   let liveSearchExecuted = false;
   let discovery = null;
@@ -121,7 +166,10 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       resultUrl: resultUrl || candidate?.url || null,
       resultRank: candidate?.rank ?? null,
       outcome,
-      metadata,
+      metadata: {
+        ...entryLogMetadata(candidate),
+        ...metadata,
+      },
     }));
   };
   const recordFailure = (failure) => {
@@ -162,6 +210,16 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       reviewCount: counters.reviewRequired,
       rejectedCount: counters.rejected,
       extractedJobCount: counters.jobsStored,
+      recruitmentEntryInspectionCount: evaluatedPortalIds.size,
+      activeRecruitmentEntryCount: activeOpeningPortalIds.size,
+      noOpeningRecruitmentEntryCount: [...noOpeningPortalIds].filter((portalId) => (
+        verifiedPortalIds.has(portalId) && !activeOpeningPortalIds.has(portalId)
+      )).length,
+      unknownRecruitmentEntryCount: [...unknownVacancyPortalIds].filter((portalId) => (
+        verifiedPortalIds.has(portalId)
+        && !activeOpeningPortalIds.has(portalId)
+        && !noOpeningPortalIds.has(portalId)
+      )).length,
       failures: Object.freeze([...failures]),
       providerAttempts: Object.freeze([...(discovery?.providerAttempts || [])]),
       llmUsage: Object.freeze(llmUsage),
@@ -227,8 +285,24 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     failures.push(...discovery.failures);
     for (const log of discovery.logs) repository.appendDiscoveryLog(log);
 
-    for (const candidate of discovery.candidates) {
-      if (counters.jobsStored >= intent.targetCount) break;
+    const candidateQueue = discovery.candidates.map((candidate) => ({
+      ...candidate,
+      parentUrl: null,
+      entryDepth: 0,
+    }));
+    for (const candidate of candidateQueue) {
+      const queuedUrl = canonicalHttpUrl(candidate.url);
+      if (queuedUrl) queuedCandidateUrls.add(queuedUrl);
+    }
+
+    while (candidateQueue.length) {
+      const candidate = candidateQueue.shift();
+      const candidateUrl = canonicalHttpUrl(candidate.url);
+      if (candidateUrl) {
+        queuedCandidateUrls.delete(candidateUrl);
+        if (processedCandidateUrls.has(candidateUrl)) continue;
+        processedCandidateUrls.add(candidateUrl);
+      }
 
       let company = createCompany({
         id: ids.company(candidate),
@@ -244,7 +318,11 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         countryRegion: candidate.countryRegion || (intent.market === 'CN' ? '中国大陆' : null),
         market: intent.market,
       }, { now: now() });
-      counters.companiesDiscovered += 1;
+      const companyKey = candidate.companyIdentityKey || candidate.company;
+      if (!discoveredCompanyKeys.has(companyKey)) {
+        discoveredCompanyKeys.add(companyKey);
+        counters.companiesDiscovered = discoveredCompanyKeys.size;
+      }
 
       let page;
       try {
@@ -362,6 +440,10 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       }
       confidenceByPortalId.set(portal.id, decision.confidenceScore);
       qualityObservations.confidenceScores = [...confidenceByPortalId.values()];
+      noOpeningPortalIds.delete(portal.id);
+      unknownVacancyPortalIds.delete(portal.id);
+      if (inspected.vacancyStatus === 'NO_OPENINGS') noOpeningPortalIds.add(portal.id);
+      else if (inspected.vacancyStatus === 'UNKNOWN') unknownVacancyPortalIds.add(portal.id);
       portalDecisionsById.set(portal.id, Object.freeze({
         portalId: portal.id,
         companyId: company.id,
@@ -371,6 +453,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         pageType: portal.pageType,
         verificationStatus: portal.verificationStatus,
         confidenceScore: portal.confidenceScore,
+        vacancyStatus: inspected.vacancyStatus || 'UNKNOWN',
         evidence: portal.evidence,
       }));
 
@@ -383,6 +466,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         verificationStatus: decision.verificationStatus,
         confidenceScore: decision.confidenceScore,
         hardRejectReasons: decision.hardRejectReasons,
+        vacancyStatus: inspected.vacancyStatus || 'UNKNOWN',
         llmAdvisory: advisory?.observedValue || null,
       }, portal.canonicalUrl);
 
@@ -397,6 +481,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       if (decision.verificationStatus === 'REJECTED') rejectedPortalIds.add(portal.id);
       if (decision.verificationStatus !== 'VERIFIED') {
         verifiedPortalIds.delete(portal.id);
+        activeOpeningPortalIds.delete(portal.id);
         extractionAttemptPortalIds.delete(portal.id);
         extractionSuccessPortalIds.delete(portal.id);
         for (const jobId of jobIdsByPortalId.get(portal.id) || []) {
@@ -419,7 +504,53 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       const firstVerifiedObservation = !verifiedPortalIds.has(portal.id);
       verifiedPortalIds.add(portal.id);
       counters.portalsVerified = verifiedPortalIds.size;
+      const childCount = childEntriesByCompany.get(companyKey) || 0;
+      const remainingChildBudget = Math.max(0, 20 - childCount);
+      if (remainingChildBudget > 0) {
+        const nextDepth = Number(candidate.entryDepth || 0) + 1;
+        const entries = discoverRecruitmentEntries({
+          baseUrl: portal.canonicalUrl,
+          links: linksFromPage(page),
+          trustedRegistrableDomains: company.officialDomains,
+          verifiedAtsDomains: portal.atsType ? [portal.registrableDomain] : [],
+          visitedUrls: [...processedCandidateUrls, ...queuedCandidateUrls],
+          parentUrl: portal.canonicalUrl,
+          depth: nextDepth,
+          maxDepth: 2,
+          maxEntries: remainingChildBudget,
+        });
+        for (const entry of entries) {
+          const entryUrl = canonicalHttpUrl(entry.url);
+          if (!entryUrl || processedCandidateUrls.has(entryUrl) || queuedCandidateUrls.has(entryUrl)) {
+            continue;
+          }
+          candidateQueue.push({
+            ...candidate,
+            url: entry.url,
+            title: entry.text || candidate.title,
+            rank: null,
+            parentUrl: entry.parentUrl,
+            entryDepth: entry.depth,
+            recruitmentTypes: entry.recruitmentType === 'general'
+              ? []
+              : [entry.recruitmentType],
+            discoveryReason: entry.discoveryReason,
+          });
+          queuedCandidateUrls.add(entryUrl);
+          childEntriesByCompany.set(
+            companyKey,
+            (childEntriesByCompany.get(companyKey) || 0) + 1,
+          );
+        }
+      }
       if (!firstVerifiedObservation) continue;
+      if (inspected.vacancyStatus === 'NO_OPENINGS') {
+        appendLog(candidate, keywords, 'NO_RECENT_JOBS', {
+          reason: 'explicit_no_openings',
+          vacancyStatus: 'NO_OPENINGS',
+        }, portal.canonicalUrl);
+        continue;
+      }
       extractionAttemptPortalIds.add(portal.id);
       qualityObservations.extractionAttempts = extractionAttemptPortalIds.size;
       let openings;
@@ -440,6 +571,11 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         continue;
       }
 
+      const observedActiveOpenings = (openings || []).filter((opening) => (
+        opening.status === 'ACTIVE' && hasUsableJobEntry(opening, portal)
+      ));
+      if (observedActiveOpenings.length) activeOpeningPortalIds.add(portal.id);
+      else activeOpeningPortalIds.delete(portal.id);
       let storedForPortal = 0;
       for (const opening of openings || []) {
         if (counters.jobsStored >= intent.targetCount) break;
@@ -479,10 +615,18 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         qualityObservations.extractionSuccesses = extractionSuccessPortalIds.size;
         appendLog(candidate, keywords, 'JOBS_EXTRACTED', {
           count: storedForPortal,
+          vacancyStatus: 'ACTIVE',
+          observedActiveCount: observedActiveOpenings.length,
         }, portal.canonicalUrl);
       } else if (!(openings || []).length) {
         appendLog(candidate, keywords, 'NO_RECENT_JOBS', {
           reason: 'no_openings_extracted',
+        }, portal.canonicalUrl);
+      } else if (observedActiveOpenings.length) {
+        appendLog(candidate, keywords, 'NO_RECENT_JOBS', {
+          reason: 'no_requested_role_jobs',
+          vacancyStatus: 'ACTIVE',
+          observedActiveCount: observedActiveOpenings.length,
         }, portal.canonicalUrl);
       }
     }

@@ -195,6 +195,137 @@ test('AI 产品经理 intent stores only jobs from verified portals', async (t) 
   assert.ok(repository.listDiscoveryLogs().some((item) => item.outcome === 'VERIFIED_PORTAL'));
 });
 
+test('inspects sibling recruitment entries and stores their verified jobs', async (t) => {
+  const socialUrl = 'https://jobs.example.com/social';
+  const campusUrl = 'https://jobs.example.com/campus';
+  const internshipUrl = 'https://jobs.example.com/internship';
+  const { repository, dependencies } = await createHarness({
+    searchItems: [{
+      company: '示例智能科技',
+      url: socialUrl,
+      confirmedOfficialDomain: 'example.com',
+      officialDomainSource: 'manual_verified',
+      rank: 1,
+    }],
+  });
+  t.after(() => repository.close());
+  dependencies.ids.portal = (candidate) => (
+    `portal-${new URL(candidate.url).pathname.replace(/\W+/g, '-')}`
+  );
+  dependencies.fetchPage = async (url) => ({
+    status: 200,
+    finalUrl: url,
+    html: url === socialUrl
+      ? `<a href="${campusUrl}">校园招聘</a><a href="${internshipUrl}">实习生招聘</a>`
+      : '<h1>招聘职位</h1>',
+    links: url === socialUrl
+      ? [
+        { text: '校园招聘', href: campusUrl },
+        { text: '实习生招聘', href: internshipUrl },
+      ]
+      : [],
+  });
+  dependencies.jobExtractor.extract = async ({ company, portal }) => {
+    if (portal.canonicalUrl === campusUrl) return [];
+    return [createJobOpening({
+      companyId: company.id,
+      careerPortalId: portal.id,
+      sourceJobId: portal.canonicalUrl,
+      title: INTENT.roleType,
+      normalizedTitle: INTENT.roleType,
+      roleFamily: 'PRODUCT_MANAGEMENT',
+      locations: ['上海'],
+      publishedAt: '2026-07-20T00:00:00.000Z',
+      jobDetailUrl: `${portal.canonicalUrl}/positions/ai-pm`,
+      status: 'ACTIVE',
+      sourceUrl: `${portal.canonicalUrl}/positions/ai-pm`,
+    }, { now: NOW })];
+  };
+
+  const result = await discoverMarketJobs(INTENT, dependencies);
+
+  assert.equal(result.portalsVerified, 3);
+  assert.equal(result.jobsStored, 2);
+  assert.equal(repository.listCareerPortals().length, 3);
+  assert.equal(repository.listJobOpenings().length, 2);
+  assert.ok(repository.listDiscoveryLogs().some((item) => (
+    item.metadata.parentUrl === socialUrl
+  )));
+  assert.equal(result.report.recruitmentEntryInspectionCount, 3);
+});
+
+test('reports explicit no-opening recruitment entries without fabricating jobs', async (t) => {
+  const socialUrl = 'https://jobs.example.com/social';
+  const campusUrl = 'https://jobs.example.com/campus';
+  const { repository, dependencies } = await createHarness({
+    searchItems: [{
+      company: '示例智能科技',
+      url: socialUrl,
+      confirmedOfficialDomain: 'example.com',
+      officialDomainSource: 'manual_verified',
+      rank: 1,
+    }],
+  });
+  t.after(() => repository.close());
+  dependencies.ids.portal = (candidate) => (
+    `portal-${new URL(candidate.url).pathname.replace(/\W+/g, '-')}`
+  );
+  dependencies.fetchPage = async (url) => ({
+    status: 200,
+    finalUrl: url,
+    html: url === socialUrl
+      ? `<a href="${campusUrl}">校园招聘</a>`
+      : '<p>暂无职位</p>',
+    links: url === socialUrl
+      ? [{ text: '校园招聘', href: campusUrl }]
+      : [],
+  });
+  dependencies.verificationAdapter.inspect = async ({ candidate }) => ({
+    pageType: 'JOB_LIST',
+    atsType: '',
+    registrableDomain: 'example.com',
+    vacancyStatus: candidate.url === campusUrl ? 'NO_OPENINGS' : 'UNKNOWN',
+    evidence: [
+      { code: 'official_domain_match' },
+      { code: 'recruitment_structure' },
+      { code: 'apply_action' },
+      { code: 'official_site_backlink' },
+    ],
+  });
+  const extractionUrls = [];
+  dependencies.jobExtractor.extract = async ({ portal }) => {
+    extractionUrls.push(portal.canonicalUrl);
+    return [];
+  };
+
+  const result = await discoverMarketJobs(INTENT, dependencies);
+
+  assert.equal(result.jobsStored, 0);
+  assert.equal(result.report.noOpeningRecruitmentEntryCount, 1);
+  assert.equal(result.report.unknownRecruitmentEntryCount, 1);
+  assert.deepEqual(extractionUrls, [socialUrl]);
+  assert.ok(repository.listDiscoveryLogs().some((item) => (
+    item.resultUrl === campusUrl
+    && item.metadata.vacancyStatus === 'NO_OPENINGS'
+  )));
+});
+
+test('reports active recruiting even when openings do not match the requested role', async (t) => {
+  const { repository, dependencies } = await createHarness({
+    title: '财务总监',
+  });
+  t.after(() => repository.close());
+
+  const result = await discoverMarketJobs(INTENT, dependencies);
+
+  assert.equal(result.jobsStored, 0);
+  assert.equal(result.report.activeRecruitmentEntryCount, 1);
+  assert.ok(repository.listDiscoveryLogs().some((item) => (
+    item.metadata.vacancyStatus === 'ACTIVE'
+    && item.metadata.reason === 'no_requested_role_jobs'
+  )));
+});
+
 test('run report retains provider failure reasons without claiming success', async (t) => {
   const { repository, dependencies } = await createHarness();
   t.after(() => repository.close());
