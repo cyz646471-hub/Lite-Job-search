@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifySearchResult } from '../scripts/company-browser-discovery.mjs';
+import { classifySearchResult, discoverCareerLinks } from '../scripts/company-browser-discovery.mjs';
 
 test('classifies a branded recruitment subdomain as an official candidate', () => {
   const result = classifySearchResult({
@@ -35,4 +35,17 @@ test('isolates matching Liepin and BOSS company pages as lead-only', () => {
   assert.deepEqual([liepin.classification, boss.classification], ['LEAD_ONLY', 'LEAD_ONLY']);
   assert.equal(liepin.platform, 'Liepin');
   assert.equal(boss.platform, 'BOSS');
+});
+
+test('drills a campus landing page into internship and graduate recruitment types', () => {
+  const links = discoverCareerLinks('https://hr.4399om.com/campus/', [
+    { text: '实习生招聘', href: '/campus/internship' },
+    { text: '应届生招聘', href: '/campus/graduate/' },
+    { text: '公司首页', href: '/' },
+  ]);
+
+  assert.deepEqual(links.map(({ recruitmentType, url }) => ({ recruitmentType, url })), [
+    { recruitmentType: 'INTERNSHIP', url: 'https://hr.4399om.com/campus/internship' },
+    { recruitmentType: 'GRADUATE', url: 'https://hr.4399om.com/campus/graduate/' },
+  ]);
 });

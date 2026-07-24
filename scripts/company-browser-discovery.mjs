@@ -57,3 +57,38 @@ export function classifySearchResult({ company = '', officialDomain = '', title 
   if (firstParty) return { classification: 'REJECTED', reasonCode: 'first_party_non_recruitment_page' };
   return { classification: 'REJECTED', reasonCode: 'unverified_non_recruitment_url' };
 }
+
+function recruitmentTypeForLink(text, url) {
+  const value = `${text} ${url}`.toLowerCase();
+  if (/实习|internship|intern\b/.test(value)) return 'INTERNSHIP';
+  if (/应届|校招|graduate|campus/.test(value)) return 'GRADUATE';
+  if (/社会|社招|social|experienced/.test(value)) return 'SOCIAL';
+  if (/岗位|职位|position|jobs?/.test(value)) return 'JOB_LIST';
+  return '';
+}
+
+export function discoverCareerLinks(baseUrl, links = []) {
+  const base = parsedUrl(baseUrl);
+  if (!base || !Array.isArray(links)) return [];
+  const candidates = [];
+  const seen = new Set();
+  for (const link of links) {
+    const recruitmentType = recruitmentTypeForLink(link?.text, link?.href);
+    if (!recruitmentType) continue;
+    let resolved;
+    try {
+      resolved = new URL(String(link.href || ''), base);
+    } catch {
+      continue;
+    }
+    if (!/^https?:$/.test(resolved.protocol) || resolved.hostname !== base.hostname || seen.has(resolved.href)) continue;
+    seen.add(resolved.href);
+    candidates.push({
+      url: resolved.href,
+      text: String(link.text || '').trim(),
+      recruitmentType,
+      discoveryReason: 'career_navigation_link',
+    });
+  }
+  return candidates;
+}
