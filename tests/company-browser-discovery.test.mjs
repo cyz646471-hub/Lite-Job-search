@@ -6,6 +6,7 @@ import {
   discoverCareerLinks,
   discoverCompanyWithBrowser,
   isSearchBlockedPage,
+  normalizeBrowserCompanyInput,
   shouldOpenSearchResult,
 } from '../scripts/company-browser-discovery.mjs';
 
@@ -275,6 +276,26 @@ test('keeps recruitment-shaped ATS URL as an unverified candidate', () => {
 
   assert.equal(decision.classification, 'VERIFICATION_CANDIDATE');
   assert.equal(decision.reasonCode, 'recruitment_url_requires_verification');
+});
+
+test('normalizes the current Golden Dataset company schema', () => {
+  const [company] = normalizeBrowserCompanyInput([{
+    name_cn: '示例科技',
+    name_en: 'Example Tech',
+    aliases: ['示例'],
+    industry: ['AI'],
+    country_region: '中国大陆',
+    official_domains: ['example.com'],
+    sources: ['golden-v4'],
+  }]);
+
+  assert.equal(company.company, '示例科技');
+  assert.equal(company.chineseName, '示例科技');
+  assert.equal(company.englishName, 'Example Tech');
+  assert.equal(company.officialDomain, 'example.com');
+  assert.deepEqual(company.aliases, ['示例']);
+  assert.deepEqual(company.industry, ['AI']);
+  assert.equal(company.countryRegion, '中国大陆');
 });
 
 test('captures rendered DOM and explicit links for downstream verification', async () => {

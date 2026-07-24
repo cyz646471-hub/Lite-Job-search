@@ -506,6 +506,34 @@ export async function discoverCompanyWithBrowser({
   }
 }
 
+export function normalizeBrowserCompanyInput(input) {
+  const rawCompanies = Array.isArray(input) ? input : input?.companies;
+  if (!Array.isArray(rawCompanies)) return [];
+  return rawCompanies.map((item = {}) => {
+    const chineseName = String(item.chineseName || item.name_cn || '').trim() || null;
+    const englishName = String(item.englishName || item.name_en || '').trim() || null;
+    const company = String(
+      item.company
+      || item.canonicalName
+      || item.name
+      || chineseName
+      || englishName
+      || '',
+    ).trim();
+    const officialDomains = item.officialDomains || item.official_domains || [];
+    return {
+      ...item,
+      company,
+      chineseName,
+      englishName,
+      officialDomain: item.officialDomain || officialDomains[0] || '',
+      aliases: Array.isArray(item.aliases) ? item.aliases : [],
+      industry: item.industry || item.industryTags || item.industry_tags || [],
+      countryRegion: item.countryRegion || item.country_region || null,
+    };
+  });
+}
+
 function parseArgs(argv) {
   const values = {};
   for (let index = 0; index < argv.length; index++) {
@@ -526,14 +554,7 @@ async function runCli() {
   let input;
   try { input = JSON.parse(await fs.readFile(args.input, 'utf8')); }
   catch (error) { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'input_read_failed', error: String(error?.message || error) })}\n`); return 2; }
-  const rawCompanies = Array.isArray(input) ? input : input.companies;
-  const companies = Array.isArray(rawCompanies)
-    ? rawCompanies.map((item) => ({
-      ...item,
-      company: String(item?.company || item?.canonicalName || item?.name || '').trim(),
-      officialDomain: item?.officialDomain || item?.officialDomains?.[0] || '',
-    }))
-    : [];
+  const companies = normalizeBrowserCompanyInput(input);
   if (!companies.length || !companies.every((item) => item.company)) {
     process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'invalid_company_input' })}\n`); return 2;
   }
@@ -576,7 +597,10 @@ async function runCli() {
           maxResults: Number(args['max-results'] || 10),
         }),
       }),
-      ingestCompany: (options) => ingestBrowserCompanyResult(options, { repository }),
+      ingestCompany: (options) => ingestBrowserCompanyResult({
+        ...options,
+        industry: options.industry || options.companyResult.industry || [],
+      }, { repository }),
     });
     const results = batch.companyResults;
     const report = buildDiscoveryReport(results);
