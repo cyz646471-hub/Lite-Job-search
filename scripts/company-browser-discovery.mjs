@@ -1,9 +1,13 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { getDomain } from 'tldts';
+import { ingestBrowserCompanyResult } from '../src/application/ingest-browser-company-result.mjs';
+import { runBrowserCompanyBatch } from '../src/application/run-browser-company-batch.mjs';
 import { discoverRecruitmentEntries } from '../src/discovery/recruitment-entry-discovery.mjs';
+import { openSqliteMarketDiscoveryRepository } from '../src/storage/sqlite-job-repository.mjs';
 
 const THIRD_PARTY_PLATFORMS = [
   ['Liepin', (host) => host === 'liepin.com' || host.endsWith('.liepin.com')],
@@ -375,7 +379,7 @@ function parseArgs(argv) {
     const key = argv[index];
     if (!key.startsWith('--')) continue;
     const name = key.slice(2);
-    values[name] = name === 'headful' ? true : argv[++index];
+    values[name] = ['headful', 'retry-failed'].includes(name) ? true : argv[++index];
   }
   return values;
 }
@@ -383,14 +387,21 @@ function parseArgs(argv) {
 async function runCli() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help || !args.input || !args['output-dir']) {
-    process.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--max-results 10] [--headful]\n');
+    process.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--headful]\n');
     return args.help ? 0 : 2;
   }
   let input;
   try { input = JSON.parse(await fs.readFile(args.input, 'utf8')); }
   catch (error) { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'input_read_failed', error: String(error?.message || error) })}\n`); return 2; }
-  const companies = Array.isArray(input) ? input : input.companies;
-  if (!Array.isArray(companies) || !companies.every((item) => typeof item?.company === 'string' && item.company.trim())) {
+  const rawCompanies = Array.isArray(input) ? input : input.companies;
+  const companies = Array.isArray(rawCompanies)
+    ? rawCompanies.map((item) => ({
+      ...item,
+      company: String(item?.company || item?.canonicalName || item?.name || '').trim(),
+      officialDomain: item?.officialDomain || item?.officialDomains?.[0] || '',
+    }))
+    : [];
+  if (!companies.length || !companies.every((item) => item.company)) {
     process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'invalid_company_input' })}\n`); return 2;
   }
   let chromium;
@@ -399,9 +410,42 @@ async function runCli() {
   let browser;
   try { browser = await chromium.launch({ headless: !args.headful }); }
   catch (error) { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'browser_launch_failed', error: String(error?.message || error) })}\n`); return 2; }
+  const databaseFile = path.resolve(args.database || path.join('data', 'lite-job-search.sqlite'));
+  const repository = openSqliteMarketDiscoveryRepository({ file: databaseFile });
+  repository.migrate();
   try {
-    const results = [];
-    for (const company of companies) results.push(await discoverCompanyWithBrowser({ ...company, browser, maxResults: Number(args['max-results'] || 10) }));
+    const batchId = args['batch-id'] || `browser-${createHash('sha256')
+      .update(JSON.stringify(companies.map((item) => ({
+        company: item.company,
+        officialDomain: item.officialDomain,
+      }))))
+      .digest('hex')
+      .slice(0, 16)}`;
+    const batch = await runBrowserCompanyBatch({
+      batchId,
+      companies,
+      retryFailed: args['retry-failed'] === true,
+      runOptions: {
+        role: args.role || '公开招聘岗位',
+        industry: args.industry || '',
+        location: args.location || '',
+        freshnessDays: Number(args['freshness-days'] || 90),
+        targetCount: Number(args['target-count'] || 1000),
+      },
+    }, {
+      repository,
+      discoverCompany: async (company) => ({
+        ...company,
+        ...await discoverCompanyWithBrowser({
+          company: company.company,
+          officialDomain: company.officialDomain,
+          browser,
+          maxResults: Number(args['max-results'] || 10),
+        }),
+      }),
+      ingestCompany: (options) => ingestBrowserCompanyResult(options, { repository }),
+    });
+    const results = batch.companyResults;
     const report = buildDiscoveryReport(results);
     const candidates = results.flatMap((result) => result.officialCandidates).map(({ company, title, url, sourceUrl, searchQuery, evidence, ...rest }) => ({ company, title, url, sourceUrl, searchQuery, evidence, ...rest, discoveryMethod: 'playwright_search' }));
     const leads = results.flatMap((result) => result.leads).map((lead) => ({ ...lead, discoveryMethod: 'playwright_search' }));
@@ -411,9 +455,12 @@ async function runCli() {
       fs.writeFile(path.join(args['output-dir'], 'leads.json'), `${JSON.stringify(leads, null, 2)}\n`),
       fs.writeFile(path.join(args['output-dir'], 'report.json'), `${JSON.stringify(report, null, 2)}\n`),
     ]);
-    process.stdout.write(`${JSON.stringify({ status: 'COMPLETED', outputDir: args['output-dir'], summary: report.summary })}\n`);
-    return 0;
-  } finally { await browser.close(); }
+    process.stdout.write(`${JSON.stringify({ status: batch.status, batchId, databaseFile, outputDir: args['output-dir'], summary: report.summary })}\n`);
+    return batch.status === 'COMPLETE_WITH_ERRORS' ? 1 : 0;
+  } finally {
+    await browser.close();
+    repository.close();
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
