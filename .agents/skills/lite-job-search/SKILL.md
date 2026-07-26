@@ -189,6 +189,34 @@ stage failures. CAPTCHA, network failure, browser disconnection, or an
 unconfigured dependency remains `BLOCKED`, `FAILED`, or `NOT_CONFIGURED`; none
 is a successful empty search.
 
+## Run a complete task from one Chinese instruction
+
+Use the instruction runner when the user supplies market, freshness, role, and
+company count in one sentence:
+
+```powershell
+npm.cmd run discover:instruction -- `
+  "检索近90天内中国，开放产品经理方向岗位公司100个"
+```
+
+The deterministic compiler fills the worker manifest, loads the current local
+company registry, excludes every company already represented in SQLite by
+formal name, bilingual name, alias, or official domain, and writes
+`task-manifest.json` plus `selected-companies.json` before browser work begins.
+It then runs the existing browser worker repeatedly with the same selection
+batch id until the selected companies are complete or the circuit breaker,
+browser, or Provider stops progress.
+
+Use `--plan-only` to inspect the compiled task and selected companies without
+starting Chrome. A configured `--company-supplement-module` may provide more
+company identities when local registries are insufficient. Without one, retain
+the truthful `NOT_CONFIGURED` supplement status and process the local subset;
+do not fabricate the missing companies.
+
+This instruction layer has no verification authority. The existing
+deterministic Verification Engine remains the only component allowed to mark an
+official site or ATS as verified.
+
 ## Verify candidates
 
 ```powershell

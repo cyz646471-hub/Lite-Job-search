@@ -31,8 +31,10 @@
     "canary": "node ./bin/lite-job-search.mjs discover",
     "discover:batch": "node ./bin/lite-job-search.mjs discover-batch",
     "test:local-worker": "node --test tests/recruitment-event.test.mjs tests/recruitment-source-policy.test.mjs tests/recruitment-event-classifier.test.mjs tests/browser-search-circuit-breaker.test.mjs tests/platform-company-page-adapter.test.mjs tests/company-browser-discovery.test.mjs tests/browser-company-batch.test.mjs tests/browser-worker-cli.test.mjs tests/sqlite-repository.test.mjs tests/discover-market-jobs.test.mjs",
+    "test:instruction": "node --test tests/search-instruction.test.mjs tests/task-company-resolver.test.mjs tests/search-instruction-cli.test.mjs",
     "discover:browser-companies": "node ./scripts/company-browser-discovery.mjs",
-    "discover:local-worker": "node ./scripts/company-browser-discovery.mjs"
+    "discover:local-worker": "node ./scripts/company-browser-discovery.mjs",
+    "discover:instruction": "node ./scripts/run-search-instruction.mjs"
   },
   "engines": {
     "node": ">=20"

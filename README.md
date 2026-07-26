@@ -1,5 +1,26 @@
 # Lite Job Search
 
+## 自然语言任务入口
+
+一条指令可以生成任务清单、排除 SQLite 已收录公司并启动完整浏览器
+生产链路：
+
+```powershell
+npm.cmd run discover:instruction -- `
+  "检索近90天内中国，开放产品经理方向岗位公司100个"
+```
+
+先检查自动填充内容而不启动浏览器：
+
+```powershell
+npm.cmd run discover:instruction -- `
+  "检索近90天内中国，开放产品经理方向岗位公司100个" `
+  --plan-only
+```
+
+字段、名单补充接口、去重和失败状态说明见
+[一句话招聘检索任务指导](docs/search-instruction-template.md)。
+
 Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具。它面向中国和北美市场，提供公司招聘官网发现、公开 ATS 扫描、候选链接验证、招聘页面下钻、去重、缓存、预算控制和 JSON/JSONL/CSV/XLSX 导出。
 
 它不包含简历生成、岗位匹配评分、自动申请、申请跟踪、面试准备或薪酬分析。
