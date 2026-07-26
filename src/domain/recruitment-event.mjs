@@ -24,6 +24,7 @@ export const PUBLICATION_CLASSES = Object.freeze([
   'EXPLICIT',
   'INFERRED',
   'UNKNOWN',
+  'PLATFORM_ONLY',
 ]);
 
 function clean(value) {

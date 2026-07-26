@@ -77,3 +77,17 @@ test('RecruitmentEvent rejects unsupported types and invalid directory URLs', ()
     directoryUrl: 'not-a-url',
   }), /directoryUrl/);
 });
+
+test('RecruitmentEvent can explicitly isolate platform-only publication', () => {
+  const event = createRecruitmentEvent({
+    companyId: 'company-1',
+    careerPortalId: 'portal-platform',
+    sourceTier: 'PLATFORM_ONLY',
+    recruitmentType: 'EXPERIENCED',
+    directoryUrl: 'https://www.liepin.com/company-jobs/123/',
+    publicationClass: 'PLATFORM_ONLY',
+  });
+
+  assert.equal(event.sourceTier, 'PLATFORM_ONLY');
+  assert.equal(event.publicationClass, 'PLATFORM_ONLY');
+});

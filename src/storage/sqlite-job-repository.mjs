@@ -65,9 +65,38 @@ function mapPortal(row, evidence = []) {
     pageType: row.page_type,
     verificationStatus: row.verification_status,
     confidenceScore: row.confidence_score,
+    sourceTier: row.source_tier || (row.ats_type ? 'OFFICIAL_ATS' : 'OFFICIAL_SITE'),
+    officialIdentityConfirmed: row.official_identity_confirmed === 1,
+    platformIdentityConfirmed: row.platform_identity_confirmed === 1,
+    hiringAvailability: row.hiring_availability || 'UNKNOWN',
+    fallbackReason: row.fallback_reason || null,
+    searchCoverage: row.search_coverage || 'PARTIAL',
+    supersededByPortalId: row.superseded_by_portal_id || null,
     recruitmentTypes: decode(row.recruitment_types_json, []),
     evidence,
     firstSeenAt: row.first_seen_at,
+    lastVerifiedAt: row.last_verified_at,
+    lastCheckedAt: row.last_checked_at || null,
+  };
+}
+
+function mapRecruitmentEvent(row) {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    careerPortalId: row.career_portal_id,
+    sourceTier: row.source_tier,
+    recruitmentType: row.recruitment_type,
+    cohort: row.cohort || null,
+    campaignName: row.campaign_name || null,
+    status: row.status,
+    startAt: row.start_at,
+    closesAt: row.closes_at,
+    directoryUrl: row.directory_url,
+    locations: decode(row.locations_json, []),
+    publicationClass: row.publication_class,
+    firstSeenAt: row.first_seen_at,
+    lastSeenAt: row.last_seen_at,
     lastVerifiedAt: row.last_verified_at,
   };
 }
@@ -77,6 +106,8 @@ function mapOpening(row) {
     id: row.id,
     companyId: row.company_id,
     careerPortalId: row.career_portal_id,
+    recruitmentEventId: row.recruitment_event_id || null,
+    sourceTier: row.source_tier || 'OFFICIAL_SITE',
     sourceJobId: row.source_job_id,
     title: row.title,
     normalizedTitle: row.normalized_title,
@@ -107,6 +138,19 @@ function mapLog(row) {
     resultRank: row.result_rank,
     outcome: row.outcome,
     metadata: decode(row.metadata_json, {}),
+  };
+}
+
+function mapProviderCircuitState(row) {
+  if (!row) return null;
+  return {
+    provider: row.provider,
+    state: row.state,
+    reasonCode: row.reason_code || null,
+    openedAt: row.opened_at || null,
+    nextProbeAt: row.next_probe_at || null,
+    lastHealthyAt: row.last_healthy_at || null,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -176,11 +220,15 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         INSERT INTO career_portals (
           id, company_id, url, canonical_url, registrable_domain, ats_type,
           page_type, verification_status, confidence_score, recruitment_types_json,
-          first_seen_at, last_verified_at
+          source_tier, official_identity_confirmed, platform_identity_confirmed,
+          hiring_availability, fallback_reason, search_coverage,
+          superseded_by_portal_id, first_seen_at, last_verified_at, last_checked_at
         ) VALUES (
           @id, @companyId, @url, @canonicalUrl, @registrableDomain, @atsType,
           @pageType, @verificationStatus, @confidenceScore, @recruitmentTypesJson,
-          @firstSeenAt, @lastVerifiedAt
+          @sourceTier, @officialIdentityConfirmed, @platformIdentityConfirmed,
+          @hiringAvailability, @fallbackReason, @searchCoverage,
+          @supersededByPortalId, @firstSeenAt, @lastVerifiedAt, @lastCheckedAt
         )
         ON CONFLICT(id) DO UPDATE SET
           company_id = excluded.company_id,
@@ -192,10 +240,20 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           verification_status = excluded.verification_status,
           confidence_score = excluded.confidence_score,
           recruitment_types_json = excluded.recruitment_types_json,
-          last_verified_at = excluded.last_verified_at
+          source_tier = excluded.source_tier,
+          official_identity_confirmed = excluded.official_identity_confirmed,
+          platform_identity_confirmed = excluded.platform_identity_confirmed,
+          hiring_availability = excluded.hiring_availability,
+          fallback_reason = excluded.fallback_reason,
+          search_coverage = excluded.search_coverage,
+          superseded_by_portal_id = excluded.superseded_by_portal_id,
+          last_verified_at = excluded.last_verified_at,
+          last_checked_at = excluded.last_checked_at
       `),
       portalStatus: database.prepare(`
-        SELECT company_id, verification_status FROM career_portals WHERE id = ?
+        SELECT company_id, verification_status, source_tier,
+               platform_identity_confirmed, hiring_availability
+        FROM career_portals WHERE id = ?
       `),
       portalIdentity: database.prepare(`
         SELECT id, company_id FROM career_portals
@@ -215,19 +273,54 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           @careerPortalId, @code, @direction, @weight, @observedValue, @sourceUrl, @observedAt
         )
       `),
-      upsertOpening: database.prepare(`
-        INSERT INTO job_openings (
-          id, company_id, career_portal_id, source_job_id, title, normalized_title,
-          role_family, locations_json, employment_type, published_at, closes_at,
-          job_detail_url, apply_url, status, source_url, first_seen_at, last_seen_at
+      upsertRecruitmentEvent: database.prepare(`
+        INSERT INTO recruitment_events (
+          id, company_id, career_portal_id, source_tier, recruitment_type,
+          cohort, campaign_name, status, start_at, closes_at, directory_url,
+          locations_json, publication_class, first_seen_at, last_seen_at,
+          last_verified_at
         ) VALUES (
-          @id, @companyId, @careerPortalId, @sourceJobId, @title, @normalizedTitle,
-          @roleFamily, @locationsJson, @employmentType, @publishedAt, @closesAt,
-          @jobDetailUrl, @applyUrl, @status, @sourceUrl, @firstSeenAt, @lastSeenAt
+          @id, @companyId, @careerPortalId, @sourceTier, @recruitmentType,
+          @cohort, @campaignName, @status, @startAt, @closesAt, @directoryUrl,
+          @locationsJson, @publicationClass, @firstSeenAt, @lastSeenAt,
+          @lastVerifiedAt
         )
         ON CONFLICT(id) DO UPDATE SET
           company_id = excluded.company_id,
           career_portal_id = excluded.career_portal_id,
+          source_tier = excluded.source_tier,
+          recruitment_type = excluded.recruitment_type,
+          cohort = excluded.cohort,
+          campaign_name = excluded.campaign_name,
+          status = excluded.status,
+          start_at = excluded.start_at,
+          closes_at = excluded.closes_at,
+          directory_url = excluded.directory_url,
+          locations_json = excluded.locations_json,
+          publication_class = excluded.publication_class,
+          last_seen_at = excluded.last_seen_at,
+          last_verified_at = excluded.last_verified_at
+      `),
+      recruitmentEventById: database.prepare(`
+        SELECT * FROM recruitment_events WHERE id = ?
+      `),
+      upsertOpening: database.prepare(`
+        INSERT INTO job_openings (
+          id, company_id, career_portal_id, recruitment_event_id, source_tier,
+          source_job_id, title, normalized_title, role_family, locations_json,
+          employment_type, published_at, closes_at, job_detail_url, apply_url,
+          status, source_url, first_seen_at, last_seen_at
+        ) VALUES (
+          @id, @companyId, @careerPortalId, @recruitmentEventId, @sourceTier,
+          @sourceJobId, @title, @normalizedTitle, @roleFamily, @locationsJson,
+          @employmentType, @publishedAt, @closesAt, @jobDetailUrl, @applyUrl,
+          @status, @sourceUrl, @firstSeenAt, @lastSeenAt
+        )
+        ON CONFLICT(id) DO UPDATE SET
+          company_id = excluded.company_id,
+          career_portal_id = excluded.career_portal_id,
+          recruitment_event_id = excluded.recruitment_event_id,
+          source_tier = excluded.source_tier,
           source_job_id = excluded.source_job_id,
           title = excluded.title,
           normalized_title = excluded.normalized_title,
@@ -317,9 +410,35 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
             completed_at = @completedAt
         WHERE batch_id = @batchId AND item_key = @itemKey
       `),
+      deferBatchItem: database.prepare(`
+        UPDATE batch_items
+        SET status = 'DEFERRED', result_status = @resultStatus,
+            retry_class = @retryClass, deferred_until = @deferredUntil,
+            error_message = @errorMessage, completed_at = @completedAt
+        WHERE batch_id = @batchId AND item_key = @itemKey
+      `),
       completeBatch: database.prepare(`
         UPDATE batch_runs SET status = @status, completed_at = @completedAt
         WHERE id = @id
+      `),
+      upsertProviderCircuitState: database.prepare(`
+        INSERT INTO provider_circuit_states (
+          provider, state, reason_code, opened_at, next_probe_at,
+          last_healthy_at, updated_at
+        ) VALUES (
+          @provider, @state, @reasonCode, @openedAt, @nextProbeAt,
+          @lastHealthyAt, @updatedAt
+        )
+        ON CONFLICT(provider) DO UPDATE SET
+          state = excluded.state,
+          reason_code = excluded.reason_code,
+          opened_at = excluded.opened_at,
+          next_probe_at = excluded.next_probe_at,
+          last_healthy_at = excluded.last_healthy_at,
+          updated_at = excluded.updated_at
+      `),
+      providerCircuitState: database.prepare(`
+        SELECT * FROM provider_circuit_states WHERE provider = ?
       `),
     };
     return repository;
@@ -417,6 +536,38 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
   function upsertCareerPortal(portal) {
     requireMigration();
     return withTransaction(() => {
+      const sourceTier = portal.sourceTier || (
+        portal.atsType ? 'OFFICIAL_ATS' : 'OFFICIAL_SITE'
+      );
+      const officialIdentityConfirmed = (
+        portal.officialIdentityConfirmed ?? portal.verificationStatus === 'VERIFIED'
+      ) === true;
+      const platformIdentityConfirmed = portal.platformIdentityConfirmed === true;
+      const hiringAvailability = portal.hiringAvailability || 'UNKNOWN';
+      const confidenceScore = Math.max(
+        0,
+        Math.min(100, Number(portal.confidenceScore) || 0),
+      );
+      if (!['OFFICIAL_SITE', 'OFFICIAL_ATS', 'PLATFORM_ONLY'].includes(sourceTier)) {
+        throw new Error('unsupported CareerPortal sourceTier');
+      }
+      if (sourceTier === 'PLATFORM_ONLY') {
+        if (portal.verificationStatus === 'VERIFIED') {
+          throw new Error('PLATFORM_ONLY CareerPortal cannot be VERIFIED');
+        }
+        if (confidenceScore > 49) {
+          throw new Error('PLATFORM_ONLY CareerPortal confidence cannot exceed 49');
+        }
+        if (officialIdentityConfirmed) {
+          throw new Error('PLATFORM_ONLY CareerPortal cannot confirm official identity');
+        }
+        if (hiringAvailability === 'OPENINGS_FOUND' && !platformIdentityConfirmed) {
+          throw new Error('PLATFORM_ONLY openings require confirmed platform identity');
+        }
+      } else if (portal.verificationStatus === 'VERIFIED' && !officialIdentityConfirmed) {
+        throw new Error('VERIFIED CareerPortal requires confirmed official identity');
+      }
+
       const existing = statements.portalIdentity.get(portal.id, portal.canonicalUrl);
       if (existing && existing.company_id !== portal.companyId) {
         throw new Error('CareerPortal canonical URL conflicts with another company');
@@ -427,10 +578,22 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       statements.upsertPortal.run({
         ...portal,
         atsType: portal.atsType || '',
+        confidenceScore,
+        sourceTier,
+        officialIdentityConfirmed: officialIdentityConfirmed ? 1 : 0,
+        platformIdentityConfirmed: platformIdentityConfirmed ? 1 : 0,
+        hiringAvailability,
+        fallbackReason: portal.fallbackReason ?? null,
+        searchCoverage: portal.searchCoverage || 'PARTIAL',
+        supersededByPortalId: portal.supersededByPortalId ?? null,
         recruitmentTypesJson: encode(portal.recruitmentTypes, []),
         lastVerifiedAt: portal.lastVerifiedAt ?? null,
+        lastCheckedAt: portal.lastCheckedAt ?? null,
       });
-      if (portal.verificationStatus !== 'VERIFIED') {
+      const validPlatformPortal = sourceTier === 'PLATFORM_ONLY'
+        && platformIdentityConfirmed
+        && hiringAvailability === 'OPENINGS_FOUND';
+      if (portal.verificationStatus !== 'VERIFIED' && !validPlatformPortal) {
         statements.deletePortalOpenings.run(portal.id);
       }
       return portal;
@@ -456,17 +619,66 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     });
   }
 
-  function upsertJobOpening(opening) {
+  function upsertRecruitmentEvent(event) {
     requireMigration();
-    const portal = statements.portalStatus.get(opening.careerPortalId);
-    if (!portal || portal.verification_status !== 'VERIFIED') {
-      throw new Error('JobOpening requires a verified CareerPortal');
+    const portal = statements.portalStatus.get(event.careerPortalId);
+    if (!portal) throw new Error('RecruitmentEvent requires a CareerPortal');
+    if (portal.company_id !== event.companyId) {
+      throw new Error('RecruitmentEvent company must match its CareerPortal');
     }
-    if (portal.company_id !== opening.companyId) {
+
+    const sourceTier = event.sourceTier || portal.source_tier || 'OFFICIAL_SITE';
+    if (sourceTier !== portal.source_tier) {
+      throw new Error('RecruitmentEvent sourceTier must match its CareerPortal');
+    }
+    if (sourceTier === 'PLATFORM_ONLY') {
+      if (event.publicationClass !== 'PLATFORM_ONLY') {
+        throw new Error('PLATFORM_ONLY RecruitmentEvent requires PLATFORM_ONLY publicationClass');
+      }
+      if (portal.platform_identity_confirmed !== 1) {
+        throw new Error('PLATFORM_ONLY RecruitmentEvent requires confirmed platform identity');
+      }
+    } else if (portal.verification_status !== 'VERIFIED') {
+      throw new Error('RecruitmentEvent requires a verified official CareerPortal');
+    }
+
+    statements.upsertRecruitmentEvent.run({
+      ...event,
+      sourceTier,
+      cohort: event.cohort ?? null,
+      campaignName: event.campaignName || '',
+      startAt: event.startAt ?? null,
+      closesAt: event.closesAt ?? null,
+      locationsJson: encode(event.locations, []),
+      publicationClass: event.publicationClass || 'UNKNOWN',
+      lastVerifiedAt: event.lastVerifiedAt ?? null,
+    });
+    return event;
+  }
+
+  function requireOpeningEvent(opening, portal, expectedTier = null) {
+    const eventId = opening.recruitmentEventId || null;
+    if (!eventId) return null;
+    const event = statements.recruitmentEventById.get(eventId);
+    if (!event) throw new Error('JobOpening requires an existing RecruitmentEvent');
+    if (event.company_id !== opening.companyId
+      || event.career_portal_id !== opening.careerPortalId) {
+      throw new Error('JobOpening must match its RecruitmentEvent');
+    }
+    if (expectedTier && event.source_tier !== expectedTier) {
+      throw new Error(`JobOpening RecruitmentEvent must be ${expectedTier}`);
+    }
+    if (portal.company_id !== event.company_id) {
       throw new Error('JobOpening company must match its CareerPortal');
     }
+    return event;
+  }
+
+  function writeOpening(opening, sourceTier) {
     statements.upsertOpening.run({
       ...opening,
+      recruitmentEventId: opening.recruitmentEventId ?? null,
+      sourceTier,
       sourceJobId: opening.sourceJobId ?? null,
       locationsJson: encode(opening.locations, []),
       employmentType: opening.employmentType ?? null,
@@ -476,6 +688,84 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       applyUrl: opening.applyUrl ?? null,
     });
     return opening;
+  }
+
+  function upsertJobOpening(opening) {
+    requireMigration();
+    const portal = statements.portalStatus.get(opening.careerPortalId);
+    if (!portal || portal.verification_status !== 'VERIFIED'
+      || portal.source_tier === 'PLATFORM_ONLY') {
+      throw new Error('JobOpening requires a verified CareerPortal');
+    }
+    if (portal.company_id !== opening.companyId) {
+      throw new Error('JobOpening company must match its CareerPortal');
+    }
+    const event = requireOpeningEvent(opening, portal);
+    const sourceTier = event?.source_tier || portal.source_tier || 'OFFICIAL_SITE';
+    if (sourceTier === 'PLATFORM_ONLY') {
+      throw new Error('official JobOpening cannot use PLATFORM_ONLY source');
+    }
+    return writeOpening(opening, sourceTier);
+  }
+
+  function upsertPlatformJobOpening(opening) {
+    requireMigration();
+    const portal = statements.portalStatus.get(opening.careerPortalId);
+    if (!portal || portal.source_tier !== 'PLATFORM_ONLY'
+      || portal.platform_identity_confirmed !== 1
+      || portal.hiring_availability !== 'OPENINGS_FOUND') {
+      throw new Error('PLATFORM_ONLY JobOpening requires an eligible platform CareerPortal');
+    }
+    if (opening.sourceTier !== 'PLATFORM_ONLY') {
+      throw new Error('PLATFORM_ONLY JobOpening must declare PLATFORM_ONLY sourceTier');
+    }
+    if (portal.company_id !== opening.companyId) {
+      throw new Error('PLATFORM_ONLY JobOpening company must match its CareerPortal');
+    }
+    const event = requireOpeningEvent(opening, portal, 'PLATFORM_ONLY');
+    if (!event || event.publication_class !== 'PLATFORM_ONLY') {
+      throw new Error('PLATFORM_ONLY JobOpening requires a PLATFORM_ONLY RecruitmentEvent');
+    }
+    return writeOpening(opening, 'PLATFORM_ONLY');
+  }
+
+  function persistCompanySnapshot({
+    company,
+    portal,
+    evidence = [],
+    events = [],
+    openings = [],
+  } = {}) {
+    requireMigration();
+    return withTransaction(() => {
+      const storedCompany = upsertCompany(company);
+      const storedPortal = {
+        ...portal,
+        companyId: storedCompany.id,
+      };
+      upsertCareerPortal(storedPortal);
+      replaceVerificationEvidence(storedPortal.id, evidence);
+      for (const event of events) {
+        upsertRecruitmentEvent({
+          ...event,
+          companyId: storedCompany.id,
+          careerPortalId: storedPortal.id,
+        });
+      }
+      for (const opening of openings) {
+        const storedOpening = {
+          ...opening,
+          companyId: storedCompany.id,
+          careerPortalId: storedPortal.id,
+        };
+        if (storedOpening.sourceTier === 'PLATFORM_ONLY') {
+          upsertPlatformJobOpening(storedOpening);
+        } else {
+          upsertJobOpening(storedOpening);
+        }
+      }
+      return storedCompany;
+    });
   }
 
   function beginRun(run) {
@@ -542,13 +832,29 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       .map((row) => mapPortal(row, evidence.all(row.id).map(mapEvidence)));
   }
 
+  function listRecruitmentEvents() {
+    requireMigration();
+    return database.prepare(`
+      SELECT * FROM recruitment_events
+      ORDER BY company_id, recruitment_type, cohort, directory_url, id
+    `).all().map(mapRecruitmentEvent);
+  }
+
   function listJobOpenings() {
     requireMigration();
     return database.prepare(`
       SELECT jobs.*
       FROM job_openings AS jobs
       INNER JOIN career_portals AS portals ON portals.id = jobs.career_portal_id
-      WHERE portals.verification_status = 'VERIFIED'
+      WHERE (
+        jobs.source_tier IN ('OFFICIAL_SITE', 'OFFICIAL_ATS')
+        AND portals.verification_status = 'VERIFIED'
+      ) OR (
+        jobs.source_tier = 'PLATFORM_ONLY'
+        AND portals.source_tier = 'PLATFORM_ONLY'
+        AND portals.platform_identity_confirmed = 1
+        AND portals.hiring_availability = 'OPENINGS_FOUND'
+      )
       ORDER BY jobs.title, jobs.id
     `).all().map(mapOpening);
   }
@@ -607,6 +913,8 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       attemptCount: row.attempt_count,
       discoveryRunId: row.discovery_run_id,
       errorMessage: row.error_message,
+      retryClass: row.retry_class || null,
+      deferredUntil: row.deferred_until || null,
       startedAt: row.started_at,
       completedAt: row.completed_at,
       createdAt: row.created_at,
@@ -648,6 +956,21 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     return mapBatchItem(statements.batchItem.get(item.batchId, item.itemKey));
   }
 
+  function deferBatchItem(item) {
+    requireMigration();
+    const result = statements.deferBatchItem.run({
+      ...item,
+      resultStatus: item.resultStatus || 'BLOCKED',
+      retryClass: item.retryClass || 'PROVIDER_BLOCKED',
+      deferredUntil: item.deferredUntil ?? null,
+      errorMessage: item.errorMessage ?? null,
+    });
+    if (result.changes !== 1) {
+      throw new Error(`unknown batch item: ${item.batchId}/${item.itemKey}`);
+    }
+    return mapBatchItem(statements.batchItem.get(item.batchId, item.itemKey));
+  }
+
   function listBatchItems(batchId) {
     requireMigration();
     return database.prepare(`
@@ -659,6 +982,23 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     requireMigration();
     statements.completeBatch.run(batch);
     return batch;
+  }
+
+  function getProviderCircuitState(provider) {
+    requireMigration();
+    return mapProviderCircuitState(statements.providerCircuitState.get(provider));
+  }
+
+  function saveProviderCircuitState(record) {
+    requireMigration();
+    statements.upsertProviderCircuitState.run({
+      ...record,
+      reasonCode: record.reasonCode ?? null,
+      openedAt: record.openedAt ?? null,
+      nextProbeAt: record.nextProbeAt ?? null,
+      lastHealthyAt: record.lastHealthyAt ?? null,
+    });
+    return getProviderCircuitState(record.provider);
   }
 
   function close() {
@@ -673,10 +1013,14 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     upsertCompany,
     upsertCareerPortal,
     replaceVerificationEvidence,
+    upsertRecruitmentEvent,
     upsertJobOpening,
+    upsertPlatformJobOpening,
+    persistCompanySnapshot,
     appendDiscoveryLog,
     listCompanies,
     listCareerPortals,
+    listRecruitmentEvents,
     listJobOpenings,
     listDiscoveryLogs,
     recordLlmUsage,
@@ -685,8 +1029,11 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     ensureBatchItem,
     startBatchItem,
     completeBatchItem,
+    deferBatchItem,
     listBatchItems,
     completeBatch,
+    getProviderCircuitState,
+    saveProviderCircuitState,
     close,
   };
 
