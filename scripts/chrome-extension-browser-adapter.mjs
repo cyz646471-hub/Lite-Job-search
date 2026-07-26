@@ -25,17 +25,26 @@ export function createChromeExtensionBrowser(chrome) {
   const session = Object.freeze({
     async newPage() {
       tab ||= await chrome.tabs.new();
+      const workTab = tab;
       const page = {
-        goto: (url) => tab.goto(url),
-        waitForTimeout: (milliseconds) => tab.playwright.waitForTimeout(milliseconds),
-        url: () => tab.url(),
-        title: () => tab.title(),
-        snapshot: () => captureChromeSnapshot(tab),
-        close: async () => {},
-        readBodyText: async () => tab.playwright.evaluate(
+        goto: (url) => workTab.goto(url),
+        waitForTimeout: (milliseconds) => workTab.playwright.waitForTimeout(milliseconds),
+        url: () => workTab.url(),
+        title: () => workTab.title(),
+        snapshot: () => captureChromeSnapshot(workTab),
+        close: async () => {
+          try {
+            await workTab.close();
+          } catch {
+            // A stale or browser-interstitial tab must not poison the next company.
+          } finally {
+            if (tab === workTab) tab = null;
+          }
+        },
+        readBodyText: async () => workTab.playwright.evaluate(
           () => document.body?.innerText || '',
         ),
-        readSearchRows: (maxResults) => tab.playwright.evaluate((limit) => (
+        readSearchRows: (maxResults) => workTab.playwright.evaluate((limit) => (
           [...document.querySelectorAll(
             '#content_left .c-container, #content_left [class*="result"], main article',
           )]

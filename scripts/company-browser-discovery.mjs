@@ -544,7 +544,26 @@ export async function discoverCompanyWithBrowser({
     let openedCandidates = 0;
     for (const row of rows) {
       if (!shouldOpenSearchResult({ ...row, company })) {
-        rejected.push({ company, title: row.title, url: row.href, sourceUrl: row.href, searchQuery: query, searchKind: row.kind, snippet: row.snippet, classification: 'REJECTED', reasonCode: `search_result_${row.kind}` });
+        const rejectedClassification = classifySearchResult({
+          company,
+          officialDomain,
+          title: row.title,
+          url: row.href,
+          kind: row.kind,
+        });
+        rejected.push({
+          company,
+          title: row.title,
+          url: row.href,
+          sourceUrl: row.href,
+          searchQuery: query,
+          searchKind: row.kind,
+          snippet: row.snippet,
+          classification: 'REJECTED',
+          reasonCode: rejectedClassification.classification === 'REJECTED'
+            ? rejectedClassification.reasonCode
+            : `search_result_${row.kind}`,
+        });
         continue;
       }
       if (openedCandidates >= Math.max(1, Number(maxCandidates) || 3)) break;

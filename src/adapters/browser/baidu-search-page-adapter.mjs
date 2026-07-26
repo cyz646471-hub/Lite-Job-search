@@ -10,7 +10,7 @@ export function isBaiduBlockedSnapshot({
   url = '',
 } = {}) {
   return [401, 403, 429].includes(Number(status))
-    || /安全验证|验证码|访问过于频繁|请完成.{0,8}验证|captcha|access denied|enable javascript/i
+    || /安全验证|访问过于频繁|请完成.{0,8}验证|请输入.{0,8}验证码|captcha|access denied|enable javascript/i
       .test(`${text} ${url}`);
 }
 

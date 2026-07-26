@@ -481,6 +481,16 @@ test('detects Baidu safety verification as blocked instead of an empty search', 
   assert.equal(isSearchBlockedPage('小红书招聘职位列表'), false);
 });
 
+test('does not treat a recruitment result login snippet as a Baidu challenge', () => {
+  assert.equal(isSearchBlockedPage(
+    '猎聘 公司招聘信息 登录/注册 密码登录 +86 获取验证码 登录 同意用户协议',
+    {
+      status: 200,
+      url: 'https://www.baidu.com/s?wd=Example+Tech+jobs',
+    },
+  ), false);
+});
+
 test('treats a blank 403 Baidu response as blocked', async () => {
   const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('受限公司 招聘')}`;
   const result = await discoverCompanyWithBrowser({
@@ -551,6 +561,48 @@ test('rejects Jobui before opening it', () => {
     url: 'https://www.jobui.com/company/123/jobs/',
     kind: 'organic',
   }), false);
+});
+
+test('marks Jobui invalid and continues to a later official recruitment result', async () => {
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('Example Tech 招聘')}`;
+  const jobuiUrl = 'https://www.jobui.com/company/123/jobs/';
+  const officialUrl = 'https://jobs.example.com/positions';
+  const browser = fakeBrowser({
+    [searchUrl]: {
+      text: 'Example Tech 招聘',
+      searchRows: [{
+        title: 'Example Tech招聘 - 职友集',
+        href: jobuiUrl,
+        snippet: '职友集公司招聘',
+        kind: 'organic',
+      }, {
+        title: 'Example Tech官方招聘',
+        href: officialUrl,
+        snippet: '职位列表',
+        kind: 'organic',
+      }],
+    },
+    [officialUrl]: {
+      title: 'Example Tech官方招聘',
+      text: 'Example Tech 招聘职位列表 Product Manager',
+      links: [],
+    },
+  });
+
+  const result = await discoverCompanyWithBrowser({
+    company: 'Example Tech',
+    officialDomain: 'example.com',
+    browser,
+    maxCandidates: 1,
+  });
+
+  assert.equal(browser.visits.includes(jobuiUrl), false);
+  assert.equal(browser.visits.includes(officialUrl), true);
+  assert.equal(
+    result.rejected.find((item) => item.url === jobuiUrl)?.reasonCode,
+    'excluded_jobui_domain',
+  );
+  assert.equal(result.officialCandidates[0].url, officialUrl);
 });
 
 test('keeps recruitment-shaped ATS URL as an unverified candidate', () => {
@@ -646,6 +698,71 @@ test('normal Chrome mode requires an injected extension binding', async () => {
     createBrowserRuntime({ mode: 'normal-chrome', chrome: null }),
     (error) => error.code === 'NOT_CONFIGURED',
   );
+});
+
+test('normal Chrome starts a clean work tab after the previous company closes', async () => {
+  let created = 0;
+  const chrome = {
+    tabs: {
+      async new() {
+        created++;
+        return {
+          goto: async () => ({ status: () => 200 }),
+          url: async () => 'https://example.com/',
+          title: async () => 'Example',
+          close: async () => {},
+          playwright: {
+            waitForTimeout: async () => {},
+            evaluate: async () => '',
+          },
+        };
+      },
+    },
+  };
+  const browser = await createBrowserRuntime({
+    mode: 'normal-chrome',
+    chrome,
+  });
+
+  const first = await browser.newPage();
+  await first.close();
+  await browser.newPage();
+
+  assert.equal(created, 2);
+  await browser.close();
+});
+
+test('normal Chrome discards a poisoned work tab even when tab cleanup fails', async () => {
+  let created = 0;
+  const chrome = {
+    tabs: {
+      async new() {
+        created++;
+        return {
+          goto: async () => ({ status: () => 200 }),
+          url: async () => 'https://example.com/',
+          title: async () => 'Example',
+          close: async () => {
+            throw new Error('cannot attach to stale tab');
+          },
+          playwright: {
+            waitForTimeout: async () => {},
+            evaluate: async () => '',
+          },
+        };
+      },
+    },
+  };
+  const browser = await createBrowserRuntime({
+    mode: 'normal-chrome',
+    chrome,
+  });
+
+  const first = await browser.newPage();
+  await first.close();
+  await browser.newPage();
+
+  assert.equal(created, 2);
 });
 
 test('persistent Chrome mode launches an isolated visible profile explicitly', async () => {
