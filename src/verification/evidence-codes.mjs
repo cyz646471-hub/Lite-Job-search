@@ -9,6 +9,11 @@ export const EVIDENCE_RULES = Object.freeze({
     weight: 20,
     identityAnchor: true,
   }),
+  official_site_confirms_ats_tenant: Object.freeze({
+    direction: 'POSITIVE',
+    weight: 45,
+    identityAnchor: true,
+  }),
   recruitment_structure: Object.freeze({
     direction: 'POSITIVE',
     weight: 15,

@@ -17,6 +17,14 @@ const INTENT = {
   targetCount: 20,
 };
 
+const OFFICIAL_SEARCH_ITEM = Object.freeze({
+  company: '示例智能科技',
+  url: 'https://jobs.example.com/openings',
+  confirmedOfficialDomain: 'example.com',
+  officialDomainSource: 'manual_verified',
+  rank: 1,
+});
+
 async function createHarness({
   publishedAt = '2026-07-20T00:00:00.000Z',
   title = 'AI 产品经理',
@@ -70,20 +78,14 @@ async function createHarness({
           attempts: [{ provider: 'manual', status: 'ok', networkRequest: false }],
           liveSearchExecuted: false,
           items: searchItems || [
-            {
-              company: '示例智能科技',
-              url: 'https://jobs.example.com/openings',
-              confirmedOfficialDomain: 'example.com',
-              officialDomainSource: 'manual_verified',
-              rank: 1,
-            },
+            OFFICIAL_SEARCH_ITEM,
             {
               company: '聚合站转载公司',
               url: 'https://aggregator.example/jobs/1',
               rank: 2,
             },
             {
-              company: '待复核 ATS 公司',
+              company: '已验证 ATS 公司',
               url: 'https://tenant.mokahr.example/jobs',
               rank: 3,
             },
@@ -168,31 +170,91 @@ test('AI 产品经理 intent stores only jobs from verified portals', async (t) 
 
   assert.equal(result.status, 'PARTIAL');
   assert.equal(result.companiesDiscovered, 3);
-  assert.equal(result.portalsVerified, 1);
-  assert.equal(result.jobsStored, 1);
-  assert.equal(result.reviewRequired, 1);
+  assert.equal(result.portalsVerified, 2);
+  assert.equal(result.jobsStored, 2);
+  assert.equal(result.reviewRequired, 0);
   assert.equal(result.rejected, 1);
   assert.equal(result.liveSearchExecuted, false);
   assert.deepEqual(result.report.searchQueries, ['"AI 产品经理" 招聘']);
   assert.equal(result.report.candidateUrlCount, 3);
   assert.equal(result.report.candidateCompanyCount, 3);
-  assert.equal(result.report.officialVerifiedCount, 1);
-  assert.equal(result.report.reviewCount, 1);
+  assert.equal(result.report.officialVerifiedCount, 2);
+  assert.equal(result.report.reviewCount, 0);
   assert.equal(result.report.rejectedCount, 1);
-  assert.equal(result.report.extractedJobCount, 1);
+  assert.equal(result.report.extractedJobCount, 2);
   assert.deepEqual(result.report.failures, []);
-  assert.equal(result.report.quality.officialVerificationRate.numerator, 1);
+  assert.equal(result.report.quality.officialVerificationRate.numerator, 2);
   assert.equal(result.report.quality.officialVerificationRate.denominator, 3);
   assert.equal(result.report.quality.jobExtractionSuccessRate.value, 1);
-  assert.equal(result.report.quality.falsePositiveRate.numerator, 1);
+  assert.equal(result.report.quality.falsePositiveRate.value, null);
   assert.equal(result.report.quality.averageConfidenceScore.sampleSize, 3);
   assert.equal(result.report.candidateUrls.length, 3);
   assert.equal(result.report.candidateCompanies.length, 3);
   assert.equal(result.report.portalDecisions.length, 3);
-  assert.equal(result.report.extractedJobs.length, 1);
-  assert.equal(result.report.extractedJobs[0].title, 'AI 产品经理');
-  assert.equal(repository.listJobOpenings()[0].title, 'AI 产品经理');
+  assert.equal(result.report.extractedJobs.length, 2);
+  assert.ok(result.report.extractedJobs.every((job) => job.title === 'AI 产品经理'));
+  assert.ok(repository.listJobOpenings().every((job) => job.title === 'AI 产品经理'));
+  assert.equal(repository.listRecruitmentEvents().length, 2);
+  assert.ok(repository.listJobOpenings().every((job) => job.recruitmentEventId));
   assert.ok(repository.listDiscoveryLogs().some((item) => item.outcome === 'VERIFIED_PORTAL'));
+});
+
+test('groups campus full-time and internship jobs into explicit 2027 events', async (t) => {
+  const directoryUrl = 'https://jobs.example.com/campus/2027';
+  const { repository, dependencies } = await createHarness({
+    searchItems: [{
+      ...OFFICIAL_SEARCH_ITEM,
+      url: directoryUrl,
+    }],
+  });
+  t.after(() => repository.close());
+  dependencies.openingRetention = 'all_observed_active';
+  dependencies.fetchPage = async (url) => ({
+    status: 200,
+    finalUrl: url,
+    title: '2027 届校园招聘',
+    text: '招聘于 2026年7月1日开放，投递于 2026年9月30日截止。',
+    html: '<h1>2027 届校园招聘</h1>',
+    links: [],
+  });
+  dependencies.jobExtractor.extract = async ({ company, portal }) => [
+    createJobOpening({
+      companyId: company.id,
+      careerPortalId: portal.id,
+      sourceJobId: 'graduate-ai-pm',
+      title: 'AI 产品经理（应届生）',
+      employmentType: 'full_time',
+      locations: ['上海'],
+      status: 'ACTIVE',
+      sourceUrl: `${directoryUrl}/positions/graduate-ai-pm`,
+      jobDetailUrl: `${directoryUrl}/positions/graduate-ai-pm`,
+    }, { now: NOW }),
+    createJobOpening({
+      companyId: company.id,
+      careerPortalId: portal.id,
+      sourceJobId: 'intern-ai-pm',
+      title: 'AI 产品经理实习生',
+      employmentType: 'internship',
+      locations: ['深圳'],
+      status: 'ACTIVE',
+      sourceUrl: `${directoryUrl}/positions/intern-ai-pm`,
+      jobDetailUrl: `${directoryUrl}/positions/intern-ai-pm`,
+    }, { now: NOW }),
+  ];
+
+  await discoverMarketJobs(INTENT, dependencies);
+
+  const events = repository.listRecruitmentEvents();
+  assert.equal(events.length, 2);
+  assert.deepEqual(
+    new Set(events.map((event) => event.recruitmentType)),
+    new Set(['CAMPUS_FULL_TIME', 'CAMPUS_INTERNSHIP']),
+  );
+  assert.ok(events.every((event) => event.cohort === '2027'));
+  assert.ok(events.every((event) => event.startAt === '2026-07-01'));
+  assert.ok(events.every((event) => event.closesAt === '2026-09-30'));
+  assert.ok(events.every((event) => event.directoryUrl === directoryUrl));
+  assert.ok(repository.listJobOpenings().every((job) => job.recruitmentEventId));
 });
 
 test('inspects sibling recruitment entries and stores their verified jobs', async (t) => {
@@ -248,6 +310,7 @@ test('inspects sibling recruitment entries and stores their verified jobs', asyn
   assert.equal(result.jobsStored, 2);
   assert.equal(repository.listCareerPortals().length, 3);
   assert.equal(repository.listJobOpenings().length, 2);
+  assert.equal(repository.listRecruitmentEvents().length, 2);
   assert.ok(repository.listDiscoveryLogs().some((item) => (
     item.metadata.parentUrl === socialUrl
   )));
@@ -303,6 +366,13 @@ test('reports explicit no-opening recruitment entries without fabricating jobs',
   assert.equal(result.jobsStored, 0);
   assert.equal(result.report.noOpeningRecruitmentEntryCount, 1);
   assert.equal(result.report.unknownRecruitmentEntryCount, 1);
+  assert.equal(repository.listRecruitmentEvents().length, 0);
+  assert.equal(
+    repository.listCareerPortals()
+      .find((portal) => portal.canonicalUrl === campusUrl)
+      .hiringAvailability,
+    'NO_OPENINGS',
+  );
   assert.deepEqual(extractionUrls, [socialUrl]);
   assert.ok(repository.listDiscoveryLogs().some((item) => (
     item.resultUrl === campusUrl
@@ -313,6 +383,7 @@ test('reports explicit no-opening recruitment entries without fabricating jobs',
 test('reports active recruiting even when openings do not match the requested role', async (t) => {
   const { repository, dependencies } = await createHarness({
     title: '财务总监',
+    searchItems: [OFFICIAL_SEARCH_ITEM],
   });
   t.after(() => repository.close());
 
@@ -382,7 +453,7 @@ test('rerunning the same fixture is idempotent', async (t) => {
   await discoverMarketJobs(INTENT, dependencies);
 
   assert.equal(repository.listCompanies().length, 3);
-  assert.equal(repository.listJobOpenings().length, 1);
+  assert.equal(repository.listJobOpenings().length, 2);
 });
 
 test('unknown publication dates do not satisfy a recent-only result', async (t) => {
@@ -393,6 +464,45 @@ test('unknown publication dates do not satisfy a recent-only result', async (t) 
 
   assert.equal(result.jobsStored, 0);
   assert.ok(repository.listDiscoveryLogs().some((item) => item.outcome === 'NO_RECENT_JOBS'));
+});
+
+test('browser production retains active openings with blank optional fields', async (t) => {
+  const { repository, dependencies } = await createHarness({
+    publishedAt: null,
+    title: 'Backend Engineer',
+    searchItems: [OFFICIAL_SEARCH_ITEM],
+  });
+  t.after(() => repository.close());
+  dependencies.openingRetention = 'all_observed_active';
+
+  const result = await discoverMarketJobs(INTENT, dependencies);
+  const [opening] = repository.listJobOpenings();
+
+  assert.equal(result.jobsStored, 1);
+  assert.equal(opening.title, 'Backend Engineer');
+  assert.equal(opening.publishedAt, null);
+  assert.equal(opening.closesAt, null);
+  assert.equal(opening.locations.length, 1);
+  const logs = repository.listDiscoveryLogs();
+  assert.ok(logs.some((log) => (
+    log.metadata.missingFields?.includes('publishedAt')
+    && log.metadata.missingFields?.includes('closesAt')
+    && log.metadata.missingFields?.includes('recruitmentType')
+    && log.metadata.missingFields?.includes('applyUrl')
+  )), JSON.stringify(logs));
+});
+
+test('default discovery still rejects unknown-date and role-mismatch openings', async (t) => {
+  const { repository, dependencies } = await createHarness({
+    publishedAt: null,
+    title: 'Backend Engineer',
+  });
+  t.after(() => repository.close());
+
+  const result = await discoverMarketJobs(INTENT, dependencies);
+
+  assert.equal(result.jobsStored, 0);
+  assert.equal(repository.listJobOpenings().length, 0);
 });
 
 test('location filter excludes openings outside the requested region', async (t) => {
@@ -427,7 +537,10 @@ test('formal results require role relevance, ACTIVE status and a usable job entr
 });
 
 test('access-controlled candidates remain BLOCKED instead of ordinary partial results', async (t) => {
-  const { repository, dependencies } = await createHarness({ blockedOfficial: true });
+  const { repository, dependencies } = await createHarness({
+    blockedOfficial: true,
+    searchItems: [OFFICIAL_SEARCH_ITEM],
+  });
   t.after(() => repository.close());
   const result = await discoverMarketJobs(INTENT, dependencies);
   assert.equal(result.status, 'BLOCKED');

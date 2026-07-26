@@ -1,15 +1,20 @@
 import { createCareerPortal } from '../domain/career-portal.mjs';
 import { createCompany } from '../domain/company.mjs';
 import { createDiscoveryLog } from '../domain/discovery-log.mjs';
-import { isRecentOpening } from '../domain/job-opening.mjs';
+import { createJobOpening, isRecentOpening } from '../domain/job-opening.mjs';
+import { createRecruitmentEvent } from '../domain/recruitment-event.mjs';
 import { createSearchIntent } from '../domain/search-intent.mjs';
 import { discoverCompanies } from '../discovery/company-discovery.mjs';
 import { expandKeywords } from '../discovery/keyword-expander.mjs';
 import { planQueries } from '../discovery/query-planner.mjs';
-import { discoverRecruitmentEntries } from '../discovery/recruitment-entry-discovery.mjs';
+import {
+  discoverRecruitmentEntries,
+  KNOWN_ATS_REGISTRABLE_DOMAINS,
+} from '../discovery/recruitment-entry-discovery.mjs';
 import { assertMarketDiscoveryRepository } from '../ports/job-repository.mjs';
 import { buildQualityReport } from '../quality/quality-report.mjs';
 import { verifyCareerPortal } from '../verification/verification-engine.mjs';
+import { classifyRecruitmentEvent } from './recruitment-event-classifier.mjs';
 
 function assertDependencies(dependencies) {
   const requiredFunctions = [
@@ -97,6 +102,79 @@ function entryLogMetadata(candidate = {}) {
   };
 }
 
+function createSnapshotBufferingRepository(baseRepository) {
+  const companies = new Map();
+  const portals = new Map();
+  const evidenceByPortalId = new Map();
+  const eventsByPortalId = new Map();
+  const openingsByPortalId = new Map();
+
+  function mapForPortal(collection, portalId) {
+    if (!collection.has(portalId)) collection.set(portalId, new Map());
+    return collection.get(portalId);
+  }
+
+  const buffered = {
+    ...baseRepository,
+    withTransaction(callback) {
+      return baseRepository.withTransaction(callback);
+    },
+    upsertCompany(company) {
+      companies.set(company.id, company);
+      return company;
+    },
+    upsertCareerPortal(portal) {
+      portals.set(portal.id, portal);
+      if (portal.verificationStatus !== 'VERIFIED') {
+        eventsByPortalId.delete(portal.id);
+        openingsByPortalId.delete(portal.id);
+      }
+      return portal;
+    },
+    replaceVerificationEvidence(careerPortalId, evidence = []) {
+      if (portals.has(careerPortalId)) {
+        evidenceByPortalId.set(careerPortalId, [...evidence]);
+      }
+      return evidence;
+    },
+    upsertRecruitmentEvent(event) {
+      mapForPortal(eventsByPortalId, event.careerPortalId).set(event.id, event);
+      return event;
+    },
+    upsertJobOpening(opening) {
+      mapForPortal(openingsByPortalId, opening.careerPortalId).set(opening.id, opening);
+      return opening;
+    },
+    upsertPlatformJobOpening(opening) {
+      mapForPortal(openingsByPortalId, opening.careerPortalId).set(opening.id, opening);
+      return opening;
+    },
+    flushCompanySnapshots() {
+      try {
+        return baseRepository.withTransaction(() => {
+          for (const portal of portals.values()) {
+            const company = companies.get(portal.companyId);
+            if (!company) {
+              throw new Error(`snapshot company missing for portal: ${portal.id}`);
+            }
+          baseRepository.persistCompanySnapshot({
+            company,
+            portal,
+            evidence: evidenceByPortalId.get(portal.id) || [],
+            events: [...(eventsByPortalId.get(portal.id)?.values() || [])],
+            openings: [...(openingsByPortalId.get(portal.id)?.values() || [])],
+          });
+          }
+        });
+      } catch (error) {
+        error.failureStage = 'company_snapshot_persistence';
+        throw error;
+      }
+    },
+  };
+  return buffered;
+}
+
 export async function discoverMarketJobs(input, dependencies = {}) {
   assertDependencies(dependencies);
   const {
@@ -105,12 +183,14 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     verificationAdapter,
     pageAdvisoryClassifier = null,
     jobExtractor,
-    repository,
+    repository: baseRepository,
     fetchPage,
     ids,
     now = () => new Date().toISOString(),
     maxQueries = 12,
+    openingRetention = 'requested_recent',
   } = dependencies;
+  const repository = createSnapshotBufferingRepository(baseRepository);
 
   const intent = createSearchIntent(input, { id: ids.intent(), now: now() });
   const runId = ids.run();
@@ -141,6 +221,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
   const usableApplyJobIds = new Set();
   const confidenceByPortalId = new Map();
   const portalDecisionsById = new Map();
+  const recruitmentEventsById = new Map();
   const storedJobsById = new Map();
   const jobIdsByPortalId = new Map();
   const discoveredCompanyKeys = new Set();
@@ -184,6 +265,15 @@ export async function discoverMarketJobs(input, dependencies = {}) {
   };
   const buildRunReport = () => {
     const candidates = discovery?.candidates || [];
+    const portalDecisions = [...portalDecisionsById.values()];
+    const officialPortalDecisions = portalDecisions.filter((portal) => (
+      portal.sourceTier !== 'PLATFORM_ONLY'
+    ));
+    const platformPortalDecisions = portalDecisions.filter((portal) => (
+      portal.sourceTier === 'PLATFORM_ONLY'
+    ));
+    const officialPortalIds = new Set(officialPortalDecisions.map((portal) => portal.portalId));
+    const recruitmentEvents = [...recruitmentEventsById.values()];
     let llmUsage = [];
     if (typeof repository.listLlmUsage === 'function') {
       llmUsage = repository.listLlmUsage().filter((item) => item.runId === runId);
@@ -204,7 +294,8 @@ export async function discoverMarketJobs(input, dependencies = {}) {
           }),
         ])).values(),
       ]),
-      portalDecisions: Object.freeze([...portalDecisionsById.values()]),
+      portalDecisions: Object.freeze(portalDecisions),
+      recruitmentEvents: Object.freeze(recruitmentEvents),
       extractedJobs: Object.freeze([...storedJobsById.values()]),
       officialVerifiedCount: counters.portalsVerified,
       reviewCount: counters.reviewRequired,
@@ -225,8 +316,37 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       llmUsage: Object.freeze(llmUsage),
       quality: buildQualityReport({
         ...qualityObservations,
-        portalsVerified: counters.portalsVerified,
-        rejectedPortals: counters.rejected,
+        portalsEvaluated: officialPortalDecisions.length,
+        portalsVerified: officialPortalDecisions.filter((portal) => (
+          portal.verificationStatus === 'VERIFIED'
+        )).length,
+        officialExtractionAttempts: [...extractionAttemptPortalIds].filter((portalId) => (
+          officialPortalIds.has(portalId)
+        )).length,
+        officialExtractionSuccesses: [...extractionSuccessPortalIds].filter((portalId) => (
+          officialPortalIds.has(portalId)
+        )).length,
+        platformOnlyAcceptanceCount: platformPortalDecisions.filter((portal) => (
+          portal.hiringAvailability === 'OPENINGS_FOUND'
+        )).length,
+        platformOnlySupersededCount: platformPortalDecisions.filter((portal) => (
+          Boolean(portal.supersededByPortalId)
+        )).length,
+        rejectedPortals: officialPortalDecisions.filter((portal) => (
+          portal.verificationStatus === 'REJECTED'
+        )).length,
+        officialConfidenceScores: officialPortalDecisions.map((portal) => portal.confidenceScore),
+        availabilityEvaluated: officialPortalDecisions.length,
+        unknownAvailabilityCount: officialPortalDecisions.filter((portal) => (
+          portal.hiringAvailability === 'UNKNOWN'
+        )).length,
+        blockedPortals: officialPortalDecisions.filter((portal) => (
+          portal.verificationStatus === 'BLOCKED'
+        )).length,
+        recruitmentEventsEvaluated: recruitmentEvents.length,
+        missingStartDates: recruitmentEvents.filter((event) => !event.startAt).length,
+        missingCloseDates: recruitmentEvents.filter((event) => !event.closesAt).length,
+        missingLocations: recruitmentEvents.filter((event) => !event.locations.length).length,
         validCandidateResults: discovery?.validCandidateResults || 0,
         duplicateCandidateResults: discovery?.duplicateCandidateResults || 0,
       }),
@@ -414,7 +534,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         }, reviewKey);
         continue;
       }
-      const portal = createCareerPortal({
+      let portal = createCareerPortal({
         id: ids.portal({ ...candidate, url: page.finalUrl || candidate.url }),
         companyId: company.id,
         url: candidate.url,
@@ -424,9 +544,16 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         pageType: decision.pageType,
         verificationStatus: decision.verificationStatus,
         confidenceScore: decision.confidenceScore,
+        sourceTier: inspected.atsType ? 'OFFICIAL_ATS' : 'OFFICIAL_SITE',
+        officialIdentityConfirmed: decision.verificationStatus === 'VERIFIED',
+        hiringAvailability: inspected.vacancyStatus === 'NO_OPENINGS'
+          ? 'NO_OPENINGS'
+          : 'UNKNOWN',
+        searchCoverage: 'PARTIAL',
         recruitmentTypes: candidate.recruitmentTypes || [],
         evidence: portalEvidence,
         lastVerifiedAt: observedAt,
+        lastCheckedAt: observedAt,
       }, { now: observedAt });
 
       repository.withTransaction(() => {
@@ -451,8 +578,10 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         url: portal.canonicalUrl,
         atsType: portal.atsType,
         pageType: portal.pageType,
+        sourceTier: portal.sourceTier,
         verificationStatus: portal.verificationStatus,
         confidenceScore: portal.confidenceScore,
+        hiringAvailability: portal.hiringAvailability,
         vacancyStatus: inspected.vacancyStatus || 'UNKNOWN',
         evidence: portal.evidence,
       }));
@@ -508,11 +637,14 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       const remainingChildBudget = Math.max(0, 20 - childCount);
       if (remainingChildBudget > 0) {
         const nextDepth = Number(candidate.entryDepth || 0) + 1;
+        const parentOfficialVerified = !portal.atsType
+          && (company.officialDomains || []).includes(portal.registrableDomain);
         const entries = discoverRecruitmentEntries({
           baseUrl: portal.canonicalUrl,
           links: linksFromPage(page),
           trustedRegistrableDomains: company.officialDomains,
-          verifiedAtsDomains: portal.atsType ? [portal.registrableDomain] : [],
+          knownAtsRegistrableDomains: KNOWN_ATS_REGISTRABLE_DOMAINS,
+          parentOfficialVerified,
           visitedUrls: [...processedCandidateUrls, ...queuedCandidateUrls],
           parentUrl: portal.canonicalUrl,
           depth: nextDepth,
@@ -531,6 +663,9 @@ export async function discoverMarketJobs(input, dependencies = {}) {
             rank: null,
             parentUrl: entry.parentUrl,
             entryDepth: entry.depth,
+            parentOfficialVerified: entry.parentOfficialVerified === true,
+            officialAttributionUrl: entry.officialAttributionUrl || null,
+            verifiedTenant: entry.discoveryReason === 'verified_official_outbound_ats_link',
             recruitmentTypes: entry.recruitmentType === 'general'
               ? []
               : [entry.recruitmentType],
@@ -577,46 +712,145 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       if (observedActiveOpenings.length) activeOpeningPortalIds.add(portal.id);
       else activeOpeningPortalIds.delete(portal.id);
       let storedForPortal = 0;
+      const missingFieldsForPortal = new Set();
+      const fieldCoverage = {
+        location: { present: 0, missing: 0 },
+        publishedAt: { present: 0, missing: 0 },
+        closesAt: { present: 0, missing: 0 },
+        recruitmentType: { present: 0, missing: 0 },
+        applyUrl: { present: 0, missing: 0 },
+      };
+      const retainAllObserved = openingRetention === 'all_observed_active';
       for (const opening of openings || []) {
         if (counters.jobsStored >= intent.targetCount) break;
+        const openingFieldPresence = {
+          location: Boolean(opening.locations?.length),
+          publishedAt: Boolean(opening.publishedAt),
+          closesAt: Boolean(opening.closesAt),
+          recruitmentType: Boolean(opening.employmentType || portal.recruitmentTypes.length),
+          applyUrl: Boolean(opening.applyUrl),
+        };
         const rejectionReason = opening.status !== 'ACTIVE'
           ? 'opening_not_active'
-          : !matchesRequestedRole(opening, intent)
+          : !retainAllObserved && !matchesRequestedRole(opening, intent)
             ? 'role_mismatch'
-            : !matchesRequestedLocation(opening, intent)
+            : !retainAllObserved && !matchesRequestedLocation(opening, intent)
               ? 'location_mismatch'
             : !hasUsableJobEntry(opening, portal)
                 ? 'usable_job_entry_missing'
                 : null;
-        if (rejectionReason || !isRecentOpening(opening, {
+        if (rejectionReason || (!retainAllObserved && !isRecentOpening(opening, {
           freshnessDays: intent.freshnessDays,
           now: Date.parse(now()),
-        })) {
+        }))) {
           appendLog(candidate, keywords, 'NO_RECENT_JOBS', {
             publishedAt: opening.publishedAt,
             reason: rejectionReason || 'outside_freshness_window',
           }, opening.sourceUrl);
           continue;
         }
-        if (storedJobIds.has(opening.id)) continue;
-        repository.upsertJobOpening(opening);
-        storedJobIds.add(opening.id);
-        storedJobsById.set(opening.id, opening);
+        let classifiedEvent;
+        try {
+          classifiedEvent = classifyRecruitmentEvent({
+            pageTitle: page.title || '',
+            pageText: page.text || page.html || page.body || '',
+            linkText: candidate.title || '',
+            jobTitle: opening.title,
+            employmentType: opening.employmentType || '',
+            directoryUrl: portal.canonicalUrl,
+            directoryPageType: portal.pageType,
+            sourceTier: portal.sourceTier,
+            structuredStartAt: page.startAt ?? page.publishedAt ?? opening.publishedAt,
+            structuredClosesAt: page.closesAt ?? opening.closesAt,
+            locations: opening.locations,
+          });
+        } catch (error) {
+          recordFailure({
+            stage: 'recruitment_event_classification',
+            code: 'FAILED',
+            query: candidate.query,
+            message: error,
+            url: portal.canonicalUrl,
+          });
+          appendLog(candidate, keywords, 'REVIEW_REQUIRED', {
+            stage: 'recruitment_event_classification',
+            error: boundedError(error),
+          }, portal.canonicalUrl);
+          continue;
+        }
+
+        let recruitmentEvent = createRecruitmentEvent({
+          ...classifiedEvent,
+          companyId: company.id,
+          careerPortalId: portal.id,
+          sourceTier: portal.sourceTier,
+          lastVerifiedAt: observedAt,
+        }, { now: observedAt });
+        const previousEvent = recruitmentEventsById.get(recruitmentEvent.id);
+        if (previousEvent) {
+          const explicitStarts = [previousEvent.startAt, recruitmentEvent.startAt]
+            .filter(Boolean)
+            .sort();
+          const explicitCloses = [previousEvent.closesAt, recruitmentEvent.closesAt]
+            .filter(Boolean)
+            .sort();
+          recruitmentEvent = createRecruitmentEvent({
+            ...recruitmentEvent,
+            locations: [
+              ...new Set([
+                ...previousEvent.locations,
+                ...recruitmentEvent.locations,
+              ]),
+            ],
+            startAt: explicitStarts[0] || null,
+            closesAt: explicitCloses[0] || null,
+            firstSeenAt: previousEvent.firstSeenAt,
+          }, { now: observedAt });
+        }
+        recruitmentEventsById.set(recruitmentEvent.id, recruitmentEvent);
+        repository.upsertRecruitmentEvent(recruitmentEvent);
+
+        const { id: legacyOpeningId, ...openingData } = opening;
+        const storedOpening = createJobOpening({
+          ...openingData,
+          recruitmentEventId: recruitmentEvent.id,
+          sourceTier: portal.sourceTier,
+        }, { now: opening.firstSeenAt || observedAt });
+        if (storedJobIds.has(storedOpening.id)) continue;
+        repository.upsertJobOpening(storedOpening);
+        storedJobIds.add(storedOpening.id);
+        storedJobsById.set(storedOpening.id, storedOpening);
         const portalJobIds = jobIdsByPortalId.get(portal.id) || new Set();
-        portalJobIds.add(opening.id);
+        portalJobIds.add(storedOpening.id);
         jobIdsByPortalId.set(portal.id, portalJobIds);
+        for (const [field, present] of Object.entries(openingFieldPresence)) {
+          fieldCoverage[field][present ? 'present' : 'missing'] += 1;
+          if (!present) missingFieldsForPortal.add(field);
+        }
         counters.jobsStored = storedJobIds.size;
-        if (opening.applyUrl) usableApplyJobIds.add(opening.id);
+        if (storedOpening.applyUrl) usableApplyJobIds.add(storedOpening.id);
         counters.usableApplyEntries = usableApplyJobIds.size;
         storedForPortal += 1;
       }
       if (storedForPortal > 0) {
+        portal = createCareerPortal({
+          ...portal,
+          hiringAvailability: 'OPENINGS_FOUND',
+          lastCheckedAt: observedAt,
+        }, { now: observedAt });
+        repository.upsertCareerPortal(portal);
+        portalDecisionsById.set(portal.id, Object.freeze({
+          ...portalDecisionsById.get(portal.id),
+          hiringAvailability: portal.hiringAvailability,
+        }));
         extractionSuccessPortalIds.add(portal.id);
         qualityObservations.extractionSuccesses = extractionSuccessPortalIds.size;
         appendLog(candidate, keywords, 'JOBS_EXTRACTED', {
           count: storedForPortal,
           vacancyStatus: 'ACTIVE',
           observedActiveCount: observedActiveOpenings.length,
+          fieldCoverage,
+          missingFields: [...missingFieldsForPortal],
         }, portal.canonicalUrl);
       } else if (!(openings || []).length) {
         appendLog(candidate, keywords, 'NO_RECENT_JOBS', {
@@ -637,6 +871,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       : counters.blocked > 0 && counters.jobsStored < intent.targetCount
         ? 'BLOCKED'
         : quantityStatus;
+    repository.flushCompanySnapshots();
     repository.completeRun({ id: runId, status: terminalStatus, completedAt: now() });
     return Object.freeze({
       runId,
@@ -649,6 +884,20 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     });
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
+    if (failure.failureStage === 'company_snapshot_persistence') {
+      counters.companiesDiscovered = 0;
+      counters.portalsVerified = 0;
+      counters.jobsStored = 0;
+      counters.usableApplyEntries = 0;
+      recruitmentEventsById.clear();
+      storedJobsById.clear();
+      storedJobIds.clear();
+      usableApplyJobIds.clear();
+      extractionSuccessPortalIds.clear();
+      jobIdsByPortalId.clear();
+      activeOpeningPortalIds.clear();
+      qualityObservations.extractionSuccesses = 0;
+    }
     recordFailure({
       stage: failure.failureStage || (discovery ? 'discovery_processing' : 'discovery'),
       code: 'FAILED',

@@ -15,31 +15,64 @@ function ratio(numerator, denominator) {
   });
 }
 export function buildQualityReport(observations = {}) {
-  const scores = (observations.confidenceScores || [])
+  const scores = (
+    observations.officialConfidenceScores
+    || observations.confidenceScores
+    || []
+  )
     .map(Number)
     .filter(Number.isFinite);
+  const officialJobExtractionSuccessRate = ratio(
+    observations.officialExtractionSuccesses ?? observations.extractionSuccesses,
+    observations.officialExtractionAttempts ?? observations.extractionAttempts,
+  );
+  const averageOfficialConfidenceScore = Object.freeze({
+    sampleSize: scores.length,
+    value: scores.length
+      ? Number((scores.reduce((sum, value) => sum + value, 0) / scores.length).toFixed(2))
+      : null,
+  });
   return Object.freeze({
     officialVerificationRate: ratio(
       observations.portalsVerified,
       observations.portalsEvaluated,
     ),
-    jobExtractionSuccessRate: ratio(
-      observations.extractionSuccesses,
-      observations.extractionAttempts,
+    officialJobExtractionSuccessRate,
+    jobExtractionSuccessRate: officialJobExtractionSuccessRate,
+    platformOnlyAcceptanceCount: count(observations.platformOnlyAcceptanceCount),
+    platformOnlySupersededRate: ratio(
+      observations.platformOnlySupersededCount,
+      observations.platformOnlyAcceptanceCount,
     ),
     duplicateRate: ratio(
       observations.duplicateCandidateResults,
       observations.validCandidateResults,
     ),
     falsePositiveRate: ratio(
-      observations.rejectedPortals,
+      observations.falsePositiveCount,
+      observations.groundTruthEvaluated,
+    ),
+    averageOfficialConfidenceScore,
+    averageConfidenceScore: averageOfficialConfidenceScore,
+    unknownAvailabilityRate: ratio(
+      observations.unknownAvailabilityCount,
+      observations.availabilityEvaluated,
+    ),
+    blockedRate: ratio(
+      observations.blockedPortals,
       observations.portalsEvaluated,
     ),
-    averageConfidenceScore: Object.freeze({
-      sampleSize: scores.length,
-      value: scores.length
-        ? Number((scores.reduce((sum, value) => sum + value, 0) / scores.length).toFixed(2))
-        : null,
-    }),
+    missingStartDateRate: ratio(
+      observations.missingStartDates,
+      observations.recruitmentEventsEvaluated,
+    ),
+    missingCloseDateRate: ratio(
+      observations.missingCloseDates,
+      observations.recruitmentEventsEvaluated,
+    ),
+    missingLocationRate: ratio(
+      observations.missingLocations,
+      observations.recruitmentEventsEvaluated,
+    ),
   });
 }

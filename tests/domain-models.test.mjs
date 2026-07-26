@@ -136,6 +136,62 @@ test('CareerPortal preserves recruitment types', () => {
   assert.deepEqual(portal.recruitmentTypes, ['campus', 'internship', 'experienced']);
 });
 
+test('CareerPortal defaults verified official portals to confirmed official identity', () => {
+  const portal = createCareerPortal({
+    id: 'portal-official',
+    companyId: 'company-1',
+    canonicalUrl: 'https://example.com/careers',
+    registrableDomain: 'example.com',
+    pageType: 'CAREER_HOME',
+    verificationStatus: 'VERIFIED',
+    confidenceScore: 80,
+  });
+
+  assert.equal(portal.sourceTier, 'OFFICIAL_SITE');
+  assert.equal(portal.officialIdentityConfirmed, true);
+  assert.equal(portal.platformIdentityConfirmed, false);
+  assert.equal(portal.hiringAvailability, 'UNKNOWN');
+  assert.equal(portal.searchCoverage, 'PARTIAL');
+});
+
+test('CareerPortal keeps platform-only sources isolated from official verification', () => {
+  assert.throws(() => createCareerPortal({
+    id: 'portal-platform-verified',
+    companyId: 'company-1',
+    canonicalUrl: 'https://www.liepin.com/company-jobs/123/',
+    registrableDomain: 'liepin.com',
+    pageType: 'JOB_LIST',
+    sourceTier: 'PLATFORM_ONLY',
+    platformIdentityConfirmed: true,
+    verificationStatus: 'VERIFIED',
+    confidenceScore: 49,
+  }), /PLATFORM_ONLY.*VERIFIED/);
+
+  assert.throws(() => createCareerPortal({
+    id: 'portal-platform-score',
+    companyId: 'company-1',
+    canonicalUrl: 'https://www.liepin.com/company-jobs/123/',
+    registrableDomain: 'liepin.com',
+    pageType: 'JOB_LIST',
+    sourceTier: 'PLATFORM_ONLY',
+    platformIdentityConfirmed: true,
+    verificationStatus: 'REVIEW',
+    confidenceScore: 50,
+  }), /PLATFORM_ONLY.*49/);
+
+  assert.throws(() => createCareerPortal({
+    id: 'portal-platform-openings',
+    companyId: 'company-1',
+    canonicalUrl: 'https://www.liepin.com/company-jobs/123/',
+    registrableDomain: 'liepin.com',
+    pageType: 'JOB_LIST',
+    sourceTier: 'PLATFORM_ONLY',
+    verificationStatus: 'REVIEW',
+    confidenceScore: 30,
+    hiringAvailability: 'OPENINGS_FOUND',
+  }), /platformIdentityConfirmed/);
+});
+
 test('JobOpening uses source job id before URL fallback', () => {
   const first = stableOpeningId({
     companyId: 'company-1',
@@ -162,10 +218,33 @@ test('JobOpening preserves unknown publication date and does not call it recent'
   }, { now: NOW });
 
   assert.equal(job.publishedAt, null);
+  assert.equal(job.recruitmentEventId, null);
+  assert.equal(job.sourceTier, 'OFFICIAL_SITE');
   assert.equal(isRecentOpening(job, {
     freshnessDays: 90,
     now: Date.parse('2026-07-24T00:00:00.000Z'),
   }), false);
+});
+
+test('JobOpening preserves recruitment event and source tier', () => {
+  const job = createJobOpening({
+    companyId: 'company-1',
+    careerPortalId: 'portal-1',
+    recruitmentEventId: 'event-1',
+    sourceTier: 'OFFICIAL_ATS',
+    title: 'AI Product Manager',
+    sourceUrl: 'https://jobs.example.com/1',
+  }, { now: NOW });
+
+  assert.equal(job.recruitmentEventId, 'event-1');
+  assert.equal(job.sourceTier, 'OFFICIAL_ATS');
+  assert.throws(() => createJobOpening({
+    companyId: 'company-1',
+    careerPortalId: 'portal-1',
+    sourceTier: 'AGGREGATOR',
+    title: 'AI Product Manager',
+    sourceUrl: 'https://jobs.example.com/2',
+  }), /sourceTier/);
 });
 
 test('VerificationEvidence and DiscoveryLog use machine-readable enums', () => {

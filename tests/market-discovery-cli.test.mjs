@@ -56,8 +56,8 @@ test('discover runs offline with planning, search and page fixtures', async () =
   assert.equal(result.status, 0, result.stderr);
   const output = JSON.parse(result.stdout);
   assert.equal(output.jobsStored, 1);
-  assert.equal(output.portalsVerified, 1);
-  assert.equal(output.reviewRequired, 1);
+  assert.equal(output.portalsVerified, 2);
+  assert.equal(output.reviewRequired, 0);
   assert.equal(output.rejected, 1);
   assert.equal(output.liveSearchExecuted, false);
   assert.equal(output.intent.location, '上海');

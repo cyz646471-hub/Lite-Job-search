@@ -64,6 +64,36 @@ test('independent official domain and backlink verify a recruitment page', () =>
   assert.equal(result.atsType, 'MOKA');
 });
 
+test('official domain and recruitment structure verify at the 50-point threshold', () => {
+  const result = verifyCareerPortal({
+    pageType: 'JOB_LIST',
+    evidence: [
+      { code: 'official_domain_match' },
+      { code: 'recruitment_structure' },
+    ],
+  });
+
+  assert.equal(result.confidenceScore, 50);
+  assert.equal(result.verificationStatus, 'VERIFIED');
+  assert.equal(result.identityAnchor, true);
+});
+
+test('official-site-confirmed ATS tenant is an independent identity anchor', () => {
+  const result = verifyCareerPortal({
+    pageType: 'JOB_LIST',
+    atsType: 'MOKA',
+    evidence: [
+      { code: 'official_site_confirms_ats_tenant' },
+      { code: 'verified_ats_tenant' },
+      { code: 'recruitment_structure' },
+    ],
+  });
+
+  assert.equal(result.verificationStatus, 'VERIFIED');
+  assert.equal(result.identityAnchor, true);
+  assert.equal(result.confidenceScore, 80);
+});
+
 test('LLM advisory has no scoring or identity authority', () => {
   const result = verifyCareerPortal({
     pageType: 'JOB_LIST',

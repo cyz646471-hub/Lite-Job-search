@@ -66,6 +66,28 @@ function createOpening(overrides = {}) {
   };
 }
 
+function createEvent(overrides = {}) {
+  return {
+    id: 'event-1',
+    companyId: 'company-1',
+    careerPortalId: 'portal-1',
+    sourceTier: 'OFFICIAL_SITE',
+    recruitmentType: 'CAMPUS_FULL_TIME',
+    cohort: '2027',
+    campaignName: '2027 Campus Hiring',
+    status: 'OPEN',
+    startAt: '2026-07-01',
+    closesAt: null,
+    directoryUrl: 'https://jobs.example.com/campus/2027',
+    locations: ['上海'],
+    publicationClass: 'EXPLICIT',
+    firstSeenAt: NOW,
+    lastSeenAt: NOW,
+    lastVerifiedAt: NOW,
+    ...overrides,
+  };
+}
+
 async function createRepository(prefix = 'lite-job-market-') {
   const directory = await mkdtemp(path.join(os.tmpdir(), prefix));
   const repository = openSqliteMarketDiscoveryRepository({
@@ -95,6 +117,189 @@ test('migration upgrades a database created by the original schema', async (t) =
   repository.upsertCompany(createCompany());
   assert.equal(repository.listCompanies()[0].chineseName, null);
   assert.deepEqual(repository.listBatchItems('missing-batch'), []);
+  assert.deepEqual(repository.listRecruitmentEvents(), []);
+});
+
+test('repository persists an official recruitment event snapshot atomically', async (t) => {
+  const repository = await createRepository('lite-job-market-event-');
+  t.after(() => repository.close());
+
+  repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal({
+      sourceTier: 'OFFICIAL_SITE',
+      officialIdentityConfirmed: true,
+      hiringAvailability: 'OPENINGS_FOUND',
+      searchCoverage: 'COMPLETE',
+      lastCheckedAt: NOW,
+    }),
+    evidence: [],
+    events: [createEvent()],
+    openings: [createOpening({
+      recruitmentEventId: 'event-1',
+      sourceTier: 'OFFICIAL_SITE',
+    })],
+  });
+
+  assert.equal(repository.listCompanies().length, 1);
+  assert.equal(repository.listCareerPortals()[0].sourceTier, 'OFFICIAL_SITE');
+  assert.equal(repository.listRecruitmentEvents().length, 1);
+  assert.equal(repository.listJobOpenings()[0].recruitmentEventId, 'event-1');
+});
+
+test('repository isolates platform-only events and openings', async (t) => {
+  const repository = await createRepository('lite-job-market-platform-');
+  t.after(() => repository.close());
+  repository.upsertCompany(createCompany());
+  repository.upsertCareerPortal(createPortal({
+    id: 'portal-platform',
+    canonicalUrl: 'https://www.liepin.com/company-jobs/123/',
+    url: 'https://www.liepin.com/company-jobs/123/',
+    registrableDomain: 'liepin.com',
+    sourceTier: 'PLATFORM_ONLY',
+    officialIdentityConfirmed: false,
+    platformIdentityConfirmed: true,
+    hiringAvailability: 'OPENINGS_FOUND',
+    fallbackReason: 'NO_OFFICIAL_FOUND',
+    searchCoverage: 'COMPLETE',
+    verificationStatus: 'REVIEW',
+    confidenceScore: 40,
+  }));
+  repository.upsertRecruitmentEvent(createEvent({
+    id: 'event-platform',
+    careerPortalId: 'portal-platform',
+    sourceTier: 'PLATFORM_ONLY',
+    recruitmentType: 'EXPERIENCED',
+    cohort: null,
+    campaignName: '',
+    directoryUrl: 'https://www.liepin.com/company-jobs/123/',
+    publicationClass: 'PLATFORM_ONLY',
+  }));
+  repository.upsertPlatformJobOpening(createOpening({
+    id: 'job-platform',
+    careerPortalId: 'portal-platform',
+    recruitmentEventId: 'event-platform',
+    sourceTier: 'PLATFORM_ONLY',
+    sourceUrl: 'https://www.liepin.com/company-jobs/123/',
+    jobDetailUrl: null,
+  }));
+
+  assert.equal(repository.listRecruitmentEvents()[0].sourceTier, 'PLATFORM_ONLY');
+  assert.equal(repository.listJobOpenings()[0].sourceTier, 'PLATFORM_ONLY');
+  assert.throws(() => repository.upsertCareerPortal(createPortal({
+    id: 'portal-platform-invalid',
+    canonicalUrl: 'https://www.liepin.com/company-jobs/456/',
+    url: 'https://www.liepin.com/company-jobs/456/',
+    registrableDomain: 'liepin.com',
+    sourceTier: 'PLATFORM_ONLY',
+    platformIdentityConfirmed: true,
+    verificationStatus: 'VERIFIED',
+    confidenceScore: 49,
+  })), /PLATFORM_ONLY.*VERIFIED/);
+  assert.throws(() => repository.upsertPlatformJobOpening(createOpening({
+    id: 'job-platform-invalid',
+    careerPortalId: 'portal-platform',
+    recruitmentEventId: 'event-platform',
+    sourceTier: 'OFFICIAL_SITE',
+  })), /PLATFORM_ONLY/);
+});
+
+test('company snapshot rolls back every row when an opening violates its event', async (t) => {
+  const repository = await createRepository('lite-job-market-rollback-');
+  t.after(() => repository.close());
+
+  assert.throws(() => repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal({
+      sourceTier: 'OFFICIAL_SITE',
+      officialIdentityConfirmed: true,
+    }),
+    evidence: [],
+    events: [createEvent()],
+    openings: [createOpening({
+      id: 'job-invalid-event',
+      recruitmentEventId: 'missing-event',
+      sourceTier: 'OFFICIAL_SITE',
+    })],
+  }), /RecruitmentEvent/);
+
+  assert.equal(repository.listCompanies().length, 0);
+  assert.equal(repository.listCareerPortals().length, 0);
+  assert.equal(repository.listRecruitmentEvents().length, 0);
+  assert.equal(repository.listJobOpenings().length, 0);
+});
+
+test('company snapshot rejects mismatched input identities before remapping merges', async (t) => {
+  const repository = await createRepository('lite-job-market-mismatch-');
+  t.after(() => repository.close());
+
+  assert.throws(() => repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal(),
+    evidence: [],
+    events: [createEvent()],
+    openings: [createOpening({ companyId: 'wrong-company' })],
+  }), /snapshot.*company/i);
+
+  assert.equal(repository.listCompanies().length, 0);
+  assert.equal(repository.listCareerPortals().length, 0);
+  assert.equal(repository.listRecruitmentEvents().length, 0);
+  assert.equal(repository.listJobOpenings().length, 0);
+});
+
+test('official event supersedes but does not delete platform history', async (t) => {
+  const repository = await createRepository('lite-job-market-supersede-');
+  t.after(() => repository.close());
+  repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal({
+      id: 'portal-platform-history',
+      canonicalUrl: 'https://www.liepin.com/company-jobs/123/',
+      url: 'https://www.liepin.com/company-jobs/123/',
+      registrableDomain: 'liepin.com',
+      sourceTier: 'PLATFORM_ONLY',
+      verificationStatus: 'REVIEW',
+      confidenceScore: 40,
+      officialIdentityConfirmed: false,
+      platformIdentityConfirmed: true,
+      hiringAvailability: 'OPENINGS_FOUND',
+    }),
+    evidence: [],
+    events: [createEvent({
+      id: 'event-platform-history',
+      careerPortalId: 'portal-platform-history',
+      sourceTier: 'PLATFORM_ONLY',
+      publicationClass: 'PLATFORM_ONLY',
+      directoryUrl: 'https://www.liepin.com/company-jobs/123/',
+    })],
+    openings: [createOpening({
+      id: 'job-platform-history',
+      careerPortalId: 'portal-platform-history',
+      recruitmentEventId: 'event-platform-history',
+      sourceTier: 'PLATFORM_ONLY',
+      sourceUrl: 'https://www.liepin.com/company-jobs/123/',
+      jobDetailUrl: null,
+    })],
+  });
+  repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal({
+      hiringAvailability: 'OPENINGS_FOUND',
+      sourceTier: 'OFFICIAL_SITE',
+      officialIdentityConfirmed: true,
+    }),
+    evidence: [],
+    events: [createEvent()],
+    openings: [createOpening({
+      recruitmentEventId: 'event-1',
+      sourceTier: 'OFFICIAL_SITE',
+    })],
+  });
+
+  const platformPortal = repository.listCareerPortals()
+    .find((portal) => portal.id === 'portal-platform-history');
+  assert.equal(platformPortal.supersededByPortalId, 'portal-1');
+  assert.equal(repository.listRecruitmentEvents().length, 2);
 });
 
 test('SQLite repositories upsert a complete verified chain idempotently', async (t) => {
@@ -377,10 +582,66 @@ test('repository persists batch checkpoints for resume', async (t) => {
     attemptCount: 1,
     discoveryRunId: 'run-1',
     errorMessage: null,
+    retryClass: null,
+    deferredUntil: null,
     startedAt: NOW,
     completedAt: NOW,
     createdAt: NOW,
   }]);
+});
+
+test('blocked batch item is deferred and provider circuit state round-trips', async (t) => {
+  const repository = await createRepository('lite-job-market-deferred-');
+  t.after(() => repository.close());
+  repository.beginBatch({
+    id: 'batch-deferred',
+    inputHash: 'hash-deferred',
+    startedAt: NOW,
+  });
+  repository.ensureBatchItem({
+    batchId: 'batch-deferred',
+    itemKey: 'item-1',
+    position: 0,
+    input: { company: 'Example' },
+    createdAt: NOW,
+  });
+  repository.startBatchItem({
+    batchId: 'batch-deferred',
+    itemKey: 'item-1',
+    startedAt: NOW,
+  });
+  repository.deferBatchItem({
+    batchId: 'batch-deferred',
+    itemKey: 'item-1',
+    resultStatus: 'BLOCKED',
+    retryClass: 'PROVIDER_BLOCKED',
+    deferredUntil: '2026-07-26T01:00:00.000Z',
+    errorMessage: 'search_challenge_or_access_blocked',
+    completedAt: NOW,
+  });
+  repository.saveProviderCircuitState({
+    provider: 'baidu-browser',
+    state: 'OPEN',
+    reasonCode: 'SEARCH_CHALLENGE',
+    openedAt: NOW,
+    nextProbeAt: '2026-07-26T01:00:00.000Z',
+    lastHealthyAt: null,
+    updatedAt: NOW,
+  });
+
+  const [item] = repository.listBatchItems('batch-deferred');
+  assert.equal(item.status, 'DEFERRED');
+  assert.equal(item.retryClass, 'PROVIDER_BLOCKED');
+  assert.equal(item.deferredUntil, '2026-07-26T01:00:00.000Z');
+  assert.deepEqual(repository.getProviderCircuitState('baidu-browser'), {
+    provider: 'baidu-browser',
+    state: 'OPEN',
+    reasonCode: 'SEARCH_CHALLENGE',
+    openedAt: NOW,
+    nextProbeAt: '2026-07-26T01:00:00.000Z',
+    lastHealthyAt: null,
+    updatedAt: NOW,
+  });
 });
 
 test('batch id cannot be silently reused with different inputs', async (t) => {

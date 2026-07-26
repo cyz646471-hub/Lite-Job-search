@@ -1,16 +1,21 @@
 import { fetchJobDetail } from '../../../engine/upstream/planner/detail-fetchers.mjs';
 import { resolvePageProvider as defaultResolvePageProvider } from '../../../engine/upstream/planner/page-providers/_registry.mjs';
+import { explicitIsoDate } from '../../application/recruitment-event-classifier.mjs';
 import { createJobOpening } from '../../domain/job-opening.mjs';
 
 function isoDate(value) {
   if (value == null || value === '') return null;
-  let timestamp;
   if (typeof value === 'number') {
-    timestamp = value < 10_000_000_000 ? value * 1000 : value;
-  } else {
-    timestamp = Date.parse(String(value));
+    const timestamp = value < 10_000_000_000 ? value * 1_000 : value;
+    const date = new Date(timestamp);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : null;
   }
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+  const explicitDate = explicitIsoDate(value);
+  if (!explicitDate) return null;
+  const timestamp = Date.parse(String(value));
+  return Number.isFinite(timestamp)
+    ? new Date(timestamp).toISOString()
+    : `${explicitDate}T00:00:00.000Z`;
 }
 
 function locationsOf(raw = {}) {
@@ -88,6 +93,7 @@ export function createUpstreamJobExtractionAdapter({
           return createJobOpening({
             companyId: company.id,
             careerPortalId: portal.id,
+            sourceTier: portal.sourceTier || (portal.atsType ? 'OFFICIAL_ATS' : 'OFFICIAL_SITE'),
             sourceJobId: sourceJobIdOf(raw),
             title,
             normalizedTitle: raw.normalizedTitle || title,

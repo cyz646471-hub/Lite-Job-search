@@ -35,7 +35,7 @@ export function applyVerificationPolicy({
   let verificationStatus = 'REVIEW';
   if (hardRejectReasons.length) verificationStatus = 'REJECTED';
   else if (blocked) verificationStatus = 'BLOCKED';
-  else if (confidenceScore >= 75 && identityAnchor && pageType !== 'UNKNOWN') {
+  else if (confidenceScore >= 50 && identityAnchor && pageType !== 'UNKNOWN') {
     verificationStatus = 'VERIFIED';
   } else if (confidenceScore < 45) {
     verificationStatus = 'REJECTED';
