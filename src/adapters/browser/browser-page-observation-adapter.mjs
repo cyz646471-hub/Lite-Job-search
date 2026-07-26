@@ -89,6 +89,9 @@ export function createBrowserObservationFetcher(observations = []) {
         text: clean(link?.text),
         href: canonicalHttpUrl(link?.href),
       })).filter((link) => link.href)]),
+      jobs: Array.isArray(rawPage.jobs)
+        ? Object.freeze(structuredClone(rawPage.jobs))
+        : extractExplicitJobLinks(rawPage),
     });
     if (requestedUrl) byUrl.set(requestedUrl, page);
     if (finalUrl) byUrl.set(finalUrl, page);
@@ -102,3 +105,4 @@ export function createBrowserObservationFetcher(observations = []) {
     return structuredClone(page);
   };
 }
+import { extractExplicitJobLinks } from './recruitment-page-observer.mjs';

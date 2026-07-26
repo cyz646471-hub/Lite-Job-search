@@ -11,6 +11,43 @@ function sanitizeLinks(links = []) {
   })).filter((link) => link.text && /^https?:\/\//i.test(link.href)));
 }
 
+const GENERIC_RECRUITMENT_LINK_TEXT = /^(?:招聘|职位|岗位|职位列表|岗位列表|查看(?:全部)?职位|更多职位|立即申请|立即投递|申请|投递|社会招聘|校园招聘|实习生招聘|首页|返回|jobs?|careers?|open positions?|apply(?: now)?|more)$/i;
+const JOB_TITLE_TERMS = /产品经理|工程师|开发|算法|设计师|运营|市场|销售|财务|会计|人力|招聘专员|法务|研究员|分析师|管培生|实习生|测试|架构师|顾问|采购|供应链|客服|engineer|manager|designer|developer|scientist|analyst|intern|marketing|sales|operations|consultant|architect/i;
+
+function looksLikeJobDetailUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    const path = url.pathname.replace(/\/+$/, '');
+    return /\/(?:jobs?|positions?|openings?|job_detail|position_detail)\/[^/]+$/i.test(path)
+      || /\/(?:jobs?|positions?)\/detail(?:\/|$)/i.test(path);
+  } catch {
+    return false;
+  }
+}
+
+export function extractExplicitJobLinks(snapshot = {}) {
+  if (!hasRecruitmentStructure(snapshot) || hasExplicitNoOpenings(snapshot)) {
+    return Object.freeze([]);
+  }
+  const jobs = [];
+  const seen = new Set();
+  for (const link of sanitizeLinks(snapshot.links)) {
+    const title = clean(link.text);
+    if (!title || title.length > 120 || GENERIC_RECRUITMENT_LINK_TEXT.test(title)) continue;
+    if (!JOB_TITLE_TERMS.test(title) && !looksLikeJobDetailUrl(link.href)) continue;
+    const key = `${title.toLowerCase()}|${link.href}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    jobs.push(Object.freeze({
+      title,
+      jobDetailUrl: link.href,
+      sourceUrl: link.href,
+      status: 'ACTIVE',
+    }));
+  }
+  return Object.freeze(jobs);
+}
+
 export async function captureRenderedSnapshot(page) {
   if (typeof page?.snapshot === 'function') {
     const snapshot = await page.snapshot();
@@ -86,6 +123,7 @@ export async function observeRenderedRecruitmentPage(page, {
   });
   const recruitmentStructure = hasRecruitmentStructure(snapshot);
   const noOpenings = hasExplicitNoOpenings(snapshot);
+  const jobs = blocked ? Object.freeze([]) : extractExplicitJobLinks(snapshot);
   return Object.freeze({
     requestedUrl,
     finalUrl,
@@ -98,6 +136,7 @@ export async function observeRenderedRecruitmentPage(page, {
     title: snapshot.title,
     h1: snapshot.h1,
     links: snapshot.links,
+    jobs,
     observedAt: observedAt || now(),
     hasJobStructure: recruitmentStructure,
     vacancyStatus: blocked

@@ -12,6 +12,8 @@ test('quality report exposes observed numerators, denominators and confidence', 
     validCandidateResults: 10,
     duplicateCandidateResults: 2,
     rejectedPortals: 1,
+    falsePositiveCount: 1,
+    groundTruthEvaluated: 5,
     confidenceScores: [90, 80, 70],
     platformOnlyAcceptanceCount: 2,
     platformOnlySupersededCount: 1,
@@ -57,4 +59,17 @@ test('quality report uses null when a metric has no observed denominator', () =>
   assert.equal(report.falsePositiveRate.value, null);
   assert.equal(report.averageOfficialConfidenceScore.value, null);
   assert.equal(report.platformOnlyAcceptanceCount, 0);
+});
+
+test('does not label deterministic rejection rate as false positives without ground truth', () => {
+  const report = buildQualityReport({
+    portalsEvaluated: 5,
+    rejectedPortals: 2,
+  });
+
+  assert.deepEqual(report.falsePositiveRate, {
+    numerator: 0,
+    denominator: 0,
+    value: null,
+  });
 });

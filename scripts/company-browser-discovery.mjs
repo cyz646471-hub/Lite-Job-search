@@ -385,8 +385,16 @@ export function buildBrowserRunReport({
   });
 }
 
-export function isSearchBlockedPage(text) {
-  return isBaiduBlockedSnapshot({ text });
+export function isSearchBlockedPage(text, {
+  status = 200,
+  url = '',
+} = {}) {
+  return isBaiduBlockedSnapshot({ text, status, url });
+}
+
+function isExplicitBaiduNoResults(text) {
+  return /没有找到.{0,40}(?:相关|匹配)?(?:结果|内容)|未找到.{0,40}(?:相关|匹配)?(?:结果|内容)|no results found/i
+    .test(String(text || ''));
 }
 
 async function readSearchRows(page, maxResults) {
@@ -469,15 +477,62 @@ export async function discoverCompanyWithBrowser({
   const query = `${company} 招聘`;
   const officialCandidates = [], platformCandidates = [], leads = [], rejected = [], failures = [], observations = [];
   try {
-    await page.goto(`https://www.baidu.com/s?wd=${encodeURIComponent(query)}`, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    const searchResponse = await page.goto(`https://www.baidu.com/s?wd=${encodeURIComponent(query)}`, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
     // Baidu can redirect to its challenge page immediately after DOM content loads.
     // Allow that redirect to settle before interpreting a page with no result rows.
     await page.waitForTimeout(400);
     const bodyText = typeof page.readBodyText === 'function'
       ? await page.readBodyText()
       : await page.locator('body').innerText({ timeout: timeoutMs }).catch(() => '');
-    if (isSearchBlockedPage(bodyText)) return { company, officialDomain, query, status: 'BLOCKED', reasonCode: 'search_challenge_or_access_blocked', officialCandidates, platformCandidates, leads, rejected, failures, observations };
+    const searchStatus = Number(searchResponse?.status?.()) || 200;
+    const searchFinalUrl = page.url();
+    if (isSearchBlockedPage(bodyText, {
+      status: searchStatus,
+      url: searchFinalUrl,
+    })) {
+      return { company, officialDomain, query, status: 'BLOCKED', reasonCode: 'search_challenge_or_access_blocked', officialCandidates, platformCandidates, leads, rejected, failures, observations };
+    }
+    if (searchStatus >= 400) {
+      return {
+        company,
+        officialDomain,
+        query,
+        status: 'FAILED',
+        reasonCode: 'search_http_failed',
+        officialCandidates,
+        platformCandidates,
+        leads,
+        rejected,
+        observations,
+        failures: [...failures, {
+          stage: 'search',
+          url: searchFinalUrl,
+          reasonCode: 'search_http_failed',
+          error: `HTTP ${searchStatus}`,
+        }],
+      };
+    }
     const rows = await readSearchRows(page, maxResults);
+    if (!rows.length && !isExplicitBaiduNoResults(bodyText)) {
+      return {
+        company,
+        officialDomain,
+        query,
+        status: 'FAILED',
+        reasonCode: 'search_results_unreadable',
+        officialCandidates,
+        platformCandidates,
+        leads,
+        rejected,
+        observations,
+        failures: [...failures, {
+          stage: 'search',
+          url: searchFinalUrl,
+          reasonCode: 'search_results_unreadable',
+          error: 'Baidu result page contained no readable result rows',
+        }],
+      };
+    }
     let openedCandidates = 0;
     for (const row of rows) {
       if (!shouldOpenSearchResult({ ...row, company })) {

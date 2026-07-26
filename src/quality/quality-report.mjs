@@ -49,8 +49,8 @@ export function buildQualityReport(observations = {}) {
       observations.validCandidateResults,
     ),
     falsePositiveRate: ratio(
-      observations.rejectedPortals,
-      observations.portalsEvaluated,
+      observations.falsePositiveCount,
+      observations.groundTruthEvaluated,
     ),
     averageOfficialConfidenceScore,
     averageConfidenceScore: averageOfficialConfidenceScore,

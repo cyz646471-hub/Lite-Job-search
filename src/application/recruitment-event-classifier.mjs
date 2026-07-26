@@ -68,7 +68,14 @@ function recruitmentTypeOf(text) {
 function cohortOf(text) {
   const chinese = text.match(/(?:20)?(\d{2})\s*届/);
   if (chinese) return `20${chinese[1]}`;
-  return text.match(/\b(20\d{2})\b/)?.[1] || null;
+  const englishAfterYear = text.match(
+    /\b(20\d{2})\s+(?:graduate|campus|new[\s-]?grad)(?:\s+(?:program|programme|hiring|recruitment))?\b/i,
+  );
+  if (englishAfterYear) return englishAfterYear[1];
+  const englishBeforeYear = text.match(
+    /\b(?:graduate|campus|new[\s-]?grad)(?:\s+(?:program|programme|hiring|recruitment))?\s+(20\d{2})\b/i,
+  );
+  return englishBeforeYear?.[1] || null;
 }
 
 function eventDatesOf({

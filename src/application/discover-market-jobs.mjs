@@ -150,14 +150,13 @@ function createSnapshotBufferingRepository(baseRepository) {
       return opening;
     },
     flushCompanySnapshots() {
-      for (const portal of portals.values()) {
-        const company = companies.get(portal.companyId);
-        if (!company) {
-          const error = new Error(`snapshot company missing for portal: ${portal.id}`);
-          error.failureStage = 'company_snapshot_persistence';
-          throw error;
-        }
-        try {
+      try {
+        return baseRepository.withTransaction(() => {
+          for (const portal of portals.values()) {
+            const company = companies.get(portal.companyId);
+            if (!company) {
+              throw new Error(`snapshot company missing for portal: ${portal.id}`);
+            }
           baseRepository.persistCompanySnapshot({
             company,
             portal,
@@ -165,10 +164,11 @@ function createSnapshotBufferingRepository(baseRepository) {
             events: [...(eventsByPortalId.get(portal.id)?.values() || [])],
             openings: [...(openingsByPortalId.get(portal.id)?.values() || [])],
           });
-        } catch (error) {
-          error.failureStage = 'company_snapshot_persistence';
-          throw error;
-        }
+          }
+        });
+      } catch (error) {
+        error.failureStage = 'company_snapshot_persistence';
+        throw error;
       }
     },
   };
@@ -889,6 +889,13 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       counters.portalsVerified = 0;
       counters.jobsStored = 0;
       counters.usableApplyEntries = 0;
+      recruitmentEventsById.clear();
+      storedJobsById.clear();
+      storedJobIds.clear();
+      usableApplyJobIds.clear();
+      extractionSuccessPortalIds.clear();
+      jobIdsByPortalId.clear();
+      activeOpeningPortalIds.clear();
       qualityObservations.extractionSuccesses = 0;
     }
     recordFailure({

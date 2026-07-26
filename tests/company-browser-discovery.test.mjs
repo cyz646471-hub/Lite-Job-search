@@ -480,6 +480,61 @@ test('detects Baidu safety verification as blocked instead of an empty search', 
   assert.equal(isSearchBlockedPage('百度安全验证\n请完成下方验证后继续操作\n拖动左侧滑块'), true);
   assert.equal(isSearchBlockedPage('小红书招聘职位列表'), false);
 });
+
+test('treats a blank 403 Baidu response as blocked', async () => {
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('受限公司 招聘')}`;
+  const result = await discoverCompanyWithBrowser({
+    company: '受限公司',
+    browser: fakeBrowser({
+      [searchUrl]: {
+        status: 403,
+        text: '',
+        searchRows: [],
+      },
+    }),
+  });
+
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.reasonCode, 'search_challenge_or_access_blocked');
+});
+
+test('does not report an unreadable zero-row search DOM as completed', async () => {
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('结构变化公司 招聘')}`;
+  const result = await discoverCompanyWithBrowser({
+    company: '结构变化公司',
+    browser: fakeBrowser({
+      [searchUrl]: {
+        status: 200,
+        text: '百度一下 搜索结果页面',
+        searchRows: [],
+      },
+    }),
+  });
+
+  assert.equal(result.status, 'FAILED');
+  assert.equal(result.reasonCode, 'search_results_unreadable');
+  assert.ok(result.failures.some((failure) => (
+    failure.stage === 'search'
+      && failure.reasonCode === 'search_results_unreadable'
+  )));
+});
+
+test('accepts an explicit Baidu no-results page as a completed empty search', async () => {
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('不存在的公司 招聘')}`;
+  const result = await discoverCompanyWithBrowser({
+    company: '不存在的公司',
+    browser: fakeBrowser({
+      [searchUrl]: {
+        status: 200,
+        text: '抱歉，没有找到与“不存在的公司 招聘”相关的结果。',
+        searchRows: [],
+      },
+    }),
+  });
+
+  assert.equal(result.status, 'COMPLETED');
+  assert.equal(result.officialCandidates.length, 0);
+});
 test('rejects Jobui before opening it', () => {
   const decision = classifySearchResult({
     company: '示例科技',

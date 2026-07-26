@@ -186,7 +186,7 @@ test('AI 产品经理 intent stores only jobs from verified portals', async (t) 
   assert.equal(result.report.quality.officialVerificationRate.numerator, 2);
   assert.equal(result.report.quality.officialVerificationRate.denominator, 3);
   assert.equal(result.report.quality.jobExtractionSuccessRate.value, 1);
-  assert.equal(result.report.quality.falsePositiveRate.numerator, 1);
+  assert.equal(result.report.quality.falsePositiveRate.value, null);
   assert.equal(result.report.quality.averageConfidenceScore.sampleSize, 3);
   assert.equal(result.report.candidateUrls.length, 3);
   assert.equal(result.report.candidateCompanies.length, 3);

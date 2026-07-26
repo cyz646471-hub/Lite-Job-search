@@ -138,6 +138,8 @@ test('failed browser snapshot leaves no partial formal recruitment chain', async
 
   assert.equal(result.status, 'FAILED');
   assert.equal(result.jobsStored, 0);
+  assert.deepEqual(result.report.recruitmentEvents, []);
+  assert.deepEqual(result.report.extractedJobs, []);
   assert.ok(result.report.failures.some((failure) => (
     failure.stage === 'company_snapshot_persistence'
       && failure.message.includes('fixture snapshot failure')
@@ -146,6 +148,93 @@ test('failed browser snapshot leaves no partial formal recruitment chain', async
   assert.equal(repository.listCareerPortals().length, 0);
   assert.equal(repository.listRecruitmentEvents().length, 0);
   assert.equal(repository.listJobOpenings().length, 0);
+});
+
+test('rolls back every portal when the second company snapshot fails', async (t) => {
+  const repository = await createRepository(t);
+  let snapshots = 0;
+  const failingRepository = {
+    ...repository,
+    persistCompanySnapshot(snapshot) {
+      snapshots += 1;
+      if (snapshots === 2) throw new Error('second portal snapshot failure');
+      return repository.persistCompanySnapshot(snapshot);
+    },
+  };
+  const companyResult = verifiedCompanyResult();
+  const secondPortalUrl = 'https://jobs.example.com/campus';
+  companyResult.officialCandidates.push({
+    classification: 'OFFICIAL_CANDIDATE',
+    title: '示例科技校园招聘',
+    url: secondPortalUrl,
+    recruitmentType: 'GRADUATE',
+  });
+  companyResult.observations.push({
+    requestedUrl: secondPortalUrl,
+    finalUrl: secondPortalUrl,
+    status: 200,
+    title: '示例科技校园招聘',
+    html: '<h1>校园招聘职位</h1>',
+    text: '2027 届校园招聘职位 产品经理',
+    links: [],
+    officialSiteLinked: true,
+    observedAt: NOW,
+    vacancyStatus: 'ACTIVE',
+    jobs: [{
+      sourceJobId: 'campus-pm',
+      title: '产品经理（应届）',
+      employmentType: 'campus',
+      jobDetailUrl: 'https://jobs.example.com/campus/campus-pm',
+      status: 'ACTIVE',
+    }],
+  });
+
+  const result = await ingestBrowserCompanyResult({
+    companyResult,
+    role: '公开招聘岗位',
+  }, {
+    repository: failingRepository,
+    now: () => NOW,
+  });
+
+  assert.equal(result.status, 'FAILED');
+  assert.deepEqual(result.report.recruitmentEvents, []);
+  assert.deepEqual(result.report.extractedJobs, []);
+  assert.equal(repository.listCompanies().length, 0);
+  assert.equal(repository.listCareerPortals().length, 0);
+  assert.equal(repository.listRecruitmentEvents().length, 0);
+  assert.equal(repository.listJobOpenings().length, 0);
+});
+
+test('extracts an explicit visible job link from a generic official page', async (t) => {
+  const repository = await createRepository(t);
+  const companyResult = verifiedCompanyResult();
+  companyResult.observations[0].jobs = undefined;
+  companyResult.observations[0].links = [
+    {
+      text: 'AI 产品经理',
+      href: 'https://jobs.example.com/openings/ai-product-manager',
+    },
+    {
+      text: '社会招聘',
+      href: 'https://jobs.example.com/social',
+    },
+  ];
+
+  const result = await ingestBrowserCompanyResult({
+    companyResult,
+    role: '公开招聘岗位',
+  }, {
+    repository,
+    now: () => NOW,
+  });
+
+  assert.equal(result.jobsStored, 1);
+  assert.equal(repository.listJobOpenings()[0].title, 'AI 产品经理');
+  assert.equal(
+    repository.listJobOpenings()[0].jobDetailUrl,
+    'https://jobs.example.com/openings/ai-product-manager',
+  );
 });
 
 test('unverified browser candidates never create formal openings', async (t) => {

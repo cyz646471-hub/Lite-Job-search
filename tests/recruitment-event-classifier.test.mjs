@@ -87,3 +87,25 @@ test('job detail and apply URLs cannot become event directories', () => {
     }), /directoryPageType/);
   }
 });
+
+test('does not turn a social recruitment publication date into a cohort', () => {
+  const event = classifyRecruitmentEvent({
+    pageTitle: '社会招聘',
+    pageText: '岗位发布日期：2026-07-20，长期有效。',
+    directoryUrl: 'https://jobs.example.com/social',
+    directoryPageType: 'JOB_LIST',
+  });
+
+  assert.equal(event.recruitmentType, 'EXPERIENCED');
+  assert.equal(event.cohort, null);
+});
+
+test('recognizes an English cohort only with recruitment context', () => {
+  const event = classifyRecruitmentEvent({
+    pageTitle: '2027 Graduate Program',
+    directoryUrl: 'https://jobs.example.com/campus',
+    directoryPageType: 'CAMPAIGN',
+  });
+
+  assert.equal(event.cohort, '2027');
+});
