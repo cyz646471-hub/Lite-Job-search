@@ -24,7 +24,9 @@ function hardNegativeCode(url, page = {}) {
   if (UNIVERSITY_HOSTS.some((domain) => hostMatches(host, domain)) || /\.edu\.cn$/i.test(host)) {
     return 'university_employment_site';
   }
-  if (/培训|课程|训练营|付费内推|求职辅导|career coaching|bootcamp/i.test(blob)) {
+  // Generic employee-development language is common on legitimate career sites.
+  // Reject only explicit commercial training-provider surfaces, not a lone “培训”.
+  if (/培训机构|职业培训|培训学校|培训中心|课程|训练营|付费内推|求职辅导|career coaching|bootcamp/i.test(blob)) {
     return 'training_provider';
   }
   if (/\/(?:news|article|media|press)(?:\/|$)|新闻|转载|媒体报道/i.test(blob)) {
@@ -58,6 +60,20 @@ export function createOfficialVerificationAdapter({
       page = {},
     } = {}) {
       const finalUrl = page.finalUrl || page.url || candidate.url || '';
+      if (candidate.sourceTier === 'PLATFORM_ONLY') {
+        return Object.freeze({
+          pageType: 'JOB_LIST',
+          vacancyStatus: 'UNKNOWN',
+          atsType: '',
+          registrableDomain: registrableDomainOf(finalUrl),
+          evidence: Object.freeze([{
+            code: 'aggregator_domain',
+            observedValue: null,
+            sourceUrl: finalUrl || null,
+            observedAt: now(),
+          }]),
+        });
+      }
       const html = pageText(page);
       const classified = classifyPage({
         url: finalUrl,
@@ -128,10 +144,17 @@ export function createOfficialVerificationAdapter({
       if (officialDomainMatch) push('official_domain_match', finalDomain);
       else push('candidate_self_domain', finalDomain);
 
+      const officialSiteBacklink = candidate.officialSiteLinked === true
+        || page.officialSiteLinked === true
+        || (identity.strongEvidence || []).includes('official_site_links_surface');
+
       if (ats.ats) {
         const tenantVerified = candidate.verifiedTenant === true
           || (identity.strongEvidence || []).includes('verified_surface_registry');
         push(tenantVerified ? 'verified_ats_tenant' : 'ats_fingerprint_only', ats.ats);
+        if (tenantVerified && officialSiteBacklink) {
+          push('official_site_confirms_ats_tenant', ats.ats);
+        }
       }
       if (classified.pageRole !== 'UNKNOWN') push('recruitment_structure', classified.pageRole);
       if (
@@ -143,9 +166,7 @@ export function createOfficialVerificationAdapter({
         push('apply_action');
       }
       if (
-        candidate.officialSiteLinked === true
-        || page.officialSiteLinked === true
-        || (identity.strongEvidence || []).includes('official_site_links_surface')
+        officialSiteBacklink
       ) {
         push('official_site_backlink');
       }

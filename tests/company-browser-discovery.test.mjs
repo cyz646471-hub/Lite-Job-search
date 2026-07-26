@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildBrowserLaunchOptions,
+  browserDiscoveryLimits,
   buildDiscoveryReport,
   classifySearchResult,
+  createMinimumSearchIntervalGate,
   discoverCareerLinks,
   discoverCompanyWithBrowser,
   isSearchBlockedPage,
@@ -39,8 +42,9 @@ function fakeBrowser(pages) {
           return current.html || `<html><body>${current.text || ''}</body></html>`;
         },
         async evaluateAll() {
-          if (selector !== 'a[href]') return [];
-          return current.searchRows || current.links || [];
+          if (current.searchRows) return current.searchRows;
+          if (selector === 'a[href]') return current.links || [];
+          return [];
         },
       };
     },
@@ -189,7 +193,7 @@ test('rejects advertisements, news, and a main business home page', () => {
   assert.equal(classifySearchResult({ company, officialDomain, title: '小红书', url: 'https://www.xiaohongshu.com/', kind: 'organic' }).classification, 'REJECTED');
 });
 
-test('isolates matching Liepin and BOSS company pages as lead-only', () => {
+test('isolates matching Liepin and BOSS company pages as platform-only candidates', () => {
   const liepin = classifySearchResult({
     company: '希奥端', title: '希奥端招聘', url: 'https://www.liepin.com/company-jobs/13296749/', kind: 'organic',
   });
@@ -197,8 +201,12 @@ test('isolates matching Liepin and BOSS company pages as lead-only', () => {
     company: '希奥端', title: '希奥端招聘', url: 'https://www.zhipin.com/gongsir/abc.html', kind: 'organic',
   });
 
-  assert.deepEqual([liepin.classification, boss.classification], ['LEAD_ONLY', 'LEAD_ONLY']);
-  assert.equal(liepin.platform, 'Liepin');
+  assert.deepEqual([liepin.classification, boss.classification], [
+    'PLATFORM_CANDIDATE',
+    'PLATFORM_CANDIDATE',
+  ]);
+  assert.equal(liepin.sourceTier, 'PLATFORM_ONLY');
+  assert.equal(liepin.platform, 'LIEPIN');
   assert.equal(boss.platform, 'BOSS');
 });
 
@@ -240,7 +248,157 @@ test('reports completed and blocked companies without treating leads as official
 test('does not open ad or news search results in the browser', () => {
   assert.equal(shouldOpenSearchResult({ kind: 'advertisement' }), false);
   assert.equal(shouldOpenSearchResult({ kind: 'news' }), false);
-  assert.equal(shouldOpenSearchResult({ kind: 'organic' }), true);
+  assert.equal(shouldOpenSearchResult({ kind: 'organic', url: 'https://jobs.example.com/' }), true);
+  assert.equal(shouldOpenSearchResult({ kind: 'organic', url: 'javascript:void(0)' }), false);
+  assert.equal(shouldOpenSearchResult({ kind: 'organic', url: 'https://www.baidu.com/link?url=abc' }), true);
+  assert.equal(shouldOpenSearchResult({ kind: 'organic', url: 'https://www.baidu.com/s?wd=Example+Tech+jobs' }), false);
+  assert.equal(shouldOpenSearchResult({ kind: 'organic', url: 'https://www.baidu.com/other.php?url=ad-target' }), false);
+  assert.equal(shouldOpenSearchResult({ kind: 'organic', url: 'https://jobs.51job.com/example' }), false);
+  assert.equal(shouldOpenSearchResult({
+    company: '希奥端',
+    title: '希奥端招聘',
+    kind: 'organic',
+    url: 'https://www.liepin.com/company-jobs/13296749/',
+  }), true);
+  assert.equal(shouldOpenSearchResult({
+    company: '希奥端',
+    title: '南京希奥端分公司招聘',
+    kind: 'organic',
+    url: 'https://www.liepin.com/company-jobs/13296749/',
+  }), false);
+});
+
+test('inspects a matching platform company page without adding an official candidate', async () => {
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('希奥端 招聘')}`;
+  const platformUrl = 'https://www.liepin.com/company-jobs/13296749/';
+  const jobUrl = 'https://www.liepin.com/job/123/';
+  const browser = fakeBrowser({
+    [searchUrl]: {
+      text: '希奥端 招聘',
+      searchRows: [{
+        title: '希奥端招聘',
+        href: platformUrl,
+        snippet: '希奥端招聘职位',
+        kind: 'organic',
+      }],
+    },
+    [platformUrl]: {
+      title: '希奥端招聘',
+      text: '希奥端招聘 产品经理 南京',
+      links: [{ text: '产品经理', href: jobUrl }],
+    },
+  });
+
+  const result = await discoverCompanyWithBrowser({
+    company: '希奥端',
+    browser,
+  });
+
+  assert.equal(result.officialCandidates.length, 0);
+  assert.equal(result.platformCandidates.length, 1);
+  assert.equal(result.platformCandidates[0].sourceTier, 'PLATFORM_ONLY');
+  assert.equal(result.platformCandidates[0].verificationStatus, 'REVIEW');
+  assert.equal(result.platformCandidates[0].jobs[0].title, '产品经理');
+});
+
+test('resolves a Baidu result redirect before classifying the target page', async () => {
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('Example Tech 招聘')}`;
+  const redirectUrl = 'https://www.baidu.com/link?url=example-careers';
+  const careerUrl = 'https://jobs.example.com/openings';
+  const browser = fakeBrowser({
+    [searchUrl]: {
+      text: 'Example Tech 招聘',
+      searchRows: [{
+        title: 'Example Tech careers',
+        href: redirectUrl,
+        snippet: 'Example Tech careers',
+        kind: 'organic',
+      }],
+    },
+    [redirectUrl]: {
+      finalUrl: careerUrl,
+      title: 'Example Tech careers',
+      text: 'Example Tech 招聘职位列表',
+      links: [],
+    },
+  });
+
+  const result = await discoverCompanyWithBrowser({
+    company: 'Example Tech',
+    officialDomain: 'example.com',
+    browser,
+  });
+
+  assert.equal(browser.visits.filter((url) => url === redirectUrl).length, 1);
+  assert.equal(result.officialCandidates[0].url, careerUrl);
+  assert.equal(result.officialCandidates[0].sourceUrl, redirectUrl);
+  assert.equal(result.officialCandidates[0].classification, 'OFFICIAL_CANDIDATE');
+});
+
+test('opens a recruitment candidate only once and bounds candidate count', async () => {
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('Example Tech 招聘')}`;
+  const candidates = Array.from({ length: 6 }, (_, index) => ({
+    title: `Example Tech careers ${index}`,
+    href: `https://jobs${index}.example.com/careers`,
+    snippet: 'Example Tech careers',
+    kind: 'organic',
+  }));
+  const pages = {
+    [searchUrl]: { text: 'Example Tech 招聘', searchRows: candidates },
+  };
+  for (const row of candidates) {
+    pages[row.href] = { title: row.title, text: 'Example Tech 招聘 职位列表', links: [] };
+  }
+  const browser = fakeBrowser(pages);
+
+  const result = await discoverCompanyWithBrowser({
+    company: 'Example Tech',
+    browser,
+    maxResults: 10,
+    maxCandidates: 3,
+  });
+
+  assert.equal(result.officialCandidates.length, 3);
+  for (const row of candidates.slice(0, 3)) {
+    assert.equal(browser.visits.filter((url) => url === row.href).length, 1);
+  }
+  assert.equal(browser.visits.some((url) => url === candidates[3].href), false);
+});
+
+test('limits recruitment entry traversal to the configured page budget', async () => {
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('Budget Tech 招聘')}`;
+  const careerUrl = 'https://jobs.budget.example/careers';
+  const children = Array.from({ length: 6 }, (_, index) => ({
+    text: `岗位列表 ${index}`,
+    href: `https://jobs.budget.example/jobs/${index}`,
+  }));
+  const pages = {
+    [searchUrl]: {
+      text: 'Budget Tech 招聘',
+      searchRows: [{
+        title: 'Budget Tech careers',
+        href: careerUrl,
+        snippet: 'Budget Tech careers',
+        kind: 'organic',
+      }],
+    },
+    [careerUrl]: { title: 'Budget Tech careers', text: 'Budget Tech 招聘 职位列表', links: children },
+  };
+  for (const child of children) {
+    pages[child.href] = { title: child.text, text: 'Budget Tech 招聘 职位列表', links: [] };
+  }
+  const browser = fakeBrowser(pages);
+
+  const result = await discoverCompanyWithBrowser({
+    company: 'Budget Tech',
+    officialDomain: 'budget.example',
+    browser,
+    maxCareerEntries: 3,
+    maxDepth: 2,
+  });
+
+  assert.equal(result.observations.length, 3);
+  assert.equal(browser.visits.filter((url) => url.startsWith('https://jobs.budget.example/')).length, 3);
 });
 
 test('detects Baidu safety verification as blocked instead of an empty search', () => {
@@ -340,4 +498,66 @@ test('captures rendered DOM and explicit links for downstream verification', asy
   assert.equal(observation.fetchStatus, 'COMPLETED');
   assert.equal(observation.observedAt, now);
   assert.deepEqual(observation.links[0], { text: '校园招聘', href: campusUrl });
+});
+
+test('local worker uses visible Google Chrome by default', () => {
+  assert.deepEqual(buildBrowserLaunchOptions({}), {
+    channel: 'chrome',
+    headless: false,
+  });
+  assert.deepEqual(buildBrowserLaunchOptions({ headless: true }), {
+    channel: 'chrome',
+    headless: true,
+  });
+});
+
+test('local worker bounds navigation and recursion settings', () => {
+  assert.deepEqual(browserDiscoveryLimits({
+    'max-results': '50',
+    'max-candidates': '50',
+    'max-career-entries': '50',
+    'max-depth': '9',
+    'timeout-ms': '999999',
+    'search-delay-ms': '999999',
+    'max-companies-per-run': '999',
+  }), {
+    maxResults: 20,
+    maxCandidates: 5,
+    maxCareerEntries: 10,
+    maxDepth: 2,
+    timeoutMs: 30_000,
+    searchDelayMs: 60_000,
+    maxCompaniesPerRun: 100,
+  });
+});
+
+test('local worker defaults to a low-frequency 20-company search run', () => {
+  assert.deepEqual(browserDiscoveryLimits({}), {
+    maxResults: 10,
+    maxCandidates: 3,
+    maxCareerEntries: 5,
+    maxDepth: 2,
+    timeoutMs: 10_000,
+    searchDelayMs: 15_000,
+    maxCompaniesPerRun: 10,
+  });
+});
+
+test('minimum search interval gate delays only subsequent searches', async () => {
+  let clock = 1_000;
+  const waits = [];
+  const waitForSearchSlot = createMinimumSearchIntervalGate({
+    minimumIntervalMs: 15_000,
+    nowMs: () => clock,
+    sleep: async (milliseconds) => {
+      waits.push(milliseconds);
+      clock += milliseconds;
+    },
+  });
+
+  await waitForSearchSlot();
+  clock += 2_500;
+  await waitForSearchSlot();
+
+  assert.deepEqual(waits, [12_500]);
 });
