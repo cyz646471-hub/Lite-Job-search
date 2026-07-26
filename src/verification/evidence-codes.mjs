@@ -49,6 +49,16 @@ export const EVIDENCE_RULES = Object.freeze({
     weight: 0,
     identityAnchor: false,
   }),
+  company_brand_match: Object.freeze({
+    direction: 'NEUTRAL',
+    weight: 0,
+    identityAnchor: false,
+  }),
+  domain_bootstrap_confirmed: Object.freeze({
+    direction: 'NEUTRAL',
+    weight: 0,
+    identityAnchor: false,
+  }),
   llm_advisory: Object.freeze({
     direction: 'NEUTRAL',
     weight: 0,

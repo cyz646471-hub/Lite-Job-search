@@ -3,6 +3,7 @@ import { evaluateCandidateIdentity } from '../../../engine/upstream/planner/cn-i
 import { classifySurfacePage } from '../../../engine/upstream/planner/cn-surface-drill.mjs';
 import { registrableDomainOf } from '../../../engine/upstream/planner/cn-url-evidence.mjs';
 import { classifyRecruitmentUrl } from '../../../engine/upstream/planner/official-links.mjs';
+import { bootstrapOfficialDomain } from '../../verification/official-domain-bootstrap.mjs';
 
 const UNIVERSITY_HOSTS = ['ncss.cn', '91wllm.cn', '91wllm.com'];
 
@@ -88,6 +89,7 @@ export function createOfficialVerificationAdapter({
           vacancyStatus: 'UNKNOWN',
           atsType: '',
           registrableDomain: registrableDomainOf(finalUrl),
+          confirmedOfficialDomain: null,
           evidence: Object.freeze([{
             code: 'aggregator_domain',
             observedValue: null,
@@ -109,11 +111,27 @@ export function createOfficialVerificationAdapter({
         cookies: page.cookies || [],
         requests: page.requests || [],
       }) || { ats: '', confidence: 0 };
+      const existingOfficialDomains = [...new Set(company.officialDomains || [])];
+      const bootstrap = existingOfficialDomains.length
+        ? null
+        : bootstrapOfficialDomain({
+          company,
+          candidate,
+          page,
+          pageType: classified.pageRole,
+          atsType: ats.ats,
+        });
+      const confirmedOfficialDomain = bootstrap?.status === 'CONFIRMED'
+        ? bootstrap.registrableDomain
+        : null;
+      const effectiveOfficialDomains = confirmedOfficialDomain
+        ? [...new Set([...existingOfficialDomains, confirmedOfficialDomain])]
+        : existingOfficialDomains;
       const identity = evaluateIdentity({
         companyEntity: {
           canonicalName: company.canonicalName,
           brandNames: [company.canonicalName, ...(company.aliases || [])].filter(Boolean),
-          officialCorporateDomains: company.officialDomains || [],
+          officialCorporateDomains: effectiveOfficialDomains,
         },
         candidate: {
           ...candidate,
@@ -159,12 +177,16 @@ export function createOfficialVerificationAdapter({
       }
 
       const finalDomain = registrableDomainOf(finalUrl);
-      const officialDomainMatch = (company.officialDomains || [])
+      const officialDomainMatch = effectiveOfficialDomains
         .map(registrableDomainOf)
         .filter(Boolean)
         .includes(finalDomain);
       if (officialDomainMatch) push('official_domain_match', finalDomain);
       else push('candidate_self_domain', finalDomain);
+      if (confirmedOfficialDomain) {
+        push('company_brand_match', bootstrap.matchedSignals.join(','));
+        push('domain_bootstrap_confirmed', confirmedOfficialDomain);
+      }
 
       const officialSiteBacklink = candidate.officialSiteLinked === true
         || page.officialSiteLinked === true
@@ -174,7 +196,7 @@ export function createOfficialVerificationAdapter({
       );
       const officialAttributionConfirmed = candidate.parentOfficialVerified === true
         && Boolean(candidate.officialAttributionUrl)
-        && (company.officialDomains || [])
+        && effectiveOfficialDomains
           .map(registrableDomainOf)
           .filter(Boolean)
           .includes(officialAttributionDomain);
@@ -217,6 +239,7 @@ export function createOfficialVerificationAdapter({
         vacancyStatus: classified.vacancyStatus || 'UNKNOWN',
         atsType: ats.ats || '',
         registrableDomain: finalDomain,
+        confirmedOfficialDomain,
         evidence: Object.freeze(evidence),
       });
     },

@@ -76,6 +76,27 @@ test('known official domain becomes an independent anchor', async () => {
   assert.ok(!result.evidence.some((item) => item.code === 'candidate_self_domain'));
 });
 
+test('empty-domain first-party page returns a confirmed official domain with audit evidence', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '米哈游', aliases: [], officialDomains: [] },
+    candidate: { url: 'https://jobs.mihoyo.com/' },
+    page: {
+      status: 200,
+      finalUrl: 'https://jobs.mihoyo.com/',
+      title: '米哈游招聘',
+      html: '<main><h1>加入米哈游</h1><p>开放职位</p></main>',
+      parsed: { pageRole: 'CAREER_HOME' },
+    },
+  });
+
+  assert.equal(result.confirmedOfficialDomain, 'mihoyo.com');
+  assert.ok(result.evidence.some((item) => item.code === 'official_domain_match'));
+  assert.ok(result.evidence.some((item) => item.code === 'company_brand_match'));
+  assert.ok(result.evidence.some((item) => item.code === 'domain_bootstrap_confirmed'));
+  assert.ok(!result.evidence.some((item) => item.code === 'candidate_self_domain'));
+});
+
 test('ATS tenant requires directed attribution from a verified official page', async () => {
   const adapter = createVerificationAdapter();
   const result = await adapter.inspect({
@@ -134,6 +155,7 @@ test('candidate domain without prior company evidence does not self-verify', asy
 
   assert.ok(result.evidence.some((item) => item.code === 'candidate_self_domain'));
   assert.ok(!result.evidence.some((item) => item.code === 'official_domain_match'));
+  assert.equal(result.confirmedOfficialDomain, null);
 });
 
 test('aggregator hard rejection is emitted before ATS evidence', async () => {
