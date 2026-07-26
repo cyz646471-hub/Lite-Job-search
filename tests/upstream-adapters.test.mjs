@@ -192,6 +192,59 @@ test('employee development language on an official recruitment surface is not a 
   assert.ok(result.evidence.some((item) => item.code === 'recruitment_structure'));
 });
 
+test('news navigation on a first-party recruitment page is not a news reprint', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '极飞科技', officialDomains: ['xa.com'] },
+    candidate: { url: 'https://www.xa.com/about/career' },
+    page: {
+      status: 200,
+      finalUrl: 'https://www.xa.com/about/career',
+      title: '极飞科技招聘',
+      html: '<main><h1>加入我们</h1><p>开放职位</p></main><nav>公司新闻</nav>',
+      parsed: { pageRole: 'CAREER_HOME' },
+    },
+  });
+
+  assert.ok(!result.evidence.some((item) => item.code === 'news_reprint'));
+  assert.ok(result.evidence.some((item) => item.code === 'recruitment_structure'));
+});
+
+test('employee courses on a first-party career page are not a training provider', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '完美世界', officialDomains: ['wanmei.com'] },
+    candidate: { url: 'https://jobs.games.wanmei.com/school.html' },
+    page: {
+      status: 200,
+      finalUrl: 'https://jobs.games.wanmei.com/school.html',
+      title: '完美世界校园招聘',
+      html: '<main><h1>校园招聘</h1><p>员工课程与人才发展</p></main>',
+      parsed: { pageRole: 'CAMPAIGN' },
+    },
+  });
+
+  assert.ok(!result.evidence.some((item) => item.code === 'training_provider'));
+  assert.ok(result.evidence.some((item) => item.code === 'recruitment_structure'));
+});
+
+test('article-shaped recruitment repost remains a news reprint', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '示例科技', officialDomains: [] },
+    candidate: { url: 'https://media.example/news/2026-campus-recruitment' },
+    page: {
+      status: 200,
+      finalUrl: 'https://media.example/news/2026-campus-recruitment',
+      title: '示例科技招聘新闻转载',
+      html: '<main><h1>示例科技招聘新闻转载</h1><p>招聘职位</p></main>',
+      parsed: { pageRole: 'CAMPAIGN' },
+    },
+  });
+
+  assert.ok(result.evidence.some((item) => item.code === 'news_reprint'));
+});
+
 test('commercial career coaching remains a training-provider rejection', async () => {
   const adapter = createVerificationAdapter();
   const result = await adapter.inspect({

@@ -18,21 +18,43 @@ function hostMatches(host, domain) {
   return host === domain || host.endsWith(`.${domain}`);
 }
 
+function headingOf(html, level = 'h1') {
+  return String(html || '').match(new RegExp(
+    `<${level}\\b[^>]*>([\\s\\S]*?)<\\/${level}>`,
+    'i',
+  ))?.[1]
+    ?.replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim() || '';
+}
+
 function hardNegativeCode(url, page = {}) {
   const host = hostOf(url);
-  const blob = `${url} ${page.title || ''} ${page.html || page.body || ''}`.slice(0, 20_000);
+  const pathname = (() => {
+    try {
+      return new URL(url).pathname.toLowerCase();
+    } catch {
+      return '';
+    }
+  })();
+  const html = page.html || page.body || '';
+  const title = String(page.title || titleOf(html));
+  const h1 = String(page.h1 || headingOf(html));
+  const primaryText = `${title} ${h1}`;
   if (UNIVERSITY_HOSTS.some((domain) => hostMatches(host, domain)) || /\.edu\.cn$/i.test(host)) {
     return 'university_employment_site';
   }
-  // Generic employee-development language is common on legitimate career sites.
-  // Reject only explicit commercial training-provider surfaces, not a lone “培训”.
-  if (/培训机构|职业培训|培训学校|培训中心|课程|训练营|付费内推|求职辅导|career coaching|bootcamp/i.test(blob)) {
-    return 'training_provider';
-  }
-  if (/\/(?:news|article|media|press)(?:\/|$)|新闻|转载|媒体报道/i.test(blob)) {
+  if (classifyRecruitmentUrl(url).channel === 'discovery_index') return 'aggregator_domain';
+  const newsPath = /\/(?:news|article|media|press)(?:\/|$)/i.test(pathname);
+  const newsHeading = /新闻|转载|媒体报道|press release|news article/i.test(primaryText);
+  if (newsPath && newsHeading) {
     return 'news_reprint';
   }
-  if (classifyRecruitmentUrl(url).channel === 'discovery_index') return 'aggregator_domain';
+  const trainingPath = /\/(?:career-)?(?:training|coaching|bootcamp|peixun)(?:\/|$)/i
+    .test(pathname);
+  const trainingHeading = /培训机构|职业培训|求职培训|培训学校|培训中心|训练营|付费内推|求职辅导|career coaching|bootcamp/i
+    .test(primaryText);
+  if (trainingPath || trainingHeading) return 'training_provider';
   return '';
 }
 
