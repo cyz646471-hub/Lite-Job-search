@@ -591,6 +591,7 @@ test('local worker bounds navigation and recursion settings', () => {
     'max-depth': '9',
     'timeout-ms': '999999',
     'search-delay-ms': '999999',
+    'search-jitter-ms': '999999',
     'max-companies-per-run': '999',
   }), {
     maxResults: 20,
@@ -599,18 +600,20 @@ test('local worker bounds navigation and recursion settings', () => {
     maxDepth: 2,
     timeoutMs: 30_000,
     searchDelayMs: 60_000,
+    searchJitterMs: 60_000,
     maxCompaniesPerRun: 100,
   });
 });
 
-test('local worker defaults to a low-frequency 20-company search run', () => {
+test('local worker defaults to a low-frequency 10-company search run', () => {
   assert.deepEqual(browserDiscoveryLimits({}), {
     maxResults: 10,
     maxCandidates: 3,
     maxCareerEntries: 5,
     maxDepth: 2,
     timeoutMs: 10_000,
-    searchDelayMs: 15_000,
+    searchDelayMs: 10_000,
+    searchJitterMs: 20_000,
     maxCompaniesPerRun: 10,
   });
 });

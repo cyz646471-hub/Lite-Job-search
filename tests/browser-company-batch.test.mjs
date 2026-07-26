@@ -93,7 +93,43 @@ test('blocked browser search is checkpointed without ingestion', async (t) => {
   });
 
   assert.equal(ingested, false);
-  assert.equal(result.status, 'COMPLETE_WITH_ERRORS');
+  assert.equal(result.status, 'PAUSED');
+  assert.equal(result.failed, 0);
+  assert.equal(result.deferred, 1);
+  assert.equal(result.items[0].status, 'DEFERRED');
   assert.equal(result.items[0].resultStatus, 'BLOCKED');
   assert.match(result.items[0].errorMessage, /search_challenge_or_access_blocked/);
+});
+
+test('browser batch stops after the first search challenge and checkpoints remaining companies', async (t) => {
+  const repository = await createRepository(t);
+  const searched = [];
+
+  const result = await runBrowserCompanyBatch({
+    batchId: 'browser-circuit-breaker',
+    companies: [
+      { company: 'Blocked Co' },
+      { company: 'Must Stay Pending Co' },
+    ],
+  }, {
+    repository,
+    discoverCompany: async (company) => {
+      searched.push(company.company);
+      return {
+        company: company.company,
+        status: 'BLOCKED',
+        reasonCode: 'search_challenge_or_access_blocked',
+      };
+    },
+    ingestCompany: async () => ({ status: 'COMPLETE' }),
+  });
+
+  assert.deepEqual(searched, ['Blocked Co']);
+  assert.equal(result.status, 'PAUSED');
+  assert.equal(result.failed, 0);
+  assert.equal(result.deferred, 1);
+  assert.equal(result.pending, 1);
+  assert.equal(result.items[0].status, 'DEFERRED');
+  assert.equal(result.items[1].status, 'PENDING');
+  assert.equal(repository.getProviderCircuitState('baidu').state, 'OPEN');
 });

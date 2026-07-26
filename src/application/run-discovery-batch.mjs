@@ -29,6 +29,10 @@ export async function runDiscoveryBatch({
   batchId,
   items = [],
   retryFailed = false,
+  retryDeferred = false,
+  stopOnResultStatuses = [],
+  maxItemsPerRun = Number.POSITIVE_INFINITY,
+  pauseBeforeRun = false,
 } = {}, {
   repository,
   runItem,
@@ -49,32 +53,64 @@ export async function runDiscoveryBatch({
     inputHash: hash(items),
     startedAt: now(),
   });
+  const stopStatuses = new Set(stopOnResultStatuses.map(String));
+  const itemBudget = Number.isFinite(Number(maxItemsPerRun))
+    ? Math.max(1, Math.trunc(Number(maxItemsPerRun)))
+    : Number.POSITIVE_INFINITY;
+  const initialCheckpoints = items.map((input, position) => repository.ensureBatchItem({
+    batchId,
+    itemKey: itemKeys[position],
+    position,
+    input,
+    createdAt: now(),
+  }));
+  let attempted = 0;
+  let paused = pauseBeforeRun === true;
 
   for (const [position, input] of items.entries()) {
+    if (paused) break;
     const itemKey = itemKeys[position];
-    const checkpoint = repository.ensureBatchItem({
-      batchId,
-      itemKey,
-      position,
-      input,
-      createdAt: now(),
-    });
+    const checkpoint = initialCheckpoints[position];
     if (checkpoint.status === 'SUCCEEDED') continue;
     if (checkpoint.status === 'FAILED' && !retryFailed) continue;
+    if (checkpoint.status === 'DEFERRED' && !retryDeferred) continue;
+    if (attempted >= itemBudget) {
+      paused = true;
+      break;
+    }
 
+    attempted += 1;
     repository.startBatchItem({ batchId, itemKey, startedAt: now() });
     try {
       const result = await runItem(input, { batchId, itemKey, position });
-      const failed = FAILURE_STATUSES.has(result?.status);
+      const resultStatus = result?.status || 'FAILED';
+      if (resultStatus === 'BLOCKED') {
+        repository.deferBatchItem({
+          batchId,
+          itemKey,
+          resultStatus,
+          retryClass: 'PROVIDER_BLOCKED',
+          deferredUntil: null,
+          errorMessage: boundedError(result?.reason || resultStatus),
+          completedAt: now(),
+        });
+        paused = true;
+        break;
+      }
+      const failed = FAILURE_STATUSES.has(resultStatus);
       repository.completeBatchItem({
         batchId,
         itemKey,
         status: failed ? 'FAILED' : 'SUCCEEDED',
-        resultStatus: result?.status || 'FAILED',
+        resultStatus,
         discoveryRunId: result?.runId || null,
-        errorMessage: failed ? boundedError(result?.reason || result?.status) : null,
+        errorMessage: failed ? boundedError(result?.reason || resultStatus) : null,
         completedAt: now(),
       });
+      if (stopStatuses.has(resultStatus)) {
+        paused = true;
+        break;
+      }
     } catch (error) {
       repository.completeBatchItem({
         batchId,
@@ -91,8 +127,13 @@ export async function runDiscoveryBatch({
   const checkpoints = repository.listBatchItems(batchId);
   const succeeded = checkpoints.filter((item) => item.status === 'SUCCEEDED').length;
   const failed = checkpoints.filter((item) => item.status === 'FAILED').length;
-  const pending = checkpoints.length - succeeded - failed;
-  const status = failed > 0
+  const deferred = checkpoints.filter((item) => item.status === 'DEFERRED').length;
+  const pending = checkpoints.filter((item) => (
+    ['PENDING', 'RUNNING'].includes(item.status)
+  )).length;
+  const status = paused && (pending + deferred) > 0
+    ? 'PAUSED'
+    : failed > 0
     ? 'COMPLETE_WITH_ERRORS'
     : pending > 0
       ? 'PARTIAL'
@@ -104,6 +145,7 @@ export async function runDiscoveryBatch({
     total: checkpoints.length,
     succeeded,
     failed,
+    deferred,
     pending,
     items: Object.freeze(checkpoints),
   });

@@ -11,6 +11,10 @@ import {
 import { createPlaywrightBrowserSession } from '../src/adapters/browser/playwright-browser-session.mjs';
 import { observeRenderedRecruitmentPage } from '../src/adapters/browser/recruitment-page-observer.mjs';
 import { inspectPlatformCompanyPage } from '../src/adapters/platform/company-platform-page-adapter.mjs';
+import {
+  createAdaptiveSearchIntervalGate,
+  resumeProviderCircuit,
+} from '../src/application/browser-search-circuit-breaker.mjs';
 import { runBrowserCompanyBatch } from '../src/application/run-browser-company-batch.mjs';
 import {
   discoverRecruitmentEntries,
@@ -289,6 +293,7 @@ export function buildBrowserRunReport({
       total: Number(batch.total) || companyResults.length,
       succeeded: Number(batch.succeeded) || 0,
       failed: Number(batch.failed) || 0,
+      deferred: Number(batch.deferred) || 0,
       pending: Number(batch.pending) || 0,
     }),
     discovery: Object.freeze({
@@ -656,7 +661,8 @@ export function browserDiscoveryLimits(args = {}) {
     maxCareerEntries: boundedInteger(args['max-career-entries'], 5, 1, 10),
     maxDepth: boundedInteger(args['max-depth'], 2, 0, 2),
     timeoutMs: boundedInteger(args['timeout-ms'], 10_000, 1_000, 30_000),
-    searchDelayMs: boundedInteger(args['search-delay-ms'], 15_000, 3_000, 60_000),
+    searchDelayMs: boundedInteger(args['search-delay-ms'], 10_000, 10_000, 60_000),
+    searchJitterMs: boundedInteger(args['search-jitter-ms'], 20_000, 0, 60_000),
     maxCompaniesPerRun: boundedInteger(args['max-companies-per-run'], 10, 1, 100),
   });
 }
@@ -666,15 +672,12 @@ export function createMinimumSearchIntervalGate({
   nowMs = () => Date.now(),
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
-  let lastSearchStartedAt = null;
-  return async function waitForSearchSlot() {
-    const current = Number(nowMs());
-    if (lastSearchStartedAt !== null) {
-      const remaining = Math.max(0, minimumIntervalMs - (current - lastSearchStartedAt));
-      if (remaining > 0) await sleep(remaining);
-    }
-    lastSearchStartedAt = Number(nowMs());
-  };
+  return createAdaptiveSearchIntervalGate({
+    minimumIntervalMs,
+    jitterMs: 0,
+    nowMs,
+    sleep,
+  });
 }
 
 export function buildBrowserLaunchOptions(args = {}) {
@@ -694,24 +697,59 @@ function parseArgs(argv) {
     const key = argv[index];
     if (!key.startsWith('--')) continue;
     const name = key.slice(2);
-    values[name] = ['headful', 'headless', 'retry-failed'].includes(name) ? true : argv[++index];
+    values[name] = ['headful', 'headless', 'retry-failed', 'health-probe'].includes(name)
+      ? true
+      : argv[++index];
   }
   return values;
+}
+
+export async function probeBaiduSearchHealth({
+  browser,
+  timeoutMs = 10_000,
+} = {}) {
+  if (!browser) throw new Error('browser is required');
+  const page = await browser.newPage();
+  try {
+    await page.goto(`https://www.baidu.com/s?wd=${encodeURIComponent('招聘')}`, {
+      waitUntil: 'domcontentloaded',
+      timeout: timeoutMs,
+    });
+    await page.waitForTimeout(400);
+    const bodyText = typeof page.readBodyText === 'function'
+      ? await page.readBodyText()
+      : await page.locator('body').innerText({ timeout: timeoutMs }).catch(() => '');
+    if (isSearchBlockedPage(bodyText)) {
+      return { healthy: false, reasonCode: 'search_challenge_or_access_blocked' };
+    }
+    const rows = await readSearchRows(page, 1);
+    return rows.length
+      ? { healthy: true, reasonCode: null }
+      : { healthy: false, reasonCode: 'search_results_unreadable' };
+  } catch {
+    return { healthy: false, reasonCode: 'health_probe_navigation_failed' };
+  } finally {
+    await page.close();
+  }
 }
 
 async function runCli() {
   const runtimeProcess = globalThis.process;
   const args = parseArgs(runtimeProcess?.argv?.slice(2) || []);
-  if (args.help || !args.input || !args['output-dir']) {
-    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--profile-dir data/local-chrome-worker-profile] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 15000] [--max-companies-per-run 10] [--headless]\n');
+  const healthProbeMode = Boolean(args['resume-provider'] && args['health-probe']);
+  if (args.help || (!healthProbeMode && (!args.input || !args['output-dir']))) {
+    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--profile-dir data/local-chrome-worker-profile] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 10000] [--search-jitter-ms 20000] [--max-companies-per-run 10] [--headless]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/local-chrome-worker-profile]\n');
     return args.help ? 0 : 2;
   }
-  let input;
-  try { input = JSON.parse(await fs.readFile(args.input, 'utf8')); }
-  catch (error) { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'input_read_failed', error: String(error?.message || error) })}\n`); return 2; }
-  const companies = normalizeBrowserCompanyInput(input);
-  if (!companies.length || !companies.every((item) => item.company)) {
-    process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'invalid_company_input' })}\n`); return 2;
+  let companies = [];
+  if (!healthProbeMode) {
+    let input;
+    try { input = JSON.parse(await fs.readFile(args.input, 'utf8')); }
+    catch (error) { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'input_read_failed', error: String(error?.message || error) })}\n`); return 2; }
+    companies = normalizeBrowserCompanyInput(input);
+    if (!companies.length || !companies.every((item) => item.company)) {
+      process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'invalid_company_input' })}\n`); return 2;
+    }
   }
   let chromium;
   try { ({ chromium } = await import('playwright')); }
@@ -732,8 +770,23 @@ async function runCli() {
   repository.migrate();
   try {
     const limits = browserDiscoveryLimits(args);
-    const waitForSearchSlot = createMinimumSearchIntervalGate({
+    if (healthProbeMode) {
+      const circuit = await resumeProviderCircuit({
+        provider: args['resume-provider'],
+        healthProbe: () => probeBaiduSearchHealth({
+          browser,
+          timeoutMs: limits.timeoutMs,
+        }),
+      }, { repository });
+      process.stdout.write(`${JSON.stringify({
+        status: circuit.state === 'CLOSED' ? 'HEALTHY' : 'BLOCKED',
+        providerCircuit: circuit,
+      })}\n`);
+      return circuit.state === 'CLOSED' ? 0 : 1;
+    }
+    const waitForSearchSlot = createAdaptiveSearchIntervalGate({
       minimumIntervalMs: limits.searchDelayMs,
+      jitterMs: limits.searchJitterMs,
     });
     const batchId = args['batch-id'] || `browser-${createHash('sha256')
       .update(JSON.stringify(companies.map((item) => ({

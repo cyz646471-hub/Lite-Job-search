@@ -18,6 +18,9 @@ function memoryCheckpointRepository() {
     completeBatchItem({ itemKey, ...updates }) {
       Object.assign(items.get(itemKey), updates);
     },
+    deferBatchItem({ itemKey, ...updates }) {
+      Object.assign(items.get(itemKey), { ...updates, status: 'DEFERRED' });
+    },
     listBatchItems: () => [...items.values()],
     completeBatch: (batch) => batch,
   };
@@ -94,4 +97,78 @@ test('batch rejects duplicate stable item ids', async () => {
     }),
     /duplicate batch item key/,
   );
+});
+
+test('batch pauses with remaining items pending after a configured result status', async () => {
+  const repository = memoryCheckpointRepository();
+  const calls = [];
+
+  const report = await runDiscoveryBatch({
+    batchId: 'batch-circuit-breaker',
+    items: [{ id: 'one' }, { id: 'two' }, { id: 'three' }],
+    stopOnResultStatuses: ['BLOCKED'],
+  }, {
+    repository,
+    runItem: async (item) => {
+      calls.push(item.id);
+      return { status: item.id === 'two' ? 'BLOCKED' : 'COMPLETE' };
+    },
+  });
+
+  assert.deepEqual(calls, ['one', 'two']);
+  assert.equal(report.status, 'PAUSED');
+  assert.equal(report.succeeded, 1);
+  assert.equal(report.failed, 0);
+  assert.equal(report.deferred, 1);
+  assert.equal(report.pending, 1);
+  assert.equal(report.items[1].status, 'DEFERRED');
+  assert.equal(report.items[2].status, 'PENDING');
+});
+
+test('retryFailed never retries a deferred item', async () => {
+  const repository = memoryCheckpointRepository();
+  const input = {
+    batchId: 'batch-deferred-resume',
+    items: [{ id: 'blocked' }, { id: 'later' }],
+    stopOnResultStatuses: ['BLOCKED'],
+  };
+  await runDiscoveryBatch(input, {
+    repository,
+    runItem: async () => ({ status: 'BLOCKED', reason: 'challenge' }),
+  });
+
+  const calls = [];
+  const report = await runDiscoveryBatch({ ...input, retryFailed: true }, {
+    repository,
+    runItem: async (item) => {
+      calls.push(item.id);
+      return { status: 'COMPLETE' };
+    },
+  });
+
+  assert.deepEqual(calls, ['later']);
+  assert.equal(report.deferred, 1);
+});
+
+test('batch limits attempted items per run and leaves the rest pending', async () => {
+  const repository = memoryCheckpointRepository();
+  const calls = [];
+
+  const report = await runDiscoveryBatch({
+    batchId: 'batch-run-budget',
+    items: [{ id: 'one' }, { id: 'two' }, { id: 'three' }],
+    maxItemsPerRun: 2,
+  }, {
+    repository,
+    runItem: async (item) => {
+      calls.push(item.id);
+      return { status: 'COMPLETE' };
+    },
+  });
+
+  assert.deepEqual(calls, ['one', 'two']);
+  assert.equal(report.status, 'PAUSED');
+  assert.equal(report.succeeded, 2);
+  assert.equal(report.failed, 0);
+  assert.equal(report.pending, 1);
 });

@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
 
+import {
+  createClosedCircuit,
+  transitionCircuit,
+} from './browser-search-circuit-breaker.mjs';
 import { runDiscoveryBatch } from './run-discovery-batch.mjs';
 
 function companyItemId(company = {}) {
@@ -17,7 +21,9 @@ export async function runBrowserCompanyBatch({
   batchId,
   companies = [],
   retryFailed = false,
+  maxCompaniesPerRun = 20,
   runOptions = {},
+  provider = 'baidu',
 } = {}, {
   repository,
   discoverCompany,
@@ -41,11 +47,19 @@ export async function runBrowserCompanyBatch({
   });
   const companyResults = [];
   const discoveryRuns = [];
+  let circuit = repository.getProviderCircuitState(provider)
+    || createClosedCircuit(provider, now());
+  const pauseBeforeRun = circuit.state !== 'CLOSED';
+  const retryDeferred = circuit.state === 'CLOSED' && Boolean(circuit.lastHealthyAt);
 
   const batch = await runDiscoveryBatch({
     batchId,
     items,
     retryFailed,
+    retryDeferred,
+    pauseBeforeRun,
+    maxItemsPerRun: maxCompaniesPerRun,
+    stopOnResultStatuses: ['BLOCKED'],
   }, {
     repository,
     now,
@@ -53,6 +67,11 @@ export async function runBrowserCompanyBatch({
       const companyResult = await discoverCompany(company);
       companyResults.push(companyResult);
       if (companyResult?.status === 'BLOCKED') {
+        circuit = transitionCircuit(circuit, {
+          type: 'BLOCKED',
+          reasonCode: companyResult.reasonCode || 'browser_search_blocked',
+        }, now());
+        repository.saveProviderCircuitState(circuit);
         return {
           status: 'BLOCKED',
           reason: companyResult.reasonCode || 'browser_search_blocked',
@@ -75,6 +94,7 @@ export async function runBrowserCompanyBatch({
 
   return Object.freeze({
     ...batch,
+    providerCircuit: repository.getProviderCircuitState(provider) || circuit,
     companyResults: Object.freeze(companyResults),
     discoveryRuns: Object.freeze(discoveryRuns),
   });
