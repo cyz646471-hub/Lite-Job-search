@@ -80,31 +80,13 @@ export async function createBrowserRuntime({
   mode = 'persistent-chrome',
   chrome = null,
   chromium = null,
-  cdpEndpoint = '',
   profileDir,
   headless = false,
 } = {}) {
   if (mode === 'normal-chrome') {
     if (chrome) return createChromeExtensionBrowser(chrome);
-    if (cdpEndpoint && typeof chromium?.connectOverCDP === 'function') {
-      const connectedBrowser = await chromium.connectOverCDP(cdpEndpoint);
-      const context = connectedBrowser.contexts?.()[0];
-      if (!context) {
-        const error = new Error('normal Chrome CDP endpoint has no browser context');
-        error.code = 'NOT_CONFIGURED';
-        throw error;
-      }
-      return createPlaywrightBrowserSession(context, {
-        closeContext: false,
-        onClose: typeof connectedBrowser.disconnect === 'function'
-          ? () => connectedBrowser.disconnect()
-          : null,
-      });
-    }
     {
-      const error = new Error(
-        'normal Chrome requires an extension binding or explicit CDP endpoint',
-      );
+      const error = new Error('normal Chrome requires an extension binding');
       error.code = 'NOT_CONFIGURED';
       throw error;
     }

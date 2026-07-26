@@ -335,3 +335,67 @@ test('persists an isolated platform fallback when no official portal is usable',
   assert.equal(repository.listJobOpenings()[0].title, '产品经理');
   assert.equal(result.report.quality.platformOnlyAcceptanceCount, 1);
 });
+
+test('rolls back official and platform snapshots together when fallback persistence fails', async (t) => {
+  const repository = await createRepository(t);
+  let snapshotCount = 0;
+  const failingRepository = {
+    ...repository,
+    persistCompanySnapshot(snapshot) {
+      snapshotCount += 1;
+      if (snapshotCount === 2) throw new Error('platform snapshot failure');
+      return repository.persistCompanySnapshot(snapshot);
+    },
+  };
+  const officialUrl = 'https://jobs.example.com/campus';
+  const platformUrl = 'https://www.liepin.com/company-jobs/13296749/';
+  const result = await ingestBrowserCompanyResult({
+    companyResult: {
+      company: '希奥端',
+      officialDomain: 'example.com',
+      query: '希奥端 招聘',
+      status: 'COMPLETED',
+      officialCandidates: [{
+        classification: 'OFFICIAL_CANDIDATE',
+        title: '希奥端校园招聘',
+        url: officialUrl,
+      }],
+      platformCandidates: [{
+        title: '希奥端招聘',
+        url: platformUrl,
+        platform: 'LIEPIN',
+        platformIdentityConfirmed: true,
+        confidenceScore: 49,
+        jobs: [{
+          title: '产品经理',
+          jobDetailUrl: 'https://www.liepin.com/job/123/',
+          sourceUrl: 'https://www.liepin.com/job/123/',
+        }],
+      }],
+      observations: [{
+        requestedUrl: officialUrl,
+        finalUrl: officialUrl,
+        status: 200,
+        title: '希奥端校园招聘',
+        text: '校园招聘 暂无职位',
+        html: '<main>校园招聘 暂无职位</main>',
+        links: [],
+        vacancyStatus: 'NO_OPENINGS',
+        observedAt: NOW,
+      }],
+      failures: [],
+    },
+    role: '公开招聘岗位',
+  }, {
+    repository: failingRepository,
+    now: () => NOW,
+  });
+
+  assert.equal(result.status, 'FAILED');
+  assert.deepEqual(result.report.recruitmentEvents, []);
+  assert.deepEqual(result.report.extractedJobs, []);
+  assert.equal(repository.listCompanies().length, 0);
+  assert.equal(repository.listCareerPortals().length, 0);
+  assert.equal(repository.listRecruitmentEvents().length, 0);
+  assert.equal(repository.listJobOpenings().length, 0);
+});

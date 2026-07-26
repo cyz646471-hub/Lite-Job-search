@@ -493,7 +493,7 @@ export async function discoverCompanyWithBrowser({
       ? await page.readBodyText()
       : await page.locator('body').innerText({ timeout: timeoutMs }).catch(() => '');
     const searchStatus = Number(searchResponse?.status?.()) || 200;
-    const searchFinalUrl = page.url();
+    const searchFinalUrl = await page.url();
     if (isSearchBlockedPage(bodyText, {
       status: searchStatus,
       url: searchFinalUrl,
@@ -554,7 +554,7 @@ export async function discoverCompanyWithBrowser({
       try {
         response = await page.goto(row.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
         await page.waitForTimeout(400);
-        finalUrl = page.url();
+        finalUrl = await page.url();
       } catch (error) {
         failures.push({ stage: 'open_search_result', url: row.href, reasonCode: 'result_navigation_failed', error: String(error?.message || error) });
         continue;
@@ -851,7 +851,7 @@ async function runCli() {
   const args = parseArgs(runtimeProcess?.argv?.slice(2) || []);
   const healthProbeMode = Boolean(args['resume-provider'] && args['health-probe']);
   if (args.help || (!healthProbeMode && (!args.input || !args['output-dir']))) {
-    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--xlsx-output outputs/student-applications.xlsx] [--browser-mode persistent-chrome|normal-chrome] [--profile-dir data/local-chrome-worker-profile] [--cdp-endpoint http://127.0.0.1:9222] [--chrome-binding-module path/to/binding.mjs] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 10000] [--search-jitter-ms 20000] [--max-companies-per-run 10] [--headless]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/local-chrome-worker-profile]\n');
+    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--xlsx-output outputs/student-applications.xlsx] [--browser-mode persistent-chrome|normal-chrome] [--profile-dir data/local-chrome-worker-profile] [--chrome-binding-module path/to/binding.mjs] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 10000] [--search-jitter-ms 20000] [--max-companies-per-run 10] [--headless]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/local-chrome-worker-profile]\n');
     return args.help ? 0 : 2;
   }
   let companies = [];
@@ -866,7 +866,7 @@ async function runCli() {
   }
   const browserMode = String(args['browser-mode'] || 'persistent-chrome');
   let chromium = null;
-  if (browserMode === 'persistent-chrome' || args['cdp-endpoint']) {
+  if (browserMode === 'persistent-chrome') {
     try { ({ chromium } = await import('playwright')); }
     catch (error) { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'playwright_not_available', error: String(error?.message || error) })}\n`); return 2; }
   }
@@ -880,7 +880,6 @@ async function runCli() {
       mode: browserMode,
       chrome,
       chromium,
-      cdpEndpoint: args['cdp-endpoint'] || '',
       profileDir,
       headless: buildBrowserLaunchOptions(args).headless,
     });

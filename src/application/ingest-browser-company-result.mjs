@@ -295,6 +295,81 @@ function appendPlatformFallbacks(result, snapshots) {
   });
 }
 
+function createCompanyAtomicStagingRepository(baseRepository) {
+  const snapshotsByPortalId = new Map();
+  return Object.freeze({
+    repository: Object.freeze({
+      ...baseRepository,
+      persistCompanySnapshot(snapshot) {
+        snapshotsByPortalId.set(snapshot.portal.id, snapshot);
+        return snapshot.company;
+      },
+    }),
+    add(snapshot) {
+      snapshotsByPortalId.set(snapshot.portal.id, snapshot);
+    },
+    flush() {
+      return baseRepository.withTransaction(() => {
+        for (const snapshot of snapshotsByPortalId.values()) {
+          baseRepository.persistCompanySnapshot(snapshot);
+        }
+      });
+    },
+  });
+}
+
+function zeroRatio() {
+  return Object.freeze({ numerator: 0, denominator: 0, value: null });
+}
+
+function failedAtomicPersistenceResult(result, error) {
+  const report = result.report;
+  const extractionDenominator = Number(
+    report.quality.officialJobExtractionSuccessRate?.denominator,
+  ) || 0;
+  const extractionRate = Object.freeze({
+    numerator: 0,
+    denominator: extractionDenominator,
+    value: extractionDenominator ? 0 : null,
+  });
+  return Object.freeze({
+    ...result,
+    status: 'FAILED',
+    companiesDiscovered: 0,
+    portalsVerified: 0,
+    jobsStored: 0,
+    usableApplyEntries: 0,
+    report: Object.freeze({
+      ...report,
+      recruitmentEvents: Object.freeze([]),
+      extractedJobs: Object.freeze([]),
+      officialVerifiedCount: 0,
+      extractedJobCount: 0,
+      activeRecruitmentEntryCount: 0,
+      failures: Object.freeze([
+        ...report.failures,
+        Object.freeze({
+          stage: 'company_snapshot_persistence',
+          code: 'FAILED',
+          provider: null,
+          query: null,
+          message: String(error?.message || error || 'snapshot persistence failed').slice(0, 240),
+          url: null,
+        }),
+      ]),
+      quality: Object.freeze({
+        ...report.quality,
+        officialJobExtractionSuccessRate: extractionRate,
+        jobExtractionSuccessRate: extractionRate,
+        platformOnlyAcceptanceCount: 0,
+        missingStartDateRate: zeroRatio(),
+        missingCloseDateRate: zeroRatio(),
+        missingLocationRate: zeroRatio(),
+      }),
+    }),
+  });
+}
+
 export async function ingestBrowserCompanyResult({
   companyResult,
   role = '公开招聘岗位',
@@ -320,6 +395,7 @@ export async function ingestBrowserCompanyResult({
     resolvePageProvider,
     now,
   });
+  const staged = createCompanyAtomicStagingRepository(repository);
 
   const result = await discoverMarketJobs({
     market: 'CN',
@@ -329,7 +405,7 @@ export async function ingestBrowserCompanyResult({
     freshnessDays: Math.max(1, Number(freshnessDays) || 90),
     targetCount: Math.max(1, Number(targetCount) || 1000),
   }, {
-    repository,
+    repository: staged.repository,
     planningModel: createBrowserPlanningModel(adapted.query, String(role || '公开招聘岗位')),
     searchSource: createBrowserSearchSource(adapted),
     verificationAdapter,
@@ -363,8 +439,24 @@ export async function ingestBrowserCompanyResult({
       observedAt,
     });
     if (!snapshot.openings.length) continue;
-    repository.withTransaction(() => repository.persistCompanySnapshot(snapshot));
+    staged.add(snapshot);
     snapshots.push(snapshot);
   }
-  return appendPlatformFallbacks(result, snapshots);
+  const augmented = appendPlatformFallbacks(result, snapshots);
+  try {
+    staged.flush();
+  } catch (error) {
+    try {
+      repository.completeRun({
+        id: result.runId,
+        status: 'FAILED',
+        completedAt: now(),
+        error,
+      });
+    } catch {
+      // The returned report remains FAILED even if run-status persistence also fails.
+    }
+    return failedAtomicPersistenceResult(augmented, error);
+  }
+  return augmented;
 }

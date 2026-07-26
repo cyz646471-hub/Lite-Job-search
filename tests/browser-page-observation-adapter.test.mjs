@@ -166,6 +166,34 @@ test('rendered recruitment observer waits for explicit job structure', async () 
   assert.equal(index, 2);
 });
 
+test('generic recruitment navigation is not promoted to an active opening', async () => {
+  const page = {
+    async snapshot() {
+      return {
+        text: '招聘 产品经理岗位分类与职业介绍',
+        html: '<main>招聘 产品经理岗位分类与职业介绍</main>',
+        title: '招聘',
+        links: [{
+          text: '产品经理岗位介绍',
+          href: 'https://jobs.example.com/positions/product-manager',
+        }],
+      };
+    },
+    async waitForTimeout() {},
+    async url() {
+      return 'https://jobs.example.com/careers';
+    },
+  };
+
+  const observed = await observeRenderedRecruitmentPage(page, {
+    requestedUrl: 'https://jobs.example.com/careers',
+    response: { status: () => 200 },
+    renderWaitMs: 0,
+  });
+
+  assert.deepEqual(observed.jobs, []);
+});
+
 test('Playwright wrapper implements the BrowserSession port', async () => {
   const rawPage = {
     goto: async () => ({ status: () => 200 }),

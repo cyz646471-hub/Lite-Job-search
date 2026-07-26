@@ -359,7 +359,7 @@ test('inspects a matching platform company page without adding an official candi
     },
     [platformUrl]: {
       title: '希奥端招聘',
-      text: '希奥端招聘 产品经理 南京',
+      text: '希奥端招聘 职位列表 产品经理 南京',
       links: [{ text: '产品经理', href: jobUrl }],
     },
   });
@@ -648,33 +648,6 @@ test('normal Chrome mode requires an injected extension binding', async () => {
   );
 });
 
-test('normal Chrome mode can attach through an explicit CDP endpoint', async () => {
-  const contexts = [{
-    newPage: async () => ({}),
-    close: async () => {
-      throw new Error('attached normal Chrome context must not be closed');
-    },
-  }];
-  const connections = [];
-  const runtime = await createBrowserRuntime({
-    mode: 'normal-chrome',
-    chromium: {
-      async connectOverCDP(endpoint) {
-        connections.push(endpoint);
-        return {
-          contexts: () => contexts,
-          disconnect: async () => {},
-        };
-      },
-    },
-    cdpEndpoint: 'http://127.0.0.1:9222',
-  });
-
-  assert.equal(typeof runtime.newPage, 'function');
-  await runtime.close();
-  assert.deepEqual(connections, ['http://127.0.0.1:9222']);
-});
-
 test('persistent Chrome mode launches an isolated visible profile explicitly', async () => {
   const launches = [];
   const context = {
@@ -751,4 +724,68 @@ test('minimum search interval gate delays only subsequent searches', async () =>
   await waitForSearchSlot();
 
   assert.deepEqual(waits, [12_500]);
+});
+
+test('normal Chrome binding supports an asynchronous tab URL with candidates', async () => {
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('异步公司 招聘')}`;
+  const careerUrl = 'https://jobs.example.com/openings';
+  let currentUrl = '';
+  const chrome = {
+    tabs: {
+      async new() {
+        return {
+          async goto(url) {
+            currentUrl = url;
+            return { status: () => 200 };
+          },
+          async url() {
+            return currentUrl;
+          },
+          async title() {
+            return currentUrl === careerUrl ? '异步公司招聘' : '百度搜索';
+          },
+          async close() {},
+          playwright: {
+            async waitForTimeout() {},
+            async evaluate(callback, argument) {
+              if (typeof argument === 'number') {
+                return currentUrl === searchUrl ? [{
+                  title: '异步公司招聘',
+                  href: careerUrl,
+                  snippet: '异步公司招聘职位',
+                  kind: 'organic',
+                }] : [];
+              }
+              if (String(callback).includes('document.documentElement')) {
+                return {
+                  text: '异步公司招聘职位列表',
+                  html: '<main>异步公司招聘职位列表</main>',
+                  title: '异步公司招聘',
+                  h1: '招聘职位',
+                  links: [],
+                };
+              }
+              return currentUrl === searchUrl
+                ? '异步公司招聘搜索结果'
+                : '异步公司招聘职位列表';
+            },
+          },
+        };
+      },
+    },
+  };
+  const browser = await createBrowserRuntime({
+    mode: 'normal-chrome',
+    chrome,
+  });
+
+  const result = await discoverCompanyWithBrowser({
+    company: '异步公司',
+    officialDomain: 'example.com',
+    browser,
+  });
+
+  assert.equal(result.status, 'COMPLETED');
+  assert.equal(result.officialCandidates[0].url, careerUrl);
+  await browser.close();
 });

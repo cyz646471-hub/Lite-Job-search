@@ -25,13 +25,13 @@ function runCli(args) {
   });
 }
 
-test('normal Chrome binding module is usable through the real worker CLI', async () => {
+test('normal Chrome binding module runs candidate verification, extraction and SQLite through CLI', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-normal-chrome-cli-'));
   const inputFile = path.join(directory, 'companies.json');
   const outputDir = path.join(directory, 'output');
   const databaseFile = path.join(directory, 'jobs.sqlite');
   await writeFile(inputFile, JSON.stringify([{
-    company: '无结果示例公司',
+    company: '示例公司',
     officialDomain: 'example.com',
   }]));
 
@@ -44,6 +44,7 @@ test('normal Chrome binding module is usable through the real worker CLI', async
     path.join(ROOT, 'tests', 'fixtures', 'fake-normal-chrome-binding.mjs'),
     '--batch-id', 'normal-chrome-cli',
     '--max-companies-per-run', '1',
+    '--max-career-entries', '1',
   ]);
 
   assert.equal(result.code, 0, result.stderr);
@@ -55,6 +56,7 @@ test('normal Chrome binding module is usable through the real worker CLI', async
   assert.equal(summary.status, 'COMPLETE');
   assert.equal(report.discovery.searchQueries.length, 1);
   assert.equal(report.discovery.completedCompanies, 1);
-  assert.equal(report.discovery.candidateUrlCount, 0);
-  assert.equal(report.extraction.jobsStored, 0);
+  assert.equal(report.discovery.candidateUrlCount, 1);
+  assert.equal(report.verification.verified, 1);
+  assert.equal(report.extraction.jobsStored, 1);
 });

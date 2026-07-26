@@ -13,6 +13,12 @@ function sanitizeLinks(links = []) {
 
 const GENERIC_RECRUITMENT_LINK_TEXT = /^(?:招聘|职位|岗位|职位列表|岗位列表|查看(?:全部)?职位|更多职位|立即申请|立即投递|申请|投递|社会招聘|校园招聘|实习生招聘|首页|返回|jobs?|careers?|open positions?|apply(?: now)?|more)$/i;
 const JOB_TITLE_TERMS = /产品经理|工程师|开发|算法|设计师|运营|市场|销售|财务|会计|人力|招聘专员|法务|研究员|分析师|管培生|实习生|测试|架构师|顾问|采购|供应链|客服|engineer|manager|designer|developer|scientist|analyst|intern|marketing|sales|operations|consultant|architect/i;
+const NON_OPENING_LINK_TEXT = /岗位?(?:分类|介绍|说明|指南|百科)|职位?(?:分类|介绍|说明|指南|百科)|筛选|搜索|人才社区|了解更多|job famil(?:y|ies)|category|filter|search/i;
+
+function hasExplicitJobListingStructure(snapshot = {}) {
+  return /招聘职位|招聘岗位|职位列表|岗位列表|在招职位|在招岗位|job openings?|open positions?|current vacancies|positions available/i
+    .test(String(snapshot.text || ''));
+}
 
 function looksLikeJobDetailUrl(value) {
   try {
@@ -26,15 +32,19 @@ function looksLikeJobDetailUrl(value) {
 }
 
 export function extractExplicitJobLinks(snapshot = {}) {
-  if (!hasRecruitmentStructure(snapshot) || hasExplicitNoOpenings(snapshot)) {
+  if (!hasExplicitJobListingStructure(snapshot) || hasExplicitNoOpenings(snapshot)) {
     return Object.freeze([]);
   }
   const jobs = [];
   const seen = new Set();
   for (const link of sanitizeLinks(snapshot.links)) {
     const title = clean(link.text);
-    if (!title || title.length > 120 || GENERIC_RECRUITMENT_LINK_TEXT.test(title)) continue;
-    if (!JOB_TITLE_TERMS.test(title) && !looksLikeJobDetailUrl(link.href)) continue;
+    if (!title || title.length > 120
+      || GENERIC_RECRUITMENT_LINK_TEXT.test(title)
+      || NON_OPENING_LINK_TEXT.test(title)) {
+      continue;
+    }
+    if (!JOB_TITLE_TERMS.test(title) || !looksLikeJobDetailUrl(link.href)) continue;
     const key = `${title.toLowerCase()}|${link.href}`;
     if (seen.has(key)) continue;
     seen.add(key);
