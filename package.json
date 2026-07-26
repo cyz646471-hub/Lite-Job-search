@@ -30,7 +30,9 @@
     "canary:ai-product-manager": "node ./scripts/run-ai-product-manager-canary.mjs",
     "canary": "node ./bin/lite-job-search.mjs discover",
     "discover:batch": "node ./bin/lite-job-search.mjs discover-batch",
-    "discover:browser-companies": "node ./scripts/company-browser-discovery.mjs"
+    "test:local-worker": "node --test tests/recruitment-event.test.mjs tests/recruitment-source-policy.test.mjs tests/recruitment-event-classifier.test.mjs tests/browser-search-circuit-breaker.test.mjs tests/platform-company-page-adapter.test.mjs tests/company-browser-discovery.test.mjs tests/browser-company-batch.test.mjs tests/sqlite-repository.test.mjs tests/discover-market-jobs.test.mjs",
+    "discover:browser-companies": "node ./scripts/company-browser-discovery.mjs",
+    "discover:local-worker": "node ./scripts/company-browser-discovery.mjs"
   },
   "engines": {
     "node": ">=20"

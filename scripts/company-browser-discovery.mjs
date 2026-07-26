@@ -8,7 +8,6 @@ import {
   isBaiduBlockedSnapshot,
   readBaiduRows,
 } from '../src/adapters/browser/baidu-search-page-adapter.mjs';
-import { createPlaywrightBrowserSession } from '../src/adapters/browser/playwright-browser-session.mjs';
 import { observeRenderedRecruitmentPage } from '../src/adapters/browser/recruitment-page-observer.mjs';
 import { inspectPlatformCompanyPage } from '../src/adapters/platform/company-platform-page-adapter.mjs';
 import {
@@ -22,6 +21,7 @@ import {
 } from '../src/discovery/recruitment-entry-discovery.mjs';
 import { openSqliteMarketDiscoveryRepository } from '../src/storage/sqlite-job-repository.mjs';
 import { classifyRecruitmentSource } from '../src/verification/recruitment-source-policy.mjs';
+import { createBrowserRuntime } from './chrome-extension-browser-adapter.mjs';
 
 const REJECTED_KINDS = new Set(['ad', 'advertisement', 'sponsored', 'promotion', 'news']);
 const RECRUITMENT_PATH = /\/(?:career|careers|job|jobs|recruit|recruitment|social|campus|position|positions|internship|graduate)(?:[/?#]|$)/i;
@@ -738,7 +738,7 @@ async function runCli() {
   const args = parseArgs(runtimeProcess?.argv?.slice(2) || []);
   const healthProbeMode = Boolean(args['resume-provider'] && args['health-probe']);
   if (args.help || (!healthProbeMode && (!args.input || !args['output-dir']))) {
-    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--profile-dir data/local-chrome-worker-profile] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 10000] [--search-jitter-ms 20000] [--max-companies-per-run 10] [--headless]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/local-chrome-worker-profile]\n');
+    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--browser-mode persistent-chrome|normal-chrome] [--profile-dir data/local-chrome-worker-profile] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 10000] [--search-jitter-ms 20000] [--max-companies-per-run 10] [--headless]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/local-chrome-worker-profile]\n');
     return args.help ? 0 : 2;
   }
   let companies = [];
@@ -751,18 +751,23 @@ async function runCli() {
       process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'invalid_company_input' })}\n`); return 2;
     }
   }
-  let chromium;
-  try { ({ chromium } = await import('playwright')); }
-  catch (error) { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'playwright_not_available', error: String(error?.message || error) })}\n`); return 2; }
+  const browserMode = String(args['browser-mode'] || 'persistent-chrome');
+  let chromium = null;
+  if (browserMode === 'persistent-chrome') {
+    try { ({ chromium } = await import('playwright')); }
+    catch (error) { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'playwright_not_available', error: String(error?.message || error) })}\n`); return 2; }
+  }
   let browser;
   const profileDir = path.resolve(args['profile-dir'] || path.join('data', 'local-chrome-worker-profile'));
   try {
     await fs.mkdir(profileDir, { recursive: true });
-    const context = await chromium.launchPersistentContext(
+    browser = await createBrowserRuntime({
+      mode: browserMode,
+      chrome: globalThis.chromeBrowserBinding || null,
+      chromium,
       profileDir,
-      buildBrowserLaunchOptions(args),
-    );
-    browser = createPlaywrightBrowserSession(context);
+      headless: buildBrowserLaunchOptions(args).headless,
+    });
   }
   catch (error) { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'browser_launch_failed', error: String(error?.message || error) })}\n`); return 2; }
   const databaseFile = path.resolve(args.database || path.join('data', 'lite-job-search.sqlite'));

@@ -1,4 +1,5 @@
 import { assertBrowserPage, assertBrowserSession } from '../src/ports/browser-session.mjs';
+import { createPlaywrightBrowserSession } from '../src/adapters/browser/playwright-browser-session.mjs';
 import { observeRenderedRecruitmentPage } from '../src/adapters/browser/recruitment-page-observer.mjs';
 
 async function captureChromeSnapshot(tab) {
@@ -73,4 +74,37 @@ export function createChromeExtensionBrowser(chrome) {
     },
   });
   return assertBrowserSession(session);
+}
+
+export async function createBrowserRuntime({
+  mode = 'persistent-chrome',
+  chrome = null,
+  chromium = null,
+  profileDir,
+  headless = false,
+} = {}) {
+  if (mode === 'normal-chrome') {
+    if (!chrome) {
+      const error = new Error('normal Chrome extension binding is NOT_CONFIGURED');
+      error.code = 'NOT_CONFIGURED';
+      throw error;
+    }
+    return createChromeExtensionBrowser(chrome);
+  }
+  if (mode !== 'persistent-chrome') {
+    throw new Error(`unsupported browser mode: ${mode}`);
+  }
+  if (typeof chromium?.launchPersistentContext !== 'function') {
+    const error = new Error('persistent Chrome Playwright runtime is NOT_CONFIGURED');
+    error.code = 'NOT_CONFIGURED';
+    throw error;
+  }
+  if (!profileDir) {
+    throw new Error('persistent Chrome profileDir is required');
+  }
+  const context = await chromium.launchPersistentContext(profileDir, {
+    channel: 'chrome',
+    headless: headless === true,
+  });
+  return createPlaywrightBrowserSession(context);
 }

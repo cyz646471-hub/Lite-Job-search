@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  createBrowserRuntime,
+} from '../scripts/chrome-extension-browser-adapter.mjs';
+import {
   buildBrowserLaunchOptions,
   browserDiscoveryLimits,
   buildDiscoveryReport,
@@ -581,6 +584,37 @@ test('local worker uses visible Google Chrome by default', () => {
     channel: 'chrome',
     headless: true,
   });
+});
+
+test('normal Chrome mode requires an injected extension binding', async () => {
+  await assert.rejects(
+    createBrowserRuntime({ mode: 'normal-chrome', chrome: null }),
+    (error) => error.code === 'NOT_CONFIGURED',
+  );
+});
+
+test('persistent Chrome mode launches an isolated visible profile explicitly', async () => {
+  const launches = [];
+  const context = {
+    newPage: async () => ({}),
+    close: async () => {},
+  };
+  const runtime = await createBrowserRuntime({
+    mode: 'persistent-chrome',
+    chromium: {
+      async launchPersistentContext(profileDir, options) {
+        launches.push({ profileDir, options });
+        return context;
+      },
+    },
+    profileDir: 'C:/tmp/lite-job-profile',
+  });
+
+  assert.equal(typeof runtime.newPage, 'function');
+  assert.deepEqual(launches, [{
+    profileDir: 'C:/tmp/lite-job-profile',
+    options: { channel: 'chrome', headless: false },
+  }]);
 });
 
 test('local worker bounds navigation and recursion settings', () => {
