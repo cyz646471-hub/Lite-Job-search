@@ -1,11 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { detectAtsFingerprint } from '../engine/upstream/planner/cn-ats-fingerprint.mjs';
 import { toLegacyJobResult } from '../src/adapters/legacy/job-result-adapter.mjs';
 import { createUpstreamJobExtractionAdapter } from '../src/adapters/upstream/job-extraction-adapter.mjs';
 import { createOfficialVerificationAdapter } from '../src/adapters/upstream/official-verification-adapter.mjs';
 
 const NOW = '2026-07-24T00:00:00.000Z';
+
+test('CN ATS fingerprint registry recognizes supported tenant domains', () => {
+  assert.equal(detectAtsFingerprint({
+    url: 'https://example.mokahr.com/jobs',
+  }).ats, 'MOKA');
+  assert.equal(detectAtsFingerprint({
+    url: 'https://example.beisencloud.com/campus',
+  }).ats, 'Beisen');
+  assert.equal(detectAtsFingerprint({
+    url: 'https://example.hotjob.cn/jobs',
+  }).ats, 'HOTJOB');
+  assert.equal(detectAtsFingerprint({
+    url: 'https://example.zhiye.com/social',
+  }).ats, 'Zhiye');
+});
 
 function createVerificationAdapter() {
   return createOfficialVerificationAdapter({
@@ -60,25 +76,48 @@ test('known official domain becomes an independent anchor', async () => {
   assert.ok(!result.evidence.some((item) => item.code === 'candidate_self_domain'));
 });
 
-test('ATS tenant requires a direct official-domain backlink before it becomes verified evidence', async () => {
+test('ATS tenant requires directed attribution from a verified official page', async () => {
   const adapter = createVerificationAdapter();
   const result = await adapter.inspect({
     company: { canonicalName: 'Example Tech', officialDomains: ['example.com'] },
     candidate: {
       url: 'https://example.mokahr.com/jobs',
       verifiedTenant: true,
-      officialSiteLinked: true,
+      parentOfficialVerified: true,
+      officialAttributionUrl: 'https://example.com/careers',
     },
     page: {
       status: 200,
       finalUrl: 'https://example.mokahr.com/jobs',
       html: '<h1>Open positions</h1>',
-      officialSiteLinked: true,
     },
   });
 
   assert.ok(result.evidence.some((item) => item.code === 'verified_ats_tenant'));
   assert.ok(result.evidence.some((item) => item.code === 'official_site_confirms_ats_tenant'));
+});
+
+test('unverified parent cannot create official ATS attribution evidence', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: 'Example Tech', officialDomains: ['example.com'] },
+    candidate: {
+      url: 'https://example.mokahr.com/jobs',
+      verifiedTenant: true,
+      parentOfficialVerified: false,
+      officialAttributionUrl: 'https://untrusted.example/list',
+    },
+    page: {
+      status: 200,
+      finalUrl: 'https://example.mokahr.com/jobs',
+      html: '<a href="https://example.com/">Official site</a>',
+      officialSiteLinked: true,
+    },
+  });
+
+  assert.ok(!result.evidence.some(
+    (item) => item.code === 'official_site_confirms_ats_tenant',
+  ));
 });
 
 test('candidate domain without prior company evidence does not self-verify', async () => {

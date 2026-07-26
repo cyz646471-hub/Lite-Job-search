@@ -5,6 +5,19 @@ import {
   adaptBrowserCompanyResult,
   createBrowserObservationFetcher,
 } from '../src/adapters/browser/browser-page-observation-adapter.mjs';
+import {
+  createPlaywrightBrowserSession,
+} from '../src/adapters/browser/playwright-browser-session.mjs';
+import {
+  observeRenderedRecruitmentPage,
+} from '../src/adapters/browser/recruitment-page-observer.mjs';
+import {
+  assertBrowserPage,
+  assertBrowserSession,
+} from '../src/ports/browser-session.mjs';
+import {
+  createChromeExtensionBrowser,
+} from '../scripts/chrome-extension-browser-adapter.mjs';
 
 test('browser candidates remain candidates until deterministic verification', () => {
   const adapted = adaptBrowserCompanyResult({
@@ -29,6 +42,24 @@ test('browser candidates remain candidates until deterministic verification', ()
   assert.equal(adapted.items[0].verifiedTenant, false);
   assert.deepEqual(adapted.items[0].recruitmentTypes, ['experienced']);
   assert.equal('verificationStatus' in adapted.items[0], false);
+});
+
+test('browser candidate preserves directed official ATS attribution', () => {
+  const adapted = adaptBrowserCompanyResult({
+    company: 'Example Tech',
+    officialDomain: 'example.com',
+    officialCandidates: [{
+      url: 'https://example.mokahr.com/jobs',
+      title: '查看职位',
+      verifiedTenant: true,
+      parentOfficialVerified: true,
+      officialAttributionUrl: 'https://example.com/careers',
+      discoveryReason: 'verified_official_outbound_ats_link',
+    }],
+  });
+
+  assert.equal(adapted.items[0].parentOfficialVerified, true);
+  assert.equal(adapted.items[0].officialAttributionUrl, 'https://example.com/careers');
 });
 
 test('browser observation fetcher returns explicit values without inference', async () => {
@@ -86,4 +117,76 @@ test('browser observation adapter rejects invalid URLs and reports missing obser
     fetchPage('https://jobs.example.com/missing'),
     /missing browser observation/,
   );
+});
+
+test('BrowserSession port rejects incomplete browser pages', () => {
+  assert.throws(() => assertBrowserSession({}), /browser\.newPage/);
+  assert.throws(() => assertBrowserPage({
+    goto() {},
+    waitForTimeout() {},
+    url() {},
+    title() {},
+  }), /page\.snapshot/);
+  assert.throws(() => createChromeExtensionBrowser(null), (error) => (
+    error.code === 'NOT_CONFIGURED'
+  ));
+});
+
+test('rendered recruitment observer waits for explicit job structure', async () => {
+  const snapshots = [
+    { text: 'Loading', html: '<main>Loading</main>', title: 'Jobs', links: [] },
+    {
+      text: '招聘职位 Product Manager',
+      html: '<main>招聘职位 Product Manager</main>',
+      title: 'Jobs',
+      links: [{ text: 'Product Manager', href: 'https://jobs.example.com/1' }],
+    },
+  ];
+  let index = 0;
+  const page = {
+    async snapshot() {
+      return snapshots[Math.min(index++, snapshots.length - 1)];
+    },
+    async waitForTimeout() {},
+    async url() {
+      return 'https://jobs.example.com/';
+    },
+  };
+  const observed = await observeRenderedRecruitmentPage(page, {
+    requestedUrl: 'https://example.com/careers',
+    response: { status: () => 200 },
+    renderWaitMs: 1_000,
+    pollIntervalMs: 100,
+    now: () => '2026-07-26T00:00:00.000Z',
+  });
+
+  assert.equal(observed.fetchStatus, 'COMPLETED');
+  assert.equal(observed.vacancyStatus, 'UNKNOWN');
+  assert.equal(observed.finalUrl, 'https://jobs.example.com/');
+  assert.equal(index, 2);
+});
+
+test('Playwright wrapper implements the BrowserSession port', async () => {
+  const rawPage = {
+    goto: async () => ({ status: () => 200 }),
+    waitForTimeout: async () => {},
+    url: () => 'https://jobs.example.com/',
+    title: async () => 'Jobs',
+    locator: (selector) => ({
+      innerText: async () => '招聘职位',
+      evaluate: async () => '<html>招聘职位</html>',
+      evaluateAll: async () => (selector === 'a[href]' ? [] : []),
+    }),
+    close: async () => {},
+  };
+  const context = {
+    newPage: async () => rawPage,
+    close: async () => {},
+  };
+  const session = createPlaywrightBrowserSession(context);
+  const page = await session.newPage();
+
+  assert.equal(assertBrowserSession(session), session);
+  assert.equal(assertBrowserPage(page), page);
+  assert.equal((await page.snapshot()).text, '招聘职位');
 });

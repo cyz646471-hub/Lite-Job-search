@@ -1,5 +1,18 @@
 import { getDomain } from 'tldts';
 
+export const KNOWN_ATS_REGISTRABLE_DOMAINS = Object.freeze([
+  'mokahr.com',
+  'mokahr.cn',
+  'beisen.com',
+  'beisencloud.com',
+  'hotjob.cn',
+  'zhiye.com',
+  'lever.co',
+  'greenhouse.io',
+  'myworkdayjobs.com',
+  'smartrecruiters.com',
+]);
+
 function httpUrl(value, baseUrl = undefined) {
   try {
     const url = new URL(String(value || ''), baseUrl);
@@ -40,6 +53,8 @@ export function discoverRecruitmentEntries({
   links = [],
   trustedRegistrableDomains = [],
   verifiedAtsDomains = [],
+  knownAtsRegistrableDomains = [],
+  parentOfficialVerified = false,
   visitedUrls = [],
   parentUrl = null,
   depth = 1,
@@ -59,9 +74,10 @@ export function discoverRecruitmentEntries({
     return Object.freeze([]);
   }
 
-  const allowedDomains = normalizedDomainSet([
-    ...trustedRegistrableDomains,
+  const trustedDomains = normalizedDomainSet(trustedRegistrableDomains);
+  const knownAtsDomains = normalizedDomainSet([
     ...verifiedAtsDomains,
+    ...knownAtsRegistrableDomains,
   ]);
   const visited = new Set(
     [base.href, ...(visitedUrls || [])]
@@ -76,16 +92,27 @@ export function discoverRecruitmentEntries({
     const recruitmentType = recruitmentTypeForEntry(link?.text, resolved?.href);
     if (!resolved || !recruitmentType) continue;
     const domain = registrableDomain(resolved.href);
-    if (!allowedDomains.has(domain) || visited.has(resolved.href)) continue;
+    const firstPartyEntry = trustedDomains.has(domain);
+    const attributedAtsEntry = !firstPartyEntry
+      && parentOfficialVerified === true
+      && knownAtsDomains.has(domain);
+    if ((!firstPartyEntry && !attributedAtsEntry) || visited.has(resolved.href)) continue;
     visited.add(resolved.href);
-    discovered.push(Object.freeze({
+    const entry = {
       url: resolved.href,
       text: String(link?.text || '').replace(/\s+/g, ' ').trim(),
       recruitmentType,
       parentUrl: parentUrl || base.href,
       depth: numericDepth,
-      discoveryReason: 'career_navigation_link',
-    }));
+      discoveryReason: attributedAtsEntry
+        ? 'verified_official_outbound_ats_link'
+        : 'career_navigation_link',
+    };
+    if (attributedAtsEntry) {
+      entry.parentOfficialVerified = true;
+      entry.officialAttributionUrl = parentUrl || base.href;
+    }
+    discovered.push(Object.freeze(entry));
   }
 
   return Object.freeze(discovered);

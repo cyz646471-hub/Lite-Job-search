@@ -45,11 +45,12 @@ test('discovers and canonicalizes first-party recruitment entries', () => {
   );
 });
 
-test('allows only trusted first-party or verified ATS domains', () => {
+test('allows only trusted first-party or official-attributed ATS domains', () => {
   const entries = discoverRecruitmentEntries({
     baseUrl: 'https://jobs.example.com/',
     trustedRegistrableDomains: ['example.com'],
-    verifiedAtsDomains: ['mokahr.com'],
+    knownAtsRegistrableDomains: ['mokahr.com'],
+    parentOfficialVerified: true,
     links: [
       { text: '校园招聘', href: 'https://campus.example.com/jobs' },
       { text: '社会招聘', href: 'https://example.mokahr.com/social' },
@@ -62,6 +63,31 @@ test('allows only trusted first-party or verified ATS domains', () => {
     'https://campus.example.com/jobs',
     'https://example.mokahr.com/social',
   ]);
+});
+
+test('verified official page may enqueue a known ATS tenant link', () => {
+  const [entry] = discoverRecruitmentEntries({
+    baseUrl: 'https://example.com/careers',
+    links: [{ text: '查看职位', href: 'https://example.mokahr.com/jobs' }],
+    trustedRegistrableDomains: ['example.com'],
+    knownAtsRegistrableDomains: ['mokahr.com'],
+    parentOfficialVerified: true,
+  });
+
+  assert.equal(entry.discoveryReason, 'verified_official_outbound_ats_link');
+  assert.equal(entry.parentOfficialVerified, true);
+  assert.equal(entry.officialAttributionUrl, 'https://example.com/careers');
+});
+
+test('unverified page cannot authorize a cross-domain ATS link', () => {
+  const entries = discoverRecruitmentEntries({
+    baseUrl: 'https://example.net/list',
+    links: [{ text: '查看职位', href: 'https://example.mokahr.com/jobs' }],
+    knownAtsRegistrableDomains: ['mokahr.com'],
+    parentOfficialVerified: false,
+  });
+
+  assert.deepEqual(entries, []);
 });
 
 test('deduplicates canonical URLs and respects depth and entry budgets', () => {

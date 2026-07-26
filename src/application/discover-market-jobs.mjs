@@ -6,7 +6,10 @@ import { createSearchIntent } from '../domain/search-intent.mjs';
 import { discoverCompanies } from '../discovery/company-discovery.mjs';
 import { expandKeywords } from '../discovery/keyword-expander.mjs';
 import { planQueries } from '../discovery/query-planner.mjs';
-import { discoverRecruitmentEntries } from '../discovery/recruitment-entry-discovery.mjs';
+import {
+  discoverRecruitmentEntries,
+  KNOWN_ATS_REGISTRABLE_DOMAINS,
+} from '../discovery/recruitment-entry-discovery.mjs';
 import { assertMarketDiscoveryRepository } from '../ports/job-repository.mjs';
 import { buildQualityReport } from '../quality/quality-report.mjs';
 import { verifyCareerPortal } from '../verification/verification-engine.mjs';
@@ -509,11 +512,14 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       const remainingChildBudget = Math.max(0, 20 - childCount);
       if (remainingChildBudget > 0) {
         const nextDepth = Number(candidate.entryDepth || 0) + 1;
+        const parentOfficialVerified = !portal.atsType
+          && (company.officialDomains || []).includes(portal.registrableDomain);
         const entries = discoverRecruitmentEntries({
           baseUrl: portal.canonicalUrl,
           links: linksFromPage(page),
           trustedRegistrableDomains: company.officialDomains,
-          verifiedAtsDomains: portal.atsType ? [portal.registrableDomain] : [],
+          knownAtsRegistrableDomains: KNOWN_ATS_REGISTRABLE_DOMAINS,
+          parentOfficialVerified,
           visitedUrls: [...processedCandidateUrls, ...queuedCandidateUrls],
           parentUrl: portal.canonicalUrl,
           depth: nextDepth,
@@ -532,6 +538,9 @@ export async function discoverMarketJobs(input, dependencies = {}) {
             rank: null,
             parentUrl: entry.parentUrl,
             entryDepth: entry.depth,
+            parentOfficialVerified: entry.parentOfficialVerified === true,
+            officialAttributionUrl: entry.officialAttributionUrl || null,
+            verifiedTenant: entry.discoveryReason === 'verified_official_outbound_ats_link',
             recruitmentTypes: entry.recruitmentType === 'general'
               ? []
               : [entry.recruitmentType],

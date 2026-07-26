@@ -4,9 +4,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getDomain } from 'tldts';
 import { ingestBrowserCompanyResult } from '../src/application/ingest-browser-company-result.mjs';
+import {
+  isBaiduBlockedSnapshot,
+  readBaiduRows,
+} from '../src/adapters/browser/baidu-search-page-adapter.mjs';
+import { createPlaywrightBrowserSession } from '../src/adapters/browser/playwright-browser-session.mjs';
+import { observeRenderedRecruitmentPage } from '../src/adapters/browser/recruitment-page-observer.mjs';
 import { inspectPlatformCompanyPage } from '../src/adapters/platform/company-platform-page-adapter.mjs';
 import { runBrowserCompanyBatch } from '../src/application/run-browser-company-batch.mjs';
-import { discoverRecruitmentEntries } from '../src/discovery/recruitment-entry-discovery.mjs';
+import {
+  discoverRecruitmentEntries,
+  KNOWN_ATS_REGISTRABLE_DOMAINS,
+} from '../src/discovery/recruitment-entry-discovery.mjs';
 import { openSqliteMarketDiscoveryRepository } from '../src/storage/sqlite-job-repository.mjs';
 import { classifyRecruitmentSource } from '../src/verification/recruitment-source-policy.mjs';
 
@@ -329,33 +338,12 @@ export function buildBrowserRunReport({
 }
 
 export function isSearchBlockedPage(text) {
-  return /验证码|安全验证|访问过于频繁|请完成.*验证|captcha|access denied|enable javascript/i.test(String(text || ''));
+  return isBaiduBlockedSnapshot({ text });
 }
 
 async function readSearchRows(page, maxResults) {
   if (typeof page.readSearchRows === 'function') return page.readSearchRows(maxResults);
-  return page.locator('#content_left .c-container, #content_left [class*="result"], main article')
-    .evaluateAll((containers, limit) => containers.map((container) => {
-    const anchors = [...container.querySelectorAll('a[href]')];
-    const anchor = anchors.find((item) => {
-      const title = (item.innerText || item.textContent || '').trim();
-      try {
-        const target = new URL(item.href);
-        return title && ['http:', 'https:'].includes(target.protocol);
-      } catch {
-        return false;
-      }
-    });
-    if (!anchor) return null;
-    const title = (anchor.innerText || anchor.textContent || '').trim();
-    const text = (container?.innerText || '').trim();
-    const className = String(container?.className || '');
-    const joined = `${title} ${text} ${className}`.toLowerCase();
-    const kind = /广告|推广|sponsored|advertisement|ec-/.test(joined)
-      ? 'advertisement'
-      : /新闻|news/.test(joined) ? 'news' : 'organic';
-    return { title, href: anchor.href, snippet: text.slice(0, 1200), kind };
-  }).filter(Boolean).slice(0, limit), maxResults);
+  return readBaiduRows(page, maxResults);
 }
 
 async function observeCareerPage(
@@ -366,42 +354,11 @@ async function observeCareerPage(
     return page.observeCareerPage({ requestedUrl, response, observedAt });
   }
   try {
-    const status = Number(response?.status?.()) || 200;
-    const finalUrl = page.url();
-    const text = await page.locator('body').innerText().catch(() => '');
-    const html = await page.locator('html')
-      .evaluate((node) => node.outerHTML)
-      .catch(() => '');
-    const title = typeof page.title === 'function' ? await page.title().catch(() => '') : '';
-    const links = await page.locator('a[href]').evaluateAll((anchors) => anchors.map((anchor) => ({
-      text: (anchor.innerText || anchor.textContent || '').trim(),
-      href: anchor.href,
-    })).filter((link) => link.text && link.href));
-    const blocked = isSearchBlockedPage(text) || [401, 403, 429].includes(status);
-    const hasJobStructure = /职位|岗位|招聘|job opening|open positions/i.test(text);
-    const noOpenings = /暂无(?:职位|岗位|招聘)|没有(?:职位|岗位)|no open positions|no jobs found/i.test(text);
-    return {
+    return await observeRenderedRecruitmentPage(page, {
       requestedUrl,
-      finalUrl,
-      url: finalUrl,
-      status,
-      fetchStatus: blocked ? 'BLOCKED' : 'COMPLETED',
-      reasonCode: blocked ? 'challenge_or_access_blocked' : null,
-      title,
-      html,
-      text,
-      links,
+      response,
       observedAt,
-      hasJobStructure,
-      vacancyStatus: blocked
-        ? 'BLOCKED'
-        : noOpenings
-          ? 'NO_OPENINGS'
-          : hasJobStructure
-            ? 'UNKNOWN'
-            : 'NOT_A_LIST',
-      evidence: text.slice(0, blocked ? 500 : 1000),
-    };
+    });
   } catch (error) {
     return {
       requestedUrl,
@@ -528,15 +485,23 @@ export async function discoverCompanyWithBrowser({
       }
       else if (classification.classification === 'REJECTED') rejected.push(base);
       else {
-        const careerPage = await observeCareerPage(page, {
+        const observedCareerPage = await observeCareerPage(page, {
           requestedUrl: row.href,
           response,
           observedAt: now(),
         });
-        careerPage.officialSiteLinked = hasOfficialSiteLink(careerPage.links, officialDomain);
-        careerPage.verifiedAtsTenant = Boolean(
-          careerPage.officialSiteLinked && isKnownAtsUrl(careerPage.url || finalUrl),
-        );
+        const careerPage = {
+          ...observedCareerPage,
+          officialSiteLinked: hasOfficialSiteLink(
+            observedCareerPage.links,
+            officialDomain,
+          ),
+          verifiedAtsTenant: false,
+        };
+        const parentOfficialVerified = classification.classification === 'OFFICIAL_CANDIDATE'
+          && careerPage.fetchStatus === 'COMPLETED'
+          && careerPage.hasJobStructure === true
+          && normalizedDomain(careerPage.url || finalUrl) === normalizedDomain(officialDomain);
         observations.push(careerPage);
         officialCandidates.push({
           ...base,
@@ -546,6 +511,8 @@ export async function discoverCompanyWithBrowser({
           evidence: careerPage.evidence || '',
           officialSiteLinked: careerPage.officialSiteLinked,
           verifiedTenant: careerPage.verifiedAtsTenant,
+          parentOfficialVerified: false,
+          officialAttributionUrl: null,
           depth: 0,
           parentUrl: null,
         });
@@ -559,6 +526,8 @@ export async function discoverCompanyWithBrowser({
             baseUrl: careerPage.url || finalUrl,
             links: careerPage.links,
             trustedRegistrableDomains: trustedDomains,
+            knownAtsRegistrableDomains: KNOWN_ATS_REGISTRABLE_DOMAINS,
+            parentOfficialVerified,
             visitedUrls,
             parentUrl: careerPage.url || finalUrl,
             depth: 1,
@@ -571,14 +540,19 @@ export async function discoverCompanyWithBrowser({
             queuedUrls.delete(entry.url);
             if (visitedUrls.has(entry.url)) continue;
             visitedUrls.add(entry.url);
-            const inspectedEntry = await readCareerPage(page, entry.url, timeoutMs, now);
-            inspectedEntry.officialSiteLinked = hasOfficialSiteLink(
-              inspectedEntry.links,
-              officialDomain,
-            );
-            inspectedEntry.verifiedAtsTenant = Boolean(
-              inspectedEntry.officialSiteLinked && isKnownAtsUrl(inspectedEntry.url || entry.url),
-            );
+            const observedEntry = await readCareerPage(page, entry.url, timeoutMs, now);
+            const inspectedEntry = {
+              ...observedEntry,
+              officialSiteLinked: hasOfficialSiteLink(
+                observedEntry.links,
+                officialDomain,
+              ),
+              verifiedAtsTenant: Boolean(
+              entry.discoveryReason === 'verified_official_outbound_ats_link'
+              && entry.parentOfficialVerified === true
+              && isKnownAtsUrl(observedEntry.url || entry.url),
+              ),
+            };
             observations.push(inspectedEntry);
             const observedUrl = inspectedEntry.url || entry.url;
             visitedUrls.add(observedUrl);
@@ -592,6 +566,8 @@ export async function discoverCompanyWithBrowser({
               evidence: inspectedEntry.evidence || '',
               officialSiteLinked: inspectedEntry.officialSiteLinked,
               verifiedTenant: inspectedEntry.verifiedAtsTenant,
+              parentOfficialVerified: entry.parentOfficialVerified === true,
+              officialAttributionUrl: entry.officialAttributionUrl || null,
               discoveryReason: entry.discoveryReason,
               parentUrl: entry.parentUrl,
               depth: entry.depth,
@@ -606,10 +582,15 @@ export async function discoverCompanyWithBrowser({
               continue;
             }
             const remaining = Math.max(0, entryBudget - visitedUrls.size - queuedUrls.size);
+            const childParentOfficialVerified = inspectedEntry.fetchStatus === 'COMPLETED'
+              && inspectedEntry.hasJobStructure === true
+              && normalizedDomain(observedUrl) === normalizedDomain(officialDomain);
             const children = discoverRecruitmentEntries({
               baseUrl: observedUrl,
               links: inspectedEntry.links,
               trustedRegistrableDomains: trustedDomains,
+              knownAtsRegistrableDomains: KNOWN_ATS_REGISTRABLE_DOMAINS,
+              parentOfficialVerified: childParentOfficialVerified,
               visitedUrls: [...visitedUrls, ...queuedUrls],
               parentUrl: observedUrl,
               depth: entry.depth + 1,
@@ -739,7 +720,11 @@ async function runCli() {
   const profileDir = path.resolve(args['profile-dir'] || path.join('data', 'local-chrome-worker-profile'));
   try {
     await fs.mkdir(profileDir, { recursive: true });
-    browser = await chromium.launchPersistentContext(profileDir, buildBrowserLaunchOptions(args));
+    const context = await chromium.launchPersistentContext(
+      profileDir,
+      buildBrowserLaunchOptions(args),
+    );
+    browser = createPlaywrightBrowserSession(context);
   }
   catch (error) { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'browser_launch_failed', error: String(error?.message || error) })}\n`); return 2; }
   const databaseFile = path.resolve(args.database || path.join('data', 'lite-job-search.sqlite'));

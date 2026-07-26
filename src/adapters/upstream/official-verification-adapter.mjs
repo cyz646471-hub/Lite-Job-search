@@ -147,12 +147,21 @@ export function createOfficialVerificationAdapter({
       const officialSiteBacklink = candidate.officialSiteLinked === true
         || page.officialSiteLinked === true
         || (identity.strongEvidence || []).includes('official_site_links_surface');
+      const officialAttributionDomain = registrableDomainOf(
+        candidate.officialAttributionUrl || '',
+      );
+      const officialAttributionConfirmed = candidate.parentOfficialVerified === true
+        && Boolean(candidate.officialAttributionUrl)
+        && (company.officialDomains || [])
+          .map(registrableDomainOf)
+          .filter(Boolean)
+          .includes(officialAttributionDomain);
 
       if (ats.ats) {
         const tenantVerified = candidate.verifiedTenant === true
           || (identity.strongEvidence || []).includes('verified_surface_registry');
         push(tenantVerified ? 'verified_ats_tenant' : 'ats_fingerprint_only', ats.ats);
-        if (tenantVerified && officialSiteBacklink) {
+        if (tenantVerified && officialAttributionConfirmed) {
           push('official_site_confirms_ats_tenant', ats.ats);
         }
       }

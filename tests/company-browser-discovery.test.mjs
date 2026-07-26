@@ -106,6 +106,78 @@ test('visits recruitment sibling entries instead of leaving them discovered', as
   assert.equal(browser.visits.filter((url) => url === internshipUrl).length, 1);
 });
 
+test('verified official page attributes an outbound ATS tenant link', async () => {
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('Example Tech 招聘')}`;
+  const officialUrl = 'https://example.com/careers';
+  const atsUrl = 'https://example.mokahr.com/jobs';
+  const browser = fakeBrowser({
+    [searchUrl]: {
+      text: 'Example Tech 招聘',
+      searchRows: [{
+        title: 'Example Tech 招聘',
+        href: officialUrl,
+        snippet: 'Example Tech 招聘职位',
+        kind: 'organic',
+      }],
+    },
+    [officialUrl]: {
+      title: 'Example Tech 招聘',
+      text: 'Example Tech 招聘职位',
+      links: [{ text: '查看职位', href: atsUrl }],
+    },
+    [atsUrl]: {
+      title: 'Example Tech Jobs',
+      text: 'Example Tech 招聘职位 Product Manager',
+      links: [],
+    },
+  });
+
+  const result = await discoverCompanyWithBrowser({
+    company: 'Example Tech',
+    officialDomain: 'example.com',
+    browser,
+  });
+  const atsCandidate = result.officialCandidates.find((item) => item.url === atsUrl);
+
+  assert.equal(atsCandidate.verifiedTenant, true);
+  assert.equal(atsCandidate.parentOfficialVerified, true);
+  assert.equal(atsCandidate.officialAttributionUrl, officialUrl);
+  assert.equal(
+    atsCandidate.discoveryReason,
+    'verified_official_outbound_ats_link',
+  );
+});
+
+test('unverified recruitment page cannot authorize an outbound ATS tenant', async () => {
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('Example Tech 招聘')}`;
+  const unverifiedUrl = 'https://untrusted.example.net/careers';
+  const atsUrl = 'https://example.mokahr.com/jobs';
+  const browser = fakeBrowser({
+    [searchUrl]: {
+      text: 'Example Tech 招聘',
+      searchRows: [{
+        title: 'Example Tech 招聘',
+        href: unverifiedUrl,
+        snippet: 'Example Tech 招聘职位',
+        kind: 'organic',
+      }],
+    },
+    [unverifiedUrl]: {
+      title: 'Example Tech 招聘',
+      text: 'Example Tech 招聘职位',
+      links: [{ text: '查看职位', href: atsUrl }],
+    },
+  });
+
+  const result = await discoverCompanyWithBrowser({
+    company: 'Example Tech',
+    browser,
+  });
+
+  assert.equal(result.officialCandidates.some((item) => item.url === atsUrl), false);
+  assert.equal(browser.visits.includes(atsUrl), false);
+});
+
 test('reports inspected recruitment entry outcomes separately from discovery', () => {
   const report = buildDiscoveryReport([{
     company: '示例公司',
