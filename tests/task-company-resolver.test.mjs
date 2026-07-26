@@ -129,3 +129,24 @@ test('does not deduplicate companies across markets', () => {
   assert.equal(result.stats.excludedKnown, 0);
 });
 
+test('reports exclusions and duplicates across the full registry after the target is filled', () => {
+  const result = selectUnseenCompanies({
+    registryCompanies: normalizeCompanyRegistry([
+      { company: '首选公司' },
+      { company: '已知公司' },
+      { company: '首选公司' },
+    ], { market: 'CN' }),
+    knownCompanies: [{
+      canonicalName: '已知公司',
+      aliases: [],
+      officialDomains: [],
+      market: 'CN',
+    }],
+    targetCount: 1,
+    market: 'CN',
+  });
+
+  assert.deepEqual(result.companies.map((item) => item.company), ['首选公司']);
+  assert.equal(result.stats.excludedKnown, 1);
+  assert.equal(result.stats.duplicateCandidates, 1);
+});

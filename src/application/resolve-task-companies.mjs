@@ -127,13 +127,12 @@ export function selectUnseenCompanies({
   }
 
   const selected = [];
-  const selectedKeys = new Set();
+  const candidateKeys = new Set();
   let excludedKnown = 0;
   let duplicateCandidates = 0;
   let supplementSelected = 0;
 
   const consider = (company, sourceKind) => {
-    if (selected.length >= target) return;
     if (String(company?.market || normalizedMarket).toUpperCase() !== normalizedMarket) return;
     const keys = companyIdentityKeys(company);
     if (!keys.size) return;
@@ -141,12 +140,13 @@ export function selectUnseenCompanies({
       excludedKnown += 1;
       return;
     }
-    if (intersects(keys, selectedKeys)) {
+    if (intersects(keys, candidateKeys)) {
       duplicateCandidates += 1;
       return;
     }
+    for (const key of keys) candidateKeys.add(key);
+    if (selected.length >= target) return;
     selected.push(company);
-    for (const key of keys) selectedKeys.add(key);
     if (sourceKind === 'supplement') supplementSelected += 1;
   };
 
@@ -175,4 +175,3 @@ export function selectUnseenCompanies({
     }),
   });
 }
-
