@@ -221,6 +221,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
   const usableApplyJobIds = new Set();
   const confidenceByPortalId = new Map();
   const portalDecisionsById = new Map();
+  const recruitmentEventsById = new Map();
   const storedJobsById = new Map();
   const jobIdsByPortalId = new Map();
   const discoveredCompanyKeys = new Set();
@@ -264,6 +265,15 @@ export async function discoverMarketJobs(input, dependencies = {}) {
   };
   const buildRunReport = () => {
     const candidates = discovery?.candidates || [];
+    const portalDecisions = [...portalDecisionsById.values()];
+    const officialPortalDecisions = portalDecisions.filter((portal) => (
+      portal.sourceTier !== 'PLATFORM_ONLY'
+    ));
+    const platformPortalDecisions = portalDecisions.filter((portal) => (
+      portal.sourceTier === 'PLATFORM_ONLY'
+    ));
+    const officialPortalIds = new Set(officialPortalDecisions.map((portal) => portal.portalId));
+    const recruitmentEvents = [...recruitmentEventsById.values()];
     let llmUsage = [];
     if (typeof repository.listLlmUsage === 'function') {
       llmUsage = repository.listLlmUsage().filter((item) => item.runId === runId);
@@ -284,7 +294,8 @@ export async function discoverMarketJobs(input, dependencies = {}) {
           }),
         ])).values(),
       ]),
-      portalDecisions: Object.freeze([...portalDecisionsById.values()]),
+      portalDecisions: Object.freeze(portalDecisions),
+      recruitmentEvents: Object.freeze(recruitmentEvents),
       extractedJobs: Object.freeze([...storedJobsById.values()]),
       officialVerifiedCount: counters.portalsVerified,
       reviewCount: counters.reviewRequired,
@@ -305,8 +316,37 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       llmUsage: Object.freeze(llmUsage),
       quality: buildQualityReport({
         ...qualityObservations,
-        portalsVerified: counters.portalsVerified,
-        rejectedPortals: counters.rejected,
+        portalsEvaluated: officialPortalDecisions.length,
+        portalsVerified: officialPortalDecisions.filter((portal) => (
+          portal.verificationStatus === 'VERIFIED'
+        )).length,
+        officialExtractionAttempts: [...extractionAttemptPortalIds].filter((portalId) => (
+          officialPortalIds.has(portalId)
+        )).length,
+        officialExtractionSuccesses: [...extractionSuccessPortalIds].filter((portalId) => (
+          officialPortalIds.has(portalId)
+        )).length,
+        platformOnlyAcceptanceCount: platformPortalDecisions.filter((portal) => (
+          portal.hiringAvailability === 'OPENINGS_FOUND'
+        )).length,
+        platformOnlySupersededCount: platformPortalDecisions.filter((portal) => (
+          Boolean(portal.supersededByPortalId)
+        )).length,
+        rejectedPortals: officialPortalDecisions.filter((portal) => (
+          portal.verificationStatus === 'REJECTED'
+        )).length,
+        officialConfidenceScores: officialPortalDecisions.map((portal) => portal.confidenceScore),
+        availabilityEvaluated: officialPortalDecisions.length,
+        unknownAvailabilityCount: officialPortalDecisions.filter((portal) => (
+          portal.hiringAvailability === 'UNKNOWN'
+        )).length,
+        blockedPortals: officialPortalDecisions.filter((portal) => (
+          portal.verificationStatus === 'BLOCKED'
+        )).length,
+        recruitmentEventsEvaluated: recruitmentEvents.length,
+        missingStartDates: recruitmentEvents.filter((event) => !event.startAt).length,
+        missingCloseDates: recruitmentEvents.filter((event) => !event.closesAt).length,
+        missingLocations: recruitmentEvents.filter((event) => !event.locations.length).length,
         validCandidateResults: discovery?.validCandidateResults || 0,
         duplicateCandidateResults: discovery?.duplicateCandidateResults || 0,
       }),
@@ -681,7 +721,6 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         applyUrl: { present: 0, missing: 0 },
       };
       const retainAllObserved = openingRetention === 'all_observed_active';
-      const recruitmentEventsById = new Map();
       for (const opening of openings || []) {
         if (counters.jobsStored >= intent.targetCount) break;
         const openingFieldPresence = {

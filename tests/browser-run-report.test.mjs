@@ -38,8 +38,8 @@ test('browser run report separates discovery, verification, extraction and missi
     discoveryRuns: [{
       report: {
         portalDecisions: [
-          { companyId: 'company-1', verificationStatus: 'VERIFIED', confidenceScore: 90 },
-          { companyId: 'company-2', verificationStatus: 'REVIEW', confidenceScore: 50 },
+          { companyId: 'company-1', sourceTier: 'OFFICIAL_SITE', verificationStatus: 'VERIFIED', confidenceScore: 90, hiringAvailability: 'OPENINGS_FOUND' },
+          { companyId: 'company-2', sourceTier: 'PLATFORM_ONLY', verificationStatus: 'REVIEW', confidenceScore: 40, hiringAvailability: 'OPENINGS_FOUND' },
         ],
         extractedJobs: [
           {
@@ -79,6 +79,9 @@ test('browser run report separates discovery, verification, extraction and missi
   assert.equal(report.verification.verified, 1);
   assert.equal(report.verification.pendingReview, 1);
   assert.equal(report.verification.rejected, 0);
+  assert.equal(report.quality.platformOnlyAcceptanceCount, 1);
+  assert.equal(report.quality.averageOfficialConfidenceScore.value, 90);
+  assert.equal(report.quality.officialVerificationRate.denominator, 1);
   assert.equal(report.extraction.companiesWithJobs, 1);
   assert.equal(report.extraction.jobsStored, 2);
   assert.deepEqual(report.fieldCoverage.publishedAt, { present: 1, missing: 1 });

@@ -14,11 +14,13 @@ import {
   createAdaptiveSearchIntervalGate,
   resumeProviderCircuit,
 } from '../src/application/browser-search-circuit-breaker.mjs';
+import { buildStudentApplicationRows } from '../src/application/build-student-application-rows.mjs';
 import { runBrowserCompanyBatch } from '../src/application/run-browser-company-batch.mjs';
 import {
   discoverRecruitmentEntries,
   KNOWN_ATS_REGISTRABLE_DOMAINS,
 } from '../src/discovery/recruitment-entry-discovery.mjs';
+import { buildQualityReport } from '../src/quality/quality-report.mjs';
 import { openSqliteMarketDiscoveryRepository } from '../src/storage/sqlite-job-repository.mjs';
 import { classifyRecruitmentSource } from '../src/verification/recruitment-source-policy.mjs';
 import { createBrowserRuntime } from './chrome-extension-browser-adapter.mjs';
@@ -208,20 +210,15 @@ export function buildDiscoveryReport(companyResults = []) {
   return { generatedAt: new Date().toISOString(), summary, companies: companyResults };
 }
 
-function ratio(numerator, denominator) {
-  return {
-    numerator,
-    denominator,
-    value: denominator ? numerator / denominator : null,
-  };
-}
-
 export function buildBrowserRunReport({
   batch = {},
   companyResults = [],
   discoveryRuns = [],
 } = {}) {
   const decisions = discoveryRuns.flatMap((run) => run?.report?.portalDecisions || []);
+  const recruitmentEvents = discoveryRuns.flatMap((run) => (
+    run?.report?.recruitmentEvents || []
+  ));
   const jobs = discoveryRuns.flatMap((run) => run?.report?.extractedJobs || []);
   const candidateUrls = companyResults.flatMap((result) => (
     result.officialCandidates || []
@@ -240,6 +237,47 @@ export function buildBrowserRunReport({
   const confidenceScores = decisions
     .map((item) => Number(item.confidenceScore))
     .filter(Number.isFinite);
+  const officialDecisions = decisions.filter((item) => item.sourceTier !== 'PLATFORM_ONLY');
+  const platformDecisions = decisions.filter((item) => item.sourceTier === 'PLATFORM_ONLY');
+  const verifiedOfficialDecisions = officialDecisions.filter((item) => (
+    item.verificationStatus === 'VERIFIED'
+  ));
+  const officialJobPortalIds = new Set(jobs
+    .filter((job) => job.sourceTier !== 'PLATFORM_ONLY')
+    .map((job) => job.careerPortalId)
+    .filter(Boolean));
+  const officialConfidenceScores = officialDecisions
+    .map((item) => Number(item.confidenceScore))
+    .filter(Number.isFinite);
+  const quality = buildQualityReport({
+    portalsEvaluated: officialDecisions.length,
+    portalsVerified: verifiedOfficialDecisions.length,
+    officialExtractionAttempts: verifiedOfficialDecisions.length,
+    officialExtractionSuccesses: officialJobPortalIds.size,
+    platformOnlyAcceptanceCount: platformDecisions.filter((item) => (
+      item.hiringAvailability === 'OPENINGS_FOUND'
+    )).length,
+    platformOnlySupersededCount: platformDecisions.filter((item) => (
+      Boolean(item.supersededByPortalId)
+    )).length,
+    validCandidateResults: candidateUrls.length,
+    duplicateCandidateResults: candidateUrls.length - uniqueCandidateUrls.size,
+    rejectedPortals: officialDecisions.filter((item) => (
+      item.verificationStatus === 'REJECTED'
+    )).length,
+    officialConfidenceScores,
+    availabilityEvaluated: officialDecisions.length,
+    unknownAvailabilityCount: officialDecisions.filter((item) => (
+      item.hiringAvailability === 'UNKNOWN'
+    )).length,
+    blockedPortals: officialDecisions.filter((item) => (
+      item.verificationStatus === 'BLOCKED'
+    )).length,
+    recruitmentEventsEvaluated: recruitmentEvents.length,
+    missingStartDates: recruitmentEvents.filter((event) => !event.startAt).length,
+    missingCloseDates: recruitmentEvents.filter((event) => !event.closesAt).length,
+    missingLocations: recruitmentEvents.filter((event) => !event.locations?.length).length,
+  });
   const fieldDefinitions = {
     location: (job) => Boolean(job.locations?.length),
     publishedAt: (job) => Boolean(job.publishedAt),
@@ -329,15 +367,7 @@ export function buildBrowserRunReport({
       portalsWithJobs: jobPortalIds.size,
     }),
     fieldCoverage: Object.freeze(fieldCoverage),
-    quality: Object.freeze({
-      officialVerificationRate: ratio(verifiedDecisions.length, decisions.length),
-      jobExtractionSuccessRate: ratio(jobPortalIds.size, verifiedDecisions.length),
-      falsePositiveRate: ratio(rejectedDecisions.length, decisions.length),
-      duplicateRate: ratio(candidateUrls.length - uniqueCandidateUrls.size, candidateUrls.length),
-      averageConfidenceScore: confidenceScores.length
-        ? confidenceScores.reduce((sum, value) => sum + value, 0) / confidenceScores.length
-        : null,
-    }),
+    quality,
     failures: Object.freeze(failures),
   });
 }
@@ -738,7 +768,7 @@ async function runCli() {
   const args = parseArgs(runtimeProcess?.argv?.slice(2) || []);
   const healthProbeMode = Boolean(args['resume-provider'] && args['health-probe']);
   if (args.help || (!healthProbeMode && (!args.input || !args['output-dir']))) {
-    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--browser-mode persistent-chrome|normal-chrome] [--profile-dir data/local-chrome-worker-profile] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 10000] [--search-jitter-ms 20000] [--max-companies-per-run 10] [--headless]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/local-chrome-worker-profile]\n');
+    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--xlsx-output outputs/student-applications.xlsx] [--browser-mode persistent-chrome|normal-chrome] [--profile-dir data/local-chrome-worker-profile] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 10000] [--search-jitter-ms 20000] [--max-companies-per-run 10] [--headless]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/local-chrome-worker-profile]\n');
     return args.help ? 0 : 2;
   }
   let companies = [];
@@ -840,14 +870,30 @@ async function runCli() {
     });
     const candidates = results.flatMap((result) => result.officialCandidates).map(({ company, title, url, sourceUrl, searchQuery, evidence, ...rest }) => ({ company, title, url, sourceUrl, searchQuery, evidence, ...rest, discoveryMethod: 'playwright_search' }));
     const leads = results.flatMap((result) => result.leads).map((lead) => ({ ...lead, discoveryMethod: 'playwright_search' }));
+    const studentRows = buildStudentApplicationRows({
+      companies: repository.listCompanies(),
+      portals: repository.listCareerPortals(),
+      events: repository.listRecruitmentEvents(),
+      jobs: repository.listJobOpenings(),
+    });
     await fs.mkdir(args['output-dir'], { recursive: true });
     await Promise.all([
       fs.writeFile(path.join(args['output-dir'], 'candidates.json'), `${JSON.stringify(candidates, null, 2)}\n`),
       fs.writeFile(path.join(args['output-dir'], 'leads.json'), `${JSON.stringify(leads, null, 2)}\n`),
       fs.writeFile(path.join(args['output-dir'], 'report.json'), `${JSON.stringify(report, null, 2)}\n`),
       fs.writeFile(path.join(args['output-dir'], 'run-report.json'), `${JSON.stringify(runReport, null, 2)}\n`),
+      fs.writeFile(path.join(args['output-dir'], 'student-application-rows.json'), `${JSON.stringify(studentRows, null, 2)}\n`),
     ]);
-    process.stdout.write(`${JSON.stringify({ status: batch.status, batchId, databaseFile, outputDir: args['output-dir'], summary: report.summary, quality: runReport.quality })}\n`);
+    let xlsxOutput = null;
+    if (args['xlsx-output']) {
+      const { buildStudentApplicationWorkbook } = await import('./build-browser-batch-xlsx.mjs');
+      xlsxOutput = path.resolve(args['xlsx-output']);
+      await buildStudentApplicationWorkbook({
+        rows: studentRows,
+        outputFile: xlsxOutput,
+      });
+    }
+    process.stdout.write(`${JSON.stringify({ status: batch.status, batchId, databaseFile, outputDir: args['output-dir'], xlsxOutput, summary: report.summary, quality: runReport.quality })}\n`);
     return batch.failed > 0 ? 1 : 0;
   } finally {
     await browser.close();
