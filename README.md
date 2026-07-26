@@ -1,6 +1,6 @@
 # Lite Job Search
 
-Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具。它面向中国和北美市场，提供公司招聘官网发现、公开 ATS 扫描、候选链接验证、招聘页面下钻、去重、缓存、预算控制和 JSON/JSONL/CSV 导出。
+Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具。它面向中国和北美市场，提供公司招聘官网发现、公开 ATS 扫描、候选链接验证、招聘页面下钻、去重、缓存、预算控制和 JSON/JSONL/CSV/XLSX 导出。
 
 它不包含简历生成、岗位匹配评分、自动申请、申请跟踪、面试准备或薪酬分析。
 
@@ -109,7 +109,19 @@ node bin/lite-job-search.mjs discover-batch `
 
 学生投递 XLSX 是固定输出：每行对应一个 `RecruitmentEvent`（公司 + 招聘类型 + 届次 + 目录 URL），同一事件下的岗位和地区去重合并。投递链接只使用届次/活动目录 URL，并以 Excel 超链接展示；缺失日期、地区、行业和简介保持空白。内部 ID、验证证据、Provider、缓存、错误和单岗位详情链接不进入学生表。
 
-输入支持 JSON、JSONL 和 CSV。无搜索 API 时，可用 `--manual manual-candidates.json` 导入浏览器或人工确认的候选。
+学生投递清单（XLSX，投递入口为可点击超链接）：
+
+```powershell
+node bin/lite-job-search.mjs export --input .\verified.json --output .\verified.student.xlsx --format xlsx --json
+```
+
+`batch` 和 `verify` 只要使用非 XLSX 的 `--output`，都会保留该主输出，并自动在同目录创建 `<文件名>.student.xlsx`。工作簿固定为八列：公司名称、公司类型（模型判断）、开放批次、开放岗位、地区、开始时间、截止时间、投递链接。每个岗位一行，投递链接显示为“查看岗位并投递”的 Excel 超链接；不会把检索证据、来源 URL 等审计字段展示给学生。
+
+公司类型只展示置信度不低于 `0.8` 的模型分类，否则写为“待确认”。日期缺失时写为“未披露”，明确的 `until_filled` 截止规则写为“招满即止”。链接优先级为直接申请页、职位详情、职位列表、招聘活动页、企业招聘主页；未经验证的入口不会被包装成可投递链接。
+
+XLSX 导出使用 Codex Desktop 附带的电子表格运行时；在该环境外缺少运行时时，命令会明确报错而不会生成伪 XLSX 文件。
+
+输入支持 JSON、JSONL 和 CSV，也接受包含 `market` 和 `companies` 的持久化招聘报告 JSON。无搜索 API 时，可用 `--manual manual-candidates.json` 导入浏览器或人工确认的候选。
 
 ## 作为 Skill 使用
 

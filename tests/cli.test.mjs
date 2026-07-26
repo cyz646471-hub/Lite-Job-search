@@ -85,6 +85,24 @@ test('search and batch run through a manual provider without network access', as
   assert.equal(JSON.parse(batch.stdout).length, 2);
 });
 
+test('batch keeps its primary output and automatically creates a student XLSX sibling', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-search-student-batch-'));
+  const manual = path.join(directory, 'manual.json');
+  const input = path.join(directory, 'companies.json');
+  const output = path.join(directory, 'results.json');
+  const studentOutput = path.join(directory, 'results.student.xlsx');
+  await writeFile(manual, JSON.stringify([
+    { company: 'Acme', title: 'Acme Careers', url: 'https://acme.com/jobs' },
+  ]));
+  await writeFile(input, JSON.stringify([{ company: 'Acme', market: 'NA' }]));
+
+  const batch = run(['batch', '--input', input, '--manual', manual, '--output', output, '--json']);
+
+  assert.equal(batch.status, 0, batch.stderr);
+  assert.equal(JSON.parse(await readFile(output, 'utf8')).length, 1);
+  assert.equal((await readFile(studentOutput)).subarray(0, 2).toString(), 'PK');
+});
+
 test('verify and export work with offline page fixtures', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-search-verify-'));
   const input = path.join(directory, 'candidates.json');

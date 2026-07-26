@@ -1,6 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { writeStudentWorkbook } from './student-workbook.mjs';
+
 function parseCsvLine(line) {
   const cells = [];
   let value = '';
@@ -38,7 +40,14 @@ export async function readRecords(file) {
   }
   if (extension === '.csv') return parseCsv(text);
   const parsed = JSON.parse(text);
-  return Array.isArray(parsed) ? parsed : parsed.records || parsed.candidates || [parsed];
+  if (Array.isArray(parsed)) return parsed;
+  if (Array.isArray(parsed.companies)) {
+    return parsed.companies.map((record) => ({
+      ...record,
+      market: record.market || parsed.market || '',
+    }));
+  }
+  return parsed.records || parsed.candidates || [parsed];
 }
 
 function csvCell(value) {
@@ -80,6 +89,7 @@ export function formatRecords(records, format = 'json') {
 export async function writeRecords(file, records, format = null) {
   const target = path.resolve(file);
   const selected = format || path.extname(target).slice(1).toLowerCase() || 'json';
+  if (selected === 'xlsx') return writeStudentWorkbook(target, records);
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, formatRecords(records, selected));
   return { output: target, format: selected, count: records.length };
