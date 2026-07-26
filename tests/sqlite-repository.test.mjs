@@ -229,6 +229,79 @@ test('company snapshot rolls back every row when an opening violates its event',
   assert.equal(repository.listJobOpenings().length, 0);
 });
 
+test('company snapshot rejects mismatched input identities before remapping merges', async (t) => {
+  const repository = await createRepository('lite-job-market-mismatch-');
+  t.after(() => repository.close());
+
+  assert.throws(() => repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal(),
+    evidence: [],
+    events: [createEvent()],
+    openings: [createOpening({ companyId: 'wrong-company' })],
+  }), /snapshot.*company/i);
+
+  assert.equal(repository.listCompanies().length, 0);
+  assert.equal(repository.listCareerPortals().length, 0);
+  assert.equal(repository.listRecruitmentEvents().length, 0);
+  assert.equal(repository.listJobOpenings().length, 0);
+});
+
+test('official event supersedes but does not delete platform history', async (t) => {
+  const repository = await createRepository('lite-job-market-supersede-');
+  t.after(() => repository.close());
+  repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal({
+      id: 'portal-platform-history',
+      canonicalUrl: 'https://www.liepin.com/company-jobs/123/',
+      url: 'https://www.liepin.com/company-jobs/123/',
+      registrableDomain: 'liepin.com',
+      sourceTier: 'PLATFORM_ONLY',
+      verificationStatus: 'REVIEW',
+      confidenceScore: 40,
+      officialIdentityConfirmed: false,
+      platformIdentityConfirmed: true,
+      hiringAvailability: 'OPENINGS_FOUND',
+    }),
+    evidence: [],
+    events: [createEvent({
+      id: 'event-platform-history',
+      careerPortalId: 'portal-platform-history',
+      sourceTier: 'PLATFORM_ONLY',
+      publicationClass: 'PLATFORM_ONLY',
+      directoryUrl: 'https://www.liepin.com/company-jobs/123/',
+    })],
+    openings: [createOpening({
+      id: 'job-platform-history',
+      careerPortalId: 'portal-platform-history',
+      recruitmentEventId: 'event-platform-history',
+      sourceTier: 'PLATFORM_ONLY',
+      sourceUrl: 'https://www.liepin.com/company-jobs/123/',
+      jobDetailUrl: null,
+    })],
+  });
+  repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal({
+      hiringAvailability: 'OPENINGS_FOUND',
+      sourceTier: 'OFFICIAL_SITE',
+      officialIdentityConfirmed: true,
+    }),
+    evidence: [],
+    events: [createEvent()],
+    openings: [createOpening({
+      recruitmentEventId: 'event-1',
+      sourceTier: 'OFFICIAL_SITE',
+    })],
+  });
+
+  const platformPortal = repository.listCareerPortals()
+    .find((portal) => portal.id === 'portal-platform-history');
+  assert.equal(platformPortal.supersededByPortalId, 'portal-1');
+  assert.equal(repository.listRecruitmentEvents().length, 2);
+});
+
 test('SQLite repositories upsert a complete verified chain idempotently', async (t) => {
   const repository = await createRepository();
   t.after(() => repository.close());

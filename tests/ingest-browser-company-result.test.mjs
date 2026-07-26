@@ -84,6 +84,7 @@ test('browser result verifies portal, extracts explicit jobs and writes SQLite',
   assert.equal(repository.listCareerPortals()[0].verificationStatus, 'VERIFIED');
   assert.deepEqual(repository.listCareerPortals()[0].recruitmentTypes, ['experienced']);
   assert.equal(repository.listJobOpenings().length, 1);
+  assert.equal(repository.listRecruitmentEvents().length, 1);
   assert.equal(repository.listJobOpenings()[0].title, 'AI 产品经理');
   assert.equal(repository.listJobOpenings()[0].publishedAt, null);
   assert.equal(repository.listJobOpenings()[0].closesAt, null);
@@ -92,6 +93,59 @@ test('browser result verifies portal, extracts explicit jobs and writes SQLite',
     repository.listJobOpenings()[0].applyUrl,
     'https://jobs.example.com/openings/ai-pm/apply',
   );
+});
+
+test('rerunning one browser company does not duplicate event or jobs', async (t) => {
+  const repository = await createRepository(t);
+  const input = {
+    companyResult: verifiedCompanyResult(),
+    role: '公开招聘岗位',
+    industry: ['AI'],
+    targetCount: 1000,
+  };
+
+  const first = await ingestBrowserCompanyResult(input, {
+    repository,
+    now: () => NOW,
+  });
+  const second = await ingestBrowserCompanyResult(input, {
+    repository,
+    now: () => NOW,
+  });
+
+  assert.equal(repository.listRecruitmentEvents().length, 1);
+  assert.equal(repository.listJobOpenings().length, 1);
+  assert.equal(first.report.extractedJobCount, second.report.extractedJobCount);
+});
+
+test('failed browser snapshot leaves no partial formal recruitment chain', async (t) => {
+  const repository = await createRepository(t);
+  const failingRepository = {
+    ...repository,
+    persistCompanySnapshot() {
+      throw new Error('fixture snapshot failure');
+    },
+  };
+
+  const result = await ingestBrowserCompanyResult({
+    companyResult: verifiedCompanyResult(),
+    role: '公开招聘岗位',
+    industry: ['AI'],
+  }, {
+    repository: failingRepository,
+    now: () => NOW,
+  });
+
+  assert.equal(result.status, 'FAILED');
+  assert.equal(result.jobsStored, 0);
+  assert.ok(result.report.failures.some((failure) => (
+    failure.stage === 'company_snapshot_persistence'
+      && failure.message.includes('fixture snapshot failure')
+  )));
+  assert.equal(repository.listCompanies().length, 0);
+  assert.equal(repository.listCareerPortals().length, 0);
+  assert.equal(repository.listRecruitmentEvents().length, 0);
+  assert.equal(repository.listJobOpenings().length, 0);
 });
 
 test('unverified browser candidates never create formal openings', async (t) => {

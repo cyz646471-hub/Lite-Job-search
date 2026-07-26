@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 import Database from 'better-sqlite3';
 
+import { createJobOpening } from '../domain/job-opening.mjs';
+import { createRecruitmentEvent } from '../domain/recruitment-event.mjs';
 import { assertMarketDiscoveryRepository } from '../ports/job-repository.mjs';
 
 const MIGRATION_DIRECTORY = fileURLToPath(new URL('./migrations/', import.meta.url));
@@ -440,6 +442,17 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       providerCircuitState: database.prepare(`
         SELECT * FROM provider_circuit_states WHERE provider = ?
       `),
+      supersedePlatformPortals: database.prepare(`
+        UPDATE career_portals
+        SET superseded_by_portal_id = @officialPortalId
+        WHERE company_id = @companyId
+          AND source_tier = 'PLATFORM_ONLY'
+          AND id != @officialPortalId
+          AND (
+            superseded_by_portal_id IS NULL
+            OR superseded_by_portal_id != @officialPortalId
+          )
+      `),
     };
     return repository;
   }
@@ -738,6 +751,25 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
   } = {}) {
     requireMigration();
     return withTransaction(() => {
+      if (!company?.id || !portal?.id || portal.companyId !== company.id) {
+        throw new Error('snapshot portal company must match snapshot company');
+      }
+      for (const event of events) {
+        if (event.companyId !== company.id || event.careerPortalId !== portal.id) {
+          throw new Error('snapshot RecruitmentEvent company and portal must match');
+        }
+      }
+      const eventIds = new Set(events.map((event) => event.id));
+      for (const opening of openings) {
+        if (opening.companyId !== company.id || opening.careerPortalId !== portal.id) {
+          throw new Error('snapshot JobOpening company and portal must match');
+        }
+        if (opening.recruitmentEventId
+          && !eventIds.has(opening.recruitmentEventId)) {
+          throw new Error('snapshot JobOpening RecruitmentEvent is missing');
+        }
+      }
+
       const storedCompany = upsertCompany(company);
       const storedPortal = {
         ...portal,
@@ -745,24 +777,44 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       };
       upsertCareerPortal(storedPortal);
       replaceVerificationEvidence(storedPortal.id, evidence);
+      const eventIdMap = new Map();
+      const normalizedEvents = [];
       for (const event of events) {
-        upsertRecruitmentEvent({
+        const normalizedEvent = createRecruitmentEvent({
           ...event,
+          id: storedCompany.id === company.id ? event.id : undefined,
           companyId: storedCompany.id,
           careerPortalId: storedPortal.id,
         });
+        eventIdMap.set(event.id, normalizedEvent.id);
+        normalizedEvents.push(normalizedEvent);
+        upsertRecruitmentEvent(normalizedEvent);
       }
       for (const opening of openings) {
-        const storedOpening = {
+        const recruitmentEventId = opening.recruitmentEventId
+          ? eventIdMap.get(opening.recruitmentEventId)
+          : null;
+        const identityChanged = storedCompany.id !== company.id
+          || recruitmentEventId !== opening.recruitmentEventId;
+        const storedOpening = createJobOpening({
           ...opening,
+          id: identityChanged ? undefined : opening.id,
           companyId: storedCompany.id,
           careerPortalId: storedPortal.id,
-        };
+          recruitmentEventId,
+          sourceTier: opening.sourceTier || storedPortal.sourceTier,
+        });
         if (storedOpening.sourceTier === 'PLATFORM_ONLY') {
           upsertPlatformJobOpening(storedOpening);
         } else {
           upsertJobOpening(storedOpening);
         }
+      }
+      if (storedPortal.sourceTier !== 'PLATFORM_ONLY' && normalizedEvents.length > 0) {
+        statements.supersedePlatformPortals.run({
+          companyId: storedCompany.id,
+          officialPortalId: storedPortal.id,
+        });
       }
       return storedCompany;
     });

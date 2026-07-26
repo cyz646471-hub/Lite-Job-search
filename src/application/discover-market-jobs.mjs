@@ -102,6 +102,79 @@ function entryLogMetadata(candidate = {}) {
   };
 }
 
+function createSnapshotBufferingRepository(baseRepository) {
+  const companies = new Map();
+  const portals = new Map();
+  const evidenceByPortalId = new Map();
+  const eventsByPortalId = new Map();
+  const openingsByPortalId = new Map();
+
+  function mapForPortal(collection, portalId) {
+    if (!collection.has(portalId)) collection.set(portalId, new Map());
+    return collection.get(portalId);
+  }
+
+  const buffered = {
+    ...baseRepository,
+    withTransaction(callback) {
+      return baseRepository.withTransaction(callback);
+    },
+    upsertCompany(company) {
+      companies.set(company.id, company);
+      return company;
+    },
+    upsertCareerPortal(portal) {
+      portals.set(portal.id, portal);
+      if (portal.verificationStatus !== 'VERIFIED') {
+        eventsByPortalId.delete(portal.id);
+        openingsByPortalId.delete(portal.id);
+      }
+      return portal;
+    },
+    replaceVerificationEvidence(careerPortalId, evidence = []) {
+      if (portals.has(careerPortalId)) {
+        evidenceByPortalId.set(careerPortalId, [...evidence]);
+      }
+      return evidence;
+    },
+    upsertRecruitmentEvent(event) {
+      mapForPortal(eventsByPortalId, event.careerPortalId).set(event.id, event);
+      return event;
+    },
+    upsertJobOpening(opening) {
+      mapForPortal(openingsByPortalId, opening.careerPortalId).set(opening.id, opening);
+      return opening;
+    },
+    upsertPlatformJobOpening(opening) {
+      mapForPortal(openingsByPortalId, opening.careerPortalId).set(opening.id, opening);
+      return opening;
+    },
+    flushCompanySnapshots() {
+      for (const portal of portals.values()) {
+        const company = companies.get(portal.companyId);
+        if (!company) {
+          const error = new Error(`snapshot company missing for portal: ${portal.id}`);
+          error.failureStage = 'company_snapshot_persistence';
+          throw error;
+        }
+        try {
+          baseRepository.persistCompanySnapshot({
+            company,
+            portal,
+            evidence: evidenceByPortalId.get(portal.id) || [],
+            events: [...(eventsByPortalId.get(portal.id)?.values() || [])],
+            openings: [...(openingsByPortalId.get(portal.id)?.values() || [])],
+          });
+        } catch (error) {
+          error.failureStage = 'company_snapshot_persistence';
+          throw error;
+        }
+      }
+    },
+  };
+  return buffered;
+}
+
 export async function discoverMarketJobs(input, dependencies = {}) {
   assertDependencies(dependencies);
   const {
@@ -110,13 +183,14 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     verificationAdapter,
     pageAdvisoryClassifier = null,
     jobExtractor,
-    repository,
+    repository: baseRepository,
     fetchPage,
     ids,
     now = () => new Date().toISOString(),
     maxQueries = 12,
     openingRetention = 'requested_recent',
   } = dependencies;
+  const repository = createSnapshotBufferingRepository(baseRepository);
 
   const intent = createSearchIntent(input, { id: ids.intent(), now: now() });
   const runId = ids.run();
@@ -758,6 +832,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       : counters.blocked > 0 && counters.jobsStored < intent.targetCount
         ? 'BLOCKED'
         : quantityStatus;
+    repository.flushCompanySnapshots();
     repository.completeRun({ id: runId, status: terminalStatus, completedAt: now() });
     return Object.freeze({
       runId,
@@ -770,6 +845,13 @@ export async function discoverMarketJobs(input, dependencies = {}) {
     });
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
+    if (failure.failureStage === 'company_snapshot_persistence') {
+      counters.companiesDiscovered = 0;
+      counters.portalsVerified = 0;
+      counters.jobsStored = 0;
+      counters.usableApplyEntries = 0;
+      qualityObservations.extractionSuccesses = 0;
+    }
     recordFailure({
       stage: failure.failureStage || (discovery ? 'discovery_processing' : 'discovery'),
       code: 'FAILED',
