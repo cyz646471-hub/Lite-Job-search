@@ -6,7 +6,16 @@ import {
 } from '../adapters/browser/browser-page-observation-adapter.mjs';
 import { createOfficialVerificationAdapter } from '../adapters/upstream/official-verification-adapter.mjs';
 import { createUpstreamJobExtractionAdapter } from '../adapters/upstream/job-extraction-adapter.mjs';
+import { createCareerPortal } from '../domain/career-portal.mjs';
+import { createCompany } from '../domain/company.mjs';
+import { createJobOpening } from '../domain/job-opening.mjs';
+import { createRecruitmentEvent } from '../domain/recruitment-event.mjs';
+import { decidePlatformFallback } from '../verification/recruitment-source-policy.mjs';
 import { discoverMarketJobs } from './discover-market-jobs.mjs';
+import {
+  classifyRecruitmentEvent,
+  explicitIsoDate,
+} from './recruitment-event-classifier.mjs';
 
 const BROWSER_PROVIDER = 'chrome_baidu_visible_search';
 
@@ -83,6 +92,209 @@ function createBrowserIds(companyResult) {
   });
 }
 
+function canonicalHttpUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    url.hash = '';
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+function registrableDomain(value) {
+  try {
+    return new URL(String(value || '')).hostname.replace(/^www\./i, '').toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function explicitTimestamp(value) {
+  const date = explicitIsoDate(value);
+  return date ? `${date}T00:00:00.000Z` : null;
+}
+
+function platformEvidence(candidate, fallbackReason, observedAt) {
+  const sourceUrl = canonicalHttpUrl(candidate.url);
+  return Object.freeze([{
+    code: 'platform_company_identity_match',
+    direction: 'NEUTRAL',
+    weight: 0,
+    observedValue: candidate.platform || registrableDomain(sourceUrl),
+    sourceUrl,
+    observedAt,
+  }, {
+    code: 'platform_current_jobs_observed',
+    direction: 'NEUTRAL',
+    weight: 0,
+    observedValue: String(candidate.jobs?.length || 0),
+    sourceUrl,
+    observedAt,
+  }, {
+    code: 'platform_fallback_reason',
+    direction: 'NEUTRAL',
+    weight: 0,
+    observedValue: fallbackReason,
+    sourceUrl,
+    observedAt,
+  }]);
+}
+
+function createPlatformSnapshot({
+  companyResult,
+  candidate,
+  fallback,
+  industry,
+  observedAt,
+}) {
+  const companyKey = companyResult.companyIdentityKey || companyResult.company;
+  const company = createCompany({
+    id: stableId('company', `CN|${companyKey}`),
+    canonicalName: companyResult.company,
+    chineseName: companyResult.chineseName || null,
+    englishName: companyResult.englishName || null,
+    aliases: companyResult.aliases || [],
+    officialDomains: companyResult.officialDomain
+      ? [companyResult.officialDomain]
+      : [],
+    industryTags: stringList(industry || companyResult.industry || []),
+    countryRegion: companyResult.countryRegion || '中国大陆',
+    market: 'CN',
+  }, { now: observedAt });
+  const canonicalUrl = canonicalHttpUrl(candidate.url);
+  const evidence = platformEvidence(candidate, fallback.fallbackReason, observedAt);
+  const portal = createCareerPortal({
+    id: stableId('portal', canonicalUrl),
+    companyId: company.id,
+    url: canonicalUrl,
+    canonicalUrl,
+    registrableDomain: registrableDomain(canonicalUrl),
+    atsType: String(candidate.platform || ''),
+    pageType: 'JOB_LIST',
+    verificationStatus: 'REVIEW',
+    confidenceScore: Math.min(49, Number(candidate.confidenceScore) || 49),
+    sourceTier: 'PLATFORM_ONLY',
+    officialIdentityConfirmed: false,
+    platformIdentityConfirmed: candidate.platformIdentityConfirmed === true,
+    hiringAvailability: 'OPENINGS_FOUND',
+    fallbackReason: fallback.fallbackReason,
+    searchCoverage: fallback.searchCoverage || 'PARTIAL',
+    evidence,
+    lastCheckedAt: observedAt,
+  }, { now: observedAt });
+  const eventsById = new Map();
+  const openings = [];
+  for (const rawJob of candidate.jobs || []) {
+    const title = String(rawJob?.title || '').replace(/\s+/g, ' ').trim();
+    const sourceUrl = canonicalHttpUrl(
+      rawJob?.sourceUrl || rawJob?.jobDetailUrl || rawJob?.detailUrl || canonicalUrl,
+    );
+    if (!title || !sourceUrl) continue;
+    const locations = stringList(rawJob.locations || rawJob.location || []);
+    const classified = classifyRecruitmentEvent({
+      pageTitle: candidate.title || `${companyResult.company}招聘`,
+      pageText: candidate.evidence || '',
+      jobTitle: title,
+      employmentType: rawJob.employmentType || '',
+      directoryUrl: canonicalUrl,
+      directoryPageType: 'PLATFORM_ONLY',
+      sourceTier: 'PLATFORM_ONLY',
+      structuredStartAt: rawJob.publishedAt,
+      structuredClosesAt: rawJob.closesAt,
+      locations,
+    });
+    const initialEvent = createRecruitmentEvent({
+      ...classified,
+      companyId: company.id,
+      careerPortalId: portal.id,
+      sourceTier: 'PLATFORM_ONLY',
+      publicationClass: 'PLATFORM_ONLY',
+      lastVerifiedAt: observedAt,
+    }, { now: observedAt });
+    const previous = eventsById.get(initialEvent.id);
+    const event = previous
+      ? createRecruitmentEvent({
+        ...initialEvent,
+        firstSeenAt: previous.firstSeenAt,
+        locations: [...new Set([...previous.locations, ...initialEvent.locations])],
+      }, { now: observedAt })
+      : initialEvent;
+    eventsById.set(event.id, event);
+    openings.push(createJobOpening({
+      companyId: company.id,
+      careerPortalId: portal.id,
+      recruitmentEventId: event.id,
+      sourceTier: 'PLATFORM_ONLY',
+      sourceJobId: rawJob.sourceJobId || rawJob.jobId || null,
+      title,
+      locations,
+      employmentType: rawJob.employmentType || null,
+      publishedAt: explicitTimestamp(rawJob.publishedAt),
+      closesAt: explicitTimestamp(rawJob.closesAt),
+      jobDetailUrl: canonicalHttpUrl(rawJob.jobDetailUrl || rawJob.detailUrl),
+      applyUrl: null,
+      status: 'ACTIVE',
+      sourceUrl,
+    }, { now: observedAt }));
+  }
+  return Object.freeze({
+    company,
+    portal,
+    evidence,
+    events: Object.freeze([...eventsById.values()]),
+    openings: Object.freeze(openings),
+  });
+}
+
+function appendPlatformFallbacks(result, snapshots) {
+  if (!snapshots.length) return result;
+  const portals = snapshots.map((snapshot) => snapshot.portal);
+  const events = snapshots.flatMap((snapshot) => snapshot.events);
+  const jobs = snapshots.flatMap((snapshot) => snapshot.openings);
+  const report = result.report;
+  return Object.freeze({
+    ...result,
+    companiesDiscovered: Math.max(1, result.companiesDiscovered),
+    reviewRequired: result.reviewRequired + portals.length,
+    jobsStored: result.jobsStored + jobs.length,
+    report: Object.freeze({
+      ...report,
+      portalDecisions: Object.freeze([
+        ...report.portalDecisions,
+        ...portals.map((portal) => Object.freeze({
+          portalId: portal.id,
+          companyId: portal.companyId,
+          companyName: snapshots.find((snapshot) => snapshot.portal.id === portal.id)
+            ?.company.canonicalName,
+          url: portal.canonicalUrl,
+          atsType: portal.atsType,
+          pageType: portal.pageType,
+          sourceTier: portal.sourceTier,
+          verificationStatus: portal.verificationStatus,
+          confidenceScore: portal.confidenceScore,
+          hiringAvailability: portal.hiringAvailability,
+          vacancyStatus: 'ACTIVE',
+          fallbackReason: portal.fallbackReason,
+          evidence: portal.evidence,
+        })),
+      ]),
+      recruitmentEvents: Object.freeze([...report.recruitmentEvents, ...events]),
+      extractedJobs: Object.freeze([...report.extractedJobs, ...jobs]),
+      reviewCount: report.reviewCount + portals.length,
+      extractedJobCount: report.extractedJobCount + jobs.length,
+      activeRecruitmentEntryCount: report.activeRecruitmentEntryCount + portals.length,
+      quality: Object.freeze({
+        ...report.quality,
+        platformOnlyAcceptanceCount: (
+          Number(report.quality.platformOnlyAcceptanceCount) || 0
+        ) + portals.length,
+      }),
+    }),
+  });
+}
+
 export async function ingestBrowserCompanyResult({
   companyResult,
   role = '公开招聘岗位',
@@ -109,7 +321,7 @@ export async function ingestBrowserCompanyResult({
     now,
   });
 
-  return discoverMarketJobs({
+  const result = await discoverMarketJobs({
     market: 'CN',
     roleType: String(role || '公开招聘岗位'),
     industryTags: stringList(industry),
@@ -129,4 +341,30 @@ export async function ingestBrowserCompanyResult({
     maxQueries: 1,
     openingRetention: 'all_observed_active',
   });
+
+  if (result.status === 'FAILED') return result;
+  const officialPortals = result.report.portalDecisions.filter((portal) => (
+    portal.sourceTier !== 'PLATFORM_ONLY'
+  ));
+  const snapshots = [];
+  for (const candidate of companyResult.platformCandidates || []) {
+    const fallback = decidePlatformFallback({
+      officialPortals,
+      platformCandidate: candidate,
+      searchCoverage: companyResult.failures?.length ? 'PARTIAL' : 'COMPLETE',
+    });
+    if (!fallback.publish) continue;
+    const observedAt = now();
+    const snapshot = createPlatformSnapshot({
+      companyResult,
+      candidate,
+      fallback,
+      industry,
+      observedAt,
+    });
+    if (!snapshot.openings.length) continue;
+    repository.withTransaction(() => repository.persistCompanySnapshot(snapshot));
+    snapshots.push(snapshot);
+  }
+  return appendPlatformFallbacks(result, snapshots);
 }

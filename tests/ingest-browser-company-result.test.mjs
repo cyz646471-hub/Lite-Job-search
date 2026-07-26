@@ -282,3 +282,56 @@ test('unverified browser candidates never create formal openings', async (t) => 
     portal.verificationStatus !== 'VERIFIED'
   )));
 });
+
+test('persists an isolated platform fallback when no official portal is usable', async (t) => {
+  const repository = await createRepository(t);
+  const platformUrl = 'https://www.liepin.com/company-jobs/13296749/';
+  const jobUrl = 'https://www.liepin.com/job/123/';
+  const result = await ingestBrowserCompanyResult({
+    companyResult: {
+      company: '希奥端',
+      query: '希奥端 招聘',
+      status: 'COMPLETED',
+      officialCandidates: [],
+      platformCandidates: [{
+        company: '希奥端',
+        title: '希奥端招聘',
+        url: platformUrl,
+        sourceUrl: platformUrl,
+        sourceTier: 'PLATFORM_ONLY',
+        platform: 'LIEPIN',
+        verificationStatus: 'REVIEW',
+        officialIdentityConfirmed: false,
+        platformIdentityConfirmed: true,
+        confidenceScore: 49,
+        hiringAvailability: 'OPENINGS_FOUND',
+        jobs: [{
+          title: '产品经理',
+          locations: ['南京'],
+          publishedAt: null,
+          closesAt: null,
+          jobDetailUrl: jobUrl,
+          sourceUrl: jobUrl,
+        }],
+      }],
+      observations: [],
+      failures: [],
+    },
+    role: '公开招聘岗位',
+  }, {
+    repository,
+    now: () => NOW,
+  });
+
+  assert.equal(result.jobsStored, 1);
+  assert.equal(repository.listCompanies().length, 1);
+  assert.equal(repository.listCareerPortals().length, 1);
+  assert.equal(repository.listCareerPortals()[0].sourceTier, 'PLATFORM_ONLY');
+  assert.equal(repository.listCareerPortals()[0].verificationStatus, 'REVIEW');
+  assert.equal(repository.listCareerPortals()[0].fallbackReason, 'NO_OFFICIAL_FOUND');
+  assert.equal(repository.listRecruitmentEvents()[0].sourceTier, 'PLATFORM_ONLY');
+  assert.equal(repository.listRecruitmentEvents()[0].publicationClass, 'PLATFORM_ONLY');
+  assert.equal(repository.listJobOpenings()[0].sourceTier, 'PLATFORM_ONLY');
+  assert.equal(repository.listJobOpenings()[0].title, '产品经理');
+  assert.equal(result.report.quality.platformOnlyAcceptanceCount, 1);
+});
