@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { SOURCE_TIERS } from './recruitment-event.mjs';
 
 const STATUSES = new Set(['ACTIVE', 'CLOSED', 'UNKNOWN']);
 
@@ -21,14 +22,22 @@ function cleanUrl(value) {
 export function stableOpeningId(input = {}) {
   if (input.id) return String(input.id);
   const companyId = String(input.companyId || '');
+  const eventIdentity = input.recruitmentEventId
+    ? `event:${String(input.recruitmentEventId)}`
+    : null;
   const identity = input.sourceJobId
-    ? `${companyId}|source:${String(input.sourceJobId)}`
+    ? [
+      companyId,
+      eventIdentity,
+      `source:${String(input.sourceJobId)}`,
+    ].filter(Boolean).join('|')
     : [
       companyId,
+      eventIdentity,
       cleanUrl(input.jobDetailUrl) || cleanUrl(input.sourceUrl) || '',
       clean(input.title).toLowerCase(),
       clean(input.locations?.[0]).toLowerCase(),
-    ].join('|');
+    ].filter((value) => value != null).join('|');
   return createHash('sha256').update(identity).digest('hex');
 }
 
@@ -42,10 +51,16 @@ export function createJobOpening(input = {}, {
   }
   const status = input.status || 'UNKNOWN';
   if (!STATUSES.has(status)) throw new Error('unsupported JobOpening status');
+  const sourceTier = clean(input.sourceTier || 'OFFICIAL_SITE').toUpperCase();
+  if (!SOURCE_TIERS.includes(sourceTier)) throw new Error('unsupported JobOpening sourceTier');
   return Object.freeze({
     id: stableOpeningId({ ...input, sourceUrl }),
     companyId: String(input.companyId),
     careerPortalId: String(input.careerPortalId),
+    recruitmentEventId: input.recruitmentEventId == null
+      ? null
+      : String(input.recruitmentEventId),
+    sourceTier,
     sourceJobId: input.sourceJobId == null ? null : String(input.sourceJobId),
     title,
     normalizedTitle: clean(input.normalizedTitle || title).toLowerCase(),
