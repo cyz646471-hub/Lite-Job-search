@@ -12,7 +12,7 @@ Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具�
 | 发现源 | Gank Interview、牛客招聘日程、牛企直聘、实习僧等公开线索；浪浪网申已移除 | 企业官网、VC portfolio seeds、公开职位板 |
 | ATS / 招聘系统 | Moka、北森/Hotjob、飞书招聘、智联招聘系统、Moseeker 等 | Greenhouse、Lever、Ashby、Workday、SmartRecruiters、Teamtailor 等 |
 | 验证 | 企业主域、品牌信号、ATS 租户、招聘语义、页面角色 | 企业域名、ATS 租户、职位列表/详情/申请动作 |
-| 输出 | 统一 JSON、JSONL、CSV | 统一 JSON、JSONL、CSV |
+| 输出 | JSON、JSONL、CSV、SQLite、按招聘事件聚合的 XLSX | JSON、JSONL、CSV、SQLite、按招聘事件聚合的 XLSX |
 
 抽取引擎保留 60+ 个 Career OP provider、8 个招聘页面 provider、5 个职位详情 provider。公开接口只暴露稳定工作流，减少其他模型需要读取的上下文。
 
@@ -107,7 +107,7 @@ node bin/lite-job-search.mjs discover-batch `
 
 系统分别统计 Candidate、Verified Portal 和 Usable Apply Entry。聚合站、高校就业网、新闻转载和培训机构不能作为官方招聘入口；未知发布日期不计入近期岗位。数量不足时返回 `PARTIAL`，不会用低置信度页面补足。
 
-学生投递 XLSX 作为下游固定输出：从已验证 `JobOpening` 兼容投影生成，每个岗位一行，投递/详情地址使用 Excel 超链接，隐藏内部 ID、证据和原始元数据。本阶段保留现有 XLSX 消费边界，不在发现引擎内复制表格实现。
+学生投递 XLSX 是固定输出：每行对应一个 `RecruitmentEvent`（公司 + 招聘类型 + 届次 + 目录 URL），同一事件下的岗位和地区去重合并。投递链接只使用届次/活动目录 URL，并以 Excel 超链接展示；缺失日期、地区、行业和简介保持空白。内部 ID、验证证据、Provider、缓存、错误和单岗位详情链接不进入学生表。
 
 输入支持 JSON、JSONL 和 CSV。无搜索 API 时，可用 `--manual manual-candidates.json` 导入浏览器或人工确认的候选。
 
@@ -190,11 +190,15 @@ try {
 
 ## 浏览器与 Apify
 
-- 浏览器搜索使用正常可见会话；不绕过验证码、登录或访问控制。
+- 浏览器 Worker 支持注入扩展绑定的 `normal-chrome` 和独立可见 profile 的 `persistent-chrome`，模式不可用时明确返回 `NOT_CONFIGURED`，不会静默降级。
+- 百度搜索默认至少间隔 10 秒并叠加 0–20 秒抖动；首次安全验证立即将当前公司记为 `DEFERRED`、打开持久化断路器并停止后续 Query。
+- 浏览器搜索不绕过验证码、登录、限流或访问控制；人工健康探测成功后才恢复延迟队列。
 - Apify 只作为增量搜索与动态页面降级，不保存业务主数据。
 - Apify Google 查询应按 20–100 条批量提交，每条只取第一页和前 8 个自然结果。
 - 默认不启用住宅代理。
 - 预算耗尽返回 `search_deferred_by_budget`，不等于“没有官网”。
+
+完整命令、断点恢复、来源边界、SQLite 完整性与 XLSX 输出见[本地 Chrome 招聘发现 Worker](docs/local-browser-worker.md)。
 
 ## 项目结构
 
