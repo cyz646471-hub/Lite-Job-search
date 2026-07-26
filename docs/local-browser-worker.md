@@ -22,9 +22,38 @@ Golden Dataset 公司
 Worker 支持两种显式模式，不会静默降级：
 
 - `persistent-chrome`：CLI 默认模式。启动独立的可见 Chrome profile，适合本地队列长期运行。
-- `normal-chrome`：使用注入的 ChatGPT Chrome Extension binding。若调用环境没有注入 binding，返回 `NOT_CONFIGURED`，不会改用独立 profile。
+- `normal-chrome`：连接已经存在的普通 Chrome 会话。必须显式提供扩展 binding、`--chrome-binding-module` 或 `--cdp-endpoint`；缺少连接通道时返回 `NOT_CONFIGURED`，不会改用独立 profile。
 
 默认启动可见 Chrome。`--headless` 仅用于诊断；无头浏览器更容易遇到安全验证，不能作为规避手段。
+
+### 普通 Chrome 连接方式
+
+宿主已经注入 ChatGPT Chrome Extension binding 时，可直接选择
+`--browser-mode normal-chrome`。从普通 Node/npm 子进程运行时，使用以下任一显式入口：
+
+```powershell
+# 方式一：模块导出 chromeBrowserBinding 或 default binding
+npm.cmd run discover:local-worker -- `
+  --input data/company-registry/golden-seed-companies-merged-current.json `
+  --output-dir test-output/local-worker/normal-chrome `
+  --database data/lite-job-search.sqlite `
+  --browser-mode normal-chrome `
+  --chrome-binding-module C:\path\to\chrome-binding.mjs `
+  --batch-id daily-cn-normal-chrome
+```
+
+```powershell
+# 方式二：Chrome 已显式启用远程调试
+npm.cmd run discover:local-worker -- `
+  --input data/company-registry/golden-seed-companies-merged-current.json `
+  --output-dir test-output/local-worker/normal-chrome `
+  --database data/lite-job-search.sqlite `
+  --browser-mode normal-chrome `
+  --cdp-endpoint http://127.0.0.1:9222 `
+  --batch-id daily-cn-normal-chrome
+```
+
+CDP 模式只关闭 Worker 自己打开的页面，不关闭已连接的 Chrome context。远程调试端口应只绑定本机并由用户主动开启；不要暴露到局域网或公网。连接失败、没有浏览器 context 或模块未导出有效 binding 时均明确失败，不会宣称完成检索。
 
 ## 执行批次
 
@@ -97,6 +126,7 @@ npm.cmd run discover:local-worker -- `
 - 后续发现官方事件时，平台历史保留并标记 `supersededByPortalId`，默认学生投递清单不展示被替代记录。
 - 官网已找到但明确无开放岗位时，保留 Portal 和 `NO_OPENINGS`，不伪造 JobOpening。
 - 日期、地区、岗位和届次只保存页面明确值；未知字段保持空白。
+- `falsePositiveRate` 只有在人工标注 ground truth 时计算；没有人工标签时保持 `null`，不会把确定性拒绝率冒充为误报率。
 
 ## 输出
 

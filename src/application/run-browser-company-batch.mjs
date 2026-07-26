@@ -21,7 +21,7 @@ export async function runBrowserCompanyBatch({
   batchId,
   companies = [],
   retryFailed = false,
-  maxCompaniesPerRun = 20,
+  maxCompaniesPerRun = 10,
   runOptions = {},
   provider = 'baidu',
 } = {}, {

@@ -148,3 +148,64 @@ test('browser run report explains a zero-query pause caused by an open circuit',
       && item.code === 'search_challenge_or_access_blocked'
   )));
 });
+
+test('browser run report aggregates actual extraction attempts from pipeline reports', () => {
+  const report = buildBrowserRunReport({
+    batch: {
+      batchId: 'attempts',
+      status: 'COMPLETE',
+      total: 1,
+      succeeded: 1,
+    },
+    companyResults: [{
+      company: '示例科技',
+      query: '示例科技 招聘',
+      status: 'COMPLETED',
+      officialCandidates: [
+        { url: 'https://jobs.example.com/social' },
+        { url: 'https://jobs.example.com/campus' },
+      ],
+    }],
+    discoveryRuns: [{
+      report: {
+        portalDecisions: [
+          {
+            portalId: 'portal-social',
+            sourceTier: 'OFFICIAL_SITE',
+            verificationStatus: 'VERIFIED',
+            hiringAvailability: 'OPENINGS_FOUND',
+            confidenceScore: 90,
+          },
+          {
+            portalId: 'portal-campus',
+            sourceTier: 'OFFICIAL_SITE',
+            verificationStatus: 'VERIFIED',
+            hiringAvailability: 'NO_OPENINGS',
+            confidenceScore: 90,
+          },
+        ],
+        extractedJobs: [{
+          companyId: 'company-1',
+          careerPortalId: 'portal-social',
+          sourceTier: 'OFFICIAL_SITE',
+          title: '产品经理',
+        }],
+        recruitmentEvents: [],
+        failures: [],
+        quality: {
+          officialJobExtractionSuccessRate: {
+            numerator: 1,
+            denominator: 1,
+            value: 1,
+          },
+        },
+      },
+    }],
+  });
+
+  assert.deepEqual(report.quality.officialJobExtractionSuccessRate, {
+    numerator: 1,
+    denominator: 1,
+    value: 1,
+  });
+});

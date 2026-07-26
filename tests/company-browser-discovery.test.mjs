@@ -648,6 +648,33 @@ test('normal Chrome mode requires an injected extension binding', async () => {
   );
 });
 
+test('normal Chrome mode can attach through an explicit CDP endpoint', async () => {
+  const contexts = [{
+    newPage: async () => ({}),
+    close: async () => {
+      throw new Error('attached normal Chrome context must not be closed');
+    },
+  }];
+  const connections = [];
+  const runtime = await createBrowserRuntime({
+    mode: 'normal-chrome',
+    chromium: {
+      async connectOverCDP(endpoint) {
+        connections.push(endpoint);
+        return {
+          contexts: () => contexts,
+          disconnect: async () => {},
+        };
+      },
+    },
+    cdpEndpoint: 'http://127.0.0.1:9222',
+  });
+
+  assert.equal(typeof runtime.newPage, 'function');
+  await runtime.close();
+  assert.deepEqual(connections, ['http://127.0.0.1:9222']);
+});
+
 test('persistent Chrome mode launches an isolated visible profile explicitly', async () => {
   const launches = [];
   const context = {

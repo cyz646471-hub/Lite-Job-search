@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getDomain } from 'tldts';
 import { ingestBrowserCompanyResult } from '../src/application/ingest-browser-company-result.mjs';
 import {
@@ -220,12 +220,15 @@ export function buildBrowserRunReport({
     run?.report?.recruitmentEvents || []
   ));
   const jobs = discoveryRuns.flatMap((run) => run?.report?.extractedJobs || []);
-  const candidateUrls = companyResults.flatMap((result) => (
-    result.officialCandidates || []
-  )).map((candidate) => candidate.url).filter(Boolean);
+  const candidateUrls = companyResults.flatMap((result) => [
+    ...(result.officialCandidates || []),
+    ...(result.platformCandidates || []),
+  ]).map((candidate) => candidate.url).filter(Boolean);
   const uniqueCandidateUrls = new Set(candidateUrls);
   const candidateCompanies = new Set(companyResults
-    .filter((result) => result.officialCandidates?.length)
+    .filter((result) => (
+      result.officialCandidates?.length || result.platformCandidates?.length
+    ))
     .map((result) => result.company));
   const verifiedDecisions = decisions.filter((item) => item.verificationStatus === 'VERIFIED');
   const reviewDecisions = decisions.filter((item) => (
@@ -242,18 +245,20 @@ export function buildBrowserRunReport({
   const verifiedOfficialDecisions = officialDecisions.filter((item) => (
     item.verificationStatus === 'VERIFIED'
   ));
-  const officialJobPortalIds = new Set(jobs
-    .filter((job) => job.sourceTier !== 'PLATFORM_ONLY')
-    .map((job) => job.careerPortalId)
-    .filter(Boolean));
+  const actualExtraction = discoveryRuns.reduce((totals, run) => {
+    const metric = run?.report?.quality?.officialJobExtractionSuccessRate;
+    totals.attempts += Number(metric?.denominator) || 0;
+    totals.successes += Number(metric?.numerator) || 0;
+    return totals;
+  }, { attempts: 0, successes: 0 });
   const officialConfidenceScores = officialDecisions
     .map((item) => Number(item.confidenceScore))
     .filter(Number.isFinite);
   const quality = buildQualityReport({
     portalsEvaluated: officialDecisions.length,
     portalsVerified: verifiedOfficialDecisions.length,
-    officialExtractionAttempts: verifiedOfficialDecisions.length,
-    officialExtractionSuccesses: officialJobPortalIds.size,
+    officialExtractionAttempts: actualExtraction.attempts,
+    officialExtractionSuccesses: actualExtraction.successes,
     platformOnlyAcceptanceCount: platformDecisions.filter((item) => (
       item.hiringAvailability === 'OPENINGS_FOUND'
     )).length,
@@ -352,12 +357,15 @@ export function buildBrowserRunReport({
       searchQueries: Object.freeze([
         ...new Set(companyResults.map((result) => result.query).filter(Boolean)),
       ]),
-      searchResultCount: companyResults.reduce((sum, result) => (
-        sum
-        + (result.officialCandidates?.length || 0)
-        + (result.leads?.length || 0)
-        + (result.rejected?.length || 0)
-      ), 0),
+      searchResultCount: companyResults.reduce((sum, result) => {
+        const urls = [
+          ...(result.officialCandidates || []),
+          ...(result.platformCandidates || []),
+          ...(result.leads || []),
+          ...(result.rejected || []),
+        ].map((item) => item.url).filter(Boolean);
+        return sum + new Set(urls).size;
+      }, 0),
       candidateUrlCount: uniqueCandidateUrls.size,
       candidateCompanyCount: candidateCompanies.size,
       completedCompanies: companyResults.filter((item) => item.status === 'COMPLETED').length,
@@ -802,6 +810,13 @@ function parseArgs(argv) {
   return values;
 }
 
+async function loadChromeBinding(modulePath) {
+  if (!modulePath) return null;
+  const moduleUrl = pathToFileURL(path.resolve(modulePath)).href;
+  const loaded = await import(moduleUrl);
+  return loaded.chromeBrowserBinding || loaded.default || null;
+}
+
 export async function probeBaiduSearchHealth({
   browser,
   timeoutMs = 10_000,
@@ -836,7 +851,7 @@ async function runCli() {
   const args = parseArgs(runtimeProcess?.argv?.slice(2) || []);
   const healthProbeMode = Boolean(args['resume-provider'] && args['health-probe']);
   if (args.help || (!healthProbeMode && (!args.input || !args['output-dir']))) {
-    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--xlsx-output outputs/student-applications.xlsx] [--browser-mode persistent-chrome|normal-chrome] [--profile-dir data/local-chrome-worker-profile] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 10000] [--search-jitter-ms 20000] [--max-companies-per-run 10] [--headless]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/local-chrome-worker-profile]\n');
+    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--xlsx-output outputs/student-applications.xlsx] [--browser-mode persistent-chrome|normal-chrome] [--profile-dir data/local-chrome-worker-profile] [--cdp-endpoint http://127.0.0.1:9222] [--chrome-binding-module path/to/binding.mjs] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 10000] [--search-jitter-ms 20000] [--max-companies-per-run 10] [--headless]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/local-chrome-worker-profile]\n');
     return args.help ? 0 : 2;
   }
   let companies = [];
@@ -851,7 +866,7 @@ async function runCli() {
   }
   const browserMode = String(args['browser-mode'] || 'persistent-chrome');
   let chromium = null;
-  if (browserMode === 'persistent-chrome') {
+  if (browserMode === 'persistent-chrome' || args['cdp-endpoint']) {
     try { ({ chromium } = await import('playwright')); }
     catch (error) { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'playwright_not_available', error: String(error?.message || error) })}\n`); return 2; }
   }
@@ -859,10 +874,13 @@ async function runCli() {
   const profileDir = path.resolve(args['profile-dir'] || path.join('data', 'local-chrome-worker-profile'));
   try {
     await fs.mkdir(profileDir, { recursive: true });
+    const chrome = globalThis.chromeBrowserBinding
+      || await loadChromeBinding(args['chrome-binding-module']);
     browser = await createBrowserRuntime({
       mode: browserMode,
-      chrome: globalThis.chromeBrowserBinding || null,
+      chrome,
       chromium,
+      cdpEndpoint: args['cdp-endpoint'] || '',
       profileDir,
       headless: buildBrowserLaunchOptions(args).headless,
     });

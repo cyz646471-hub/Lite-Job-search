@@ -190,7 +190,7 @@ try {
 
 ## 浏览器与 Apify
 
-- 浏览器 Worker 支持注入扩展绑定的 `normal-chrome` 和独立可见 profile 的 `persistent-chrome`，模式不可用时明确返回 `NOT_CONFIGURED`，不会静默降级。
+- 浏览器 Worker 支持扩展 binding、显式 binding 模块或本机 CDP 端点连接的 `normal-chrome`，以及独立可见 profile 的 `persistent-chrome`；模式不可用时明确返回 `NOT_CONFIGURED`，不会静默降级。
 - 百度搜索默认至少间隔 10 秒并叠加 0–20 秒抖动；首次安全验证立即将当前公司记为 `DEFERRED`、打开持久化断路器并停止后续 Query。
 - 浏览器搜索不绕过验证码、登录、限流或访问控制；人工健康探测成功后才恢复延迟队列。
 - Apify 只作为增量搜索与动态页面降级，不保存业务主数据。

@@ -8,7 +8,10 @@ import {
   observeRenderedRecruitmentPage,
 } from './recruitment-page-observer.mjs';
 
-export function createPlaywrightBrowserSession(context) {
+export function createPlaywrightBrowserSession(context, {
+  closeContext = true,
+  onClose = null,
+} = {}) {
   if (typeof context?.newPage !== 'function') {
     throw new Error('Playwright context.newPage is required');
   }
@@ -28,7 +31,11 @@ export function createPlaywrightBrowserSession(context) {
       });
       return assertBrowserPage(wrapped);
     },
-    close: () => context.close(),
+    close: async () => {
+      if (typeof onClose === 'function') return onClose();
+      if (closeContext) return context.close();
+      return undefined;
+    },
   });
   return assertBrowserSession(session);
 }
