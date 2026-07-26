@@ -265,6 +265,8 @@ test('article-shaped recruitment repost remains a news reprint', async () => {
   });
 
   assert.ok(result.evidence.some((item) => item.code === 'news_reprint'));
+  assert.equal(result.confirmedOfficialDomain, null);
+  assert.ok(!result.evidence.some((item) => item.code === 'domain_bootstrap_confirmed'));
 });
 
 test('commercial career coaching remains a training-provider rejection', async () => {
@@ -280,6 +282,8 @@ test('commercial career coaching remains a training-provider rejection', async (
   });
 
   assert.ok(result.evidence.some((item) => item.code === 'training_provider'));
+  assert.equal(result.confirmedOfficialDomain, null);
+  assert.ok(!result.evidence.some((item) => item.code === 'domain_bootstrap_confirmed'));
 });
 
 test('blocked page produces a non-bypass evidence code', async () => {

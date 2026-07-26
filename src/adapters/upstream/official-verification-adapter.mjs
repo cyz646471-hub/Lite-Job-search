@@ -111,8 +111,9 @@ export function createOfficialVerificationAdapter({
         cookies: page.cookies || [],
         requests: page.requests || [],
       }) || { ats: '', confidence: 0 };
+      const hardNegative = hardNegativeCode(finalUrl, { ...page, html });
       const existingOfficialDomains = [...new Set(company.officialDomains || [])];
-      const bootstrap = existingOfficialDomains.length
+      const bootstrap = existingOfficialDomains.length || hardNegative
         ? null
         : bootstrapOfficialDomain({
           company,
@@ -165,7 +166,7 @@ export function createOfficialVerificationAdapter({
         });
       };
 
-      push(hardNegativeCode(finalUrl, { ...page, html }));
+      push(hardNegative);
       if ((identity.riskSignals || []).includes('identity_conflict')) {
         push('company_identity_conflict');
       }
