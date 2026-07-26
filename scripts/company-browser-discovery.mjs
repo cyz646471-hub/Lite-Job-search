@@ -322,10 +322,23 @@ export function buildBrowserRunReport({
       });
     }
   }
+  if (batch.providerCircuit
+    && ['OPEN', 'PROBE_REQUIRED'].includes(batch.providerCircuit.state)) {
+    failures.push({
+      company: null,
+      stage: 'circuit_breaker',
+      code: batch.providerCircuit.reasonCode || 'provider_circuit_open',
+      url: null,
+      message: batch.providerCircuit.reasonCode || 'provider_circuit_open',
+    });
+  }
 
   return Object.freeze({
     generatedAt: new Date().toISOString(),
     status: batch.status || 'UNKNOWN',
+    providerCircuit: batch.providerCircuit
+      ? Object.freeze({ ...batch.providerCircuit })
+      : null,
     batch: Object.freeze({
       batchId: batch.batchId || null,
       total: Number(batch.total) || companyResults.length,

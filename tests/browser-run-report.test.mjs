@@ -118,3 +118,33 @@ test('browser run report does not turn blocked or failed work into an empty succ
   assert.equal(report.discovery.blockedCompanies, 1);
   assert.ok(report.failures.some((item) => item.code === 'search_challenge_or_access_blocked'));
 });
+
+test('browser run report explains a zero-query pause caused by an open circuit', () => {
+  const report = buildBrowserRunReport({
+    batch: {
+      batchId: 'circuit-open',
+      status: 'PAUSED',
+      total: 50,
+      succeeded: 0,
+      failed: 0,
+      deferred: 1,
+      pending: 49,
+      providerCircuit: {
+        provider: 'baidu',
+        state: 'OPEN',
+        reasonCode: 'search_challenge_or_access_blocked',
+        openedAt: '2026-07-26T00:00:00.000Z',
+      },
+    },
+    companyResults: [],
+    discoveryRuns: [],
+  });
+
+  assert.equal(report.providerCircuit.state, 'OPEN');
+  assert.equal(report.batch.deferred, 1);
+  assert.equal(report.discovery.searchQueries.length, 0);
+  assert.ok(report.failures.some((item) => (
+    item.stage === 'circuit_breaker'
+      && item.code === 'search_challenge_or_access_blocked'
+  )));
+});
