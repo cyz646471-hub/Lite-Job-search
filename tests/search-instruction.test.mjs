@@ -21,7 +21,9 @@ test('compiles a Chinese product-manager instruction into a complete worker task
   assert.equal(task.location, '');
   assert.equal(task.freshnessDays, 90);
   assert.equal(task.targetCount, 100);
-  assert.equal(task.browserMode, 'persistent-chrome');
+  assert.equal(task.browserMode, 'normal-chrome');
+  assert.deepEqual(task.searchSources, ['chrome_baidu_visible_search']);
+  assert.deepEqual(task.disabledSearchSources, ['baidu_api', 'apify']);
   assert.equal(task.maxCompaniesPerRun, 10);
   assert.match(task.batchId, /^instruction-cn-product-manager-20260726-[a-f0-9]{8}$/);
   assert.equal(
@@ -67,4 +69,3 @@ test('rejects instructions that omit a market, role or target count', () => {
     /target count/,
   );
 });
-

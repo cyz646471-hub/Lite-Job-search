@@ -99,3 +99,30 @@ test('plan-only reports a truthful local-list shortage without a supplement modu
   assert.equal(response.supplementStatus, 'NOT_CONFIGURED');
 });
 
+test('China instruction refuses an isolated Chrome override for Baidu search', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-browser-policy-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const registry = path.join(directory, 'registry.json');
+  const database = path.join(directory, 'jobs.sqlite');
+  const outputDir = path.join(directory, 'output');
+  await writeFile(registry, '[{"company":"候选公司"}]\n');
+
+  const result = spawnSync(process.execPath, [
+    'scripts/run-search-instruction.mjs',
+    '检索近90天内中国，开放产品经理方向岗位公司1个',
+    '--registry', registry,
+    '--database', database,
+    '--output-dir', outputDir,
+    '--browser-mode', 'persistent-chrome',
+    '--plan-only',
+    '--no-registry-scan',
+  ], {
+    cwd: path.resolve('.'),
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 1);
+  const failure = JSON.parse(result.stderr.trim());
+  assert.equal(failure.reasonCode, 'instruction_runner_failed');
+  assert.match(failure.error, /normal Chrome/i);
+});

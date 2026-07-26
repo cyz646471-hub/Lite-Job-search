@@ -46,7 +46,9 @@ npm.cmd run discover:instruction -- `
 - 输出目录；
 - XLSX 路径；
 - 稳定任务 ID 和与公司清单绑定的 batch ID；
-- 可见 Chrome 模式；
+- 用户正常 Chrome 扩展会话（`normal-chrome`）；
+- 唯一搜索源 `chrome_baidu_visible_search`；
+- 禁用百度 API 与 Apify，不允许自动回退；
 - 每轮 10 家；
 - 搜索最少间隔 10 秒并增加 0–20 秒随机抖动；
 - 候选页、招聘入口和递归访问上限。
@@ -82,7 +84,7 @@ npm.cmd run discover:instruction -- `
 → 本地名单与可替换补充源
 → SQLite 公司去重
 → selected-companies.json
-→ 可见 Chrome 搜索
+→ 用户正常 Chrome 百度搜索
 → 候选页面访问
 → Verification Engine
 → CareerPortal
@@ -97,6 +99,10 @@ LLM 不参与官网真实性、ATS 归属、verification status 或 confidence s
 判断。出现 CAPTCHA、网络失败、Provider 失败或浏览器断开时，必须保留
 `BLOCKED`、`FAILED`、`DEFERRED` 或 `NOT_CONFIGURED`，并停止不安全的继续
 检索。
+
+百度搜索页不得使用隔离的 `persistent-chrome` profile。生产任务必须复用
+用户已经打开并启用扩展的正常 Chrome 会话；会话未连接时返回
+`NOT_CONFIGURED`。不得切换到百度 API、Apify 或其他搜索源来规避安全验证。
 
 ## 输出
 
@@ -115,4 +121,3 @@ LLM 不参与官网真实性、ATS 归属、verification status 或 confidence s
 岗位、地区、届次、开始和截止日期只使用页面明确证据；未知值保持空白。
 XLSX 投递链接使用经过验证的招聘事件或届次目录链接，不使用搜索结果、
 新闻、聚合页或虚构链接。
-

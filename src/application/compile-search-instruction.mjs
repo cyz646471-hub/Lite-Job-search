@@ -127,7 +127,9 @@ export function compileSearchInstruction(instruction, {
     database: 'data/lite-job-search.sqlite',
     outputDir,
     xlsxOutput: `${outputDir}/student-applications.xlsx`,
-    browserMode: 'persistent-chrome',
+    browserMode: 'normal-chrome',
+    searchSources: Object.freeze(['chrome_baidu_visible_search']),
+    disabledSearchSources: Object.freeze(['baidu_api', 'apify']),
     maxCompaniesPerRun: 10,
     searchDelayMs: 10_000,
     searchJitterMs: 20_000,
@@ -139,4 +141,3 @@ export function compileSearchInstruction(instruction, {
     compiledAt: current.toISOString(),
   });
 }
-

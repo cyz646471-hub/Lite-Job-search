@@ -203,6 +203,13 @@ export async function runSearchInstructionCli(argv = process.argv.slice(2)) {
   }
 
   const compiled = compileSearchInstruction(args.instruction);
+  if (compiled.market === 'CN'
+    && args['browser-mode']
+    && args['browser-mode'] !== compiled.browserMode) {
+    throw new Error(
+      'China production search requires the user normal Chrome session; isolated browser profiles are disabled',
+    );
+  }
   const task = Object.freeze({
     ...compiled,
     registry: args.registry || compiled.registry,
@@ -399,4 +406,3 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exitCode = 1;
   });
 }
-

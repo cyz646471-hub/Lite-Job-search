@@ -29,7 +29,7 @@ Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具�
 
 | 模块 | 中国市场 | 北美市场 |
 |---|---|---|
-| 搜索服务 | 百度 API、可见 Chrome 百度工作流、Tavily、Brave、Apify Google、人工候选 | Tavily、Brave、人工候选 |
+| 搜索服务 | 当前生产流程仅使用用户正常 Chrome 的可见百度结果；百度 API 与 Apify 已禁用 | Tavily、Brave、人工候选 |
 | 发现源 | Gank Interview、牛客招聘日程、牛企直聘、实习僧等公开线索；浪浪网申已移除 | 企业官网、VC portfolio seeds、公开职位板 |
 | ATS / 招聘系统 | Moka、北森/Hotjob、飞书招聘、智联招聘系统、Moseeker 等 | Greenhouse、Lever、Ashby、Workday、SmartRecruiters、Teamtailor 等 |
 | 验证 | 企业主域、品牌信号、ATS 租户、招聘语义、页面角色 | 企业域名、ATS 租户、职位列表/详情/申请动作 |
@@ -219,15 +219,14 @@ try {
 }
 ```
 
-高级调用可直接导入 `runCnDiscovery()`、`runAtsDiscovery()`、`ApifyGoogleSearchProvider` 和招聘页面下钻函数。
+高级调用可直接导入 `runCnDiscovery()`、`runAtsDiscovery()` 和招聘页面下钻函数。
 
-## 浏览器与 Apify
+## 浏览器搜索
 
-- 浏览器 Worker 支持扩展 binding 或显式 binding 模块连接的 `normal-chrome`，以及独立可见 profile 的 `persistent-chrome`；模式不可用时明确返回 `NOT_CONFIGURED`，不会静默降级。
+- 中国生产 Worker 只使用扩展 binding 或显式 binding 模块连接的 `normal-chrome`；模式不可用时明确返回 `NOT_CONFIGURED`，不会静默降级。
 - 百度搜索默认至少间隔 10 秒并叠加 0–20 秒抖动；首次安全验证立即将当前公司记为 `DEFERRED`、打开持久化断路器并停止后续 Query。
 - 浏览器搜索不绕过验证码、登录、限流或访问控制；人工健康探测成功后才恢复延迟队列。
-- Apify 只作为增量搜索与动态页面降级，不保存业务主数据。
-- Apify Google 查询应按 20–100 条批量提交，每条只取第一页和前 8 个自然结果。
+- 不得使用隔离 `persistent-chrome`、百度 API、Apify 或其他搜索源规避百度安全验证。
 - 默认不启用住宅代理。
 - 预算耗尽返回 `search_deferred_by_budget`，不等于“没有官网”。
 

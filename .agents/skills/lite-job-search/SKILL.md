@@ -144,7 +144,9 @@ Run:
 node bin/lite-job-search.mjs batch --input .\companies.json --output .\candidates.json --json
 ```
 
-Use small batches first. For Apify Google search, use the extracted `ApifyGoogleSearchProvider.runBatch()` in groups of 20–100 queries; never launch one Actor run per company.
+Use small batches first. The natural-language China production workflow uses only
+the user's normal Chrome session and visible Baidu results. Baidu API and Apify
+are disabled for that workflow and must not be used as fallbacks.
 
 ## Run browser company discovery
 
@@ -231,7 +233,13 @@ Do not copy one URL into every role. Aggregators, media, universities, governmen
 
 Use the degradation order:
 
-`local HTTP → local Playwright → Apify raw HTTP → Apify browser → manual review`.
+`local HTTP → user's normal Chrome session → manual review`.
+
+Do not use an isolated `persistent-chrome` profile for Baidu search pages in the
+China production workflow. If the normal Chrome extension binding is unavailable,
+return `NOT_CONFIGURED`. If Baidu shows CAPTCHA or access verification, preserve
+the checkpoint and return `BLOCKED`; do not switch to Baidu API, Apify, another
+search engine, or a fresh browser profile to bypass it.
 
 Do not bypass login, access controls, CAPTCHA/验证码, rate limits, browser fingerprints, or anti-bot systems. Never submit an application, upload a resume, accept terms, or send messages.
 
