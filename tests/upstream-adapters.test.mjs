@@ -237,6 +237,7 @@ test('job extraction maps page provider jobs without inventing dates', async () 
           id: 'ai-pm',
           title: 'AI 产品经理',
           location: '上海',
+          publishedAt: '07-01',
           detailUrl: 'https://jobs.example.com/positions/ai-pm',
         }],
       }),
@@ -249,6 +250,8 @@ test('job extraction maps page provider jobs without inventing dates', async () 
       id: 'portal-1',
       companyId: 'company-1',
       canonicalUrl: 'https://jobs.example.com/openings',
+      atsType: 'MOKA',
+      sourceTier: 'OFFICIAL_ATS',
       pageType: 'JOB_LIST',
       verificationStatus: 'VERIFIED',
     },
@@ -258,6 +261,7 @@ test('job extraction maps page provider jobs without inventing dates', async () 
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].title, 'AI 产品经理');
   assert.equal(jobs[0].publishedAt, null);
+  assert.equal(jobs[0].sourceTier, 'OFFICIAL_ATS');
   assert.equal(jobs[0].jobDetailUrl, 'https://jobs.example.com/positions/ai-pm');
 });
 

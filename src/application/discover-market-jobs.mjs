@@ -1,7 +1,8 @@
 import { createCareerPortal } from '../domain/career-portal.mjs';
 import { createCompany } from '../domain/company.mjs';
 import { createDiscoveryLog } from '../domain/discovery-log.mjs';
-import { isRecentOpening } from '../domain/job-opening.mjs';
+import { createJobOpening, isRecentOpening } from '../domain/job-opening.mjs';
+import { createRecruitmentEvent } from '../domain/recruitment-event.mjs';
 import { createSearchIntent } from '../domain/search-intent.mjs';
 import { discoverCompanies } from '../discovery/company-discovery.mjs';
 import { expandKeywords } from '../discovery/keyword-expander.mjs';
@@ -13,6 +14,7 @@ import {
 import { assertMarketDiscoveryRepository } from '../ports/job-repository.mjs';
 import { buildQualityReport } from '../quality/quality-report.mjs';
 import { verifyCareerPortal } from '../verification/verification-engine.mjs';
+import { classifyRecruitmentEvent } from './recruitment-event-classifier.mjs';
 
 function assertDependencies(dependencies) {
   const requiredFunctions = [
@@ -418,7 +420,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         }, reviewKey);
         continue;
       }
-      const portal = createCareerPortal({
+      let portal = createCareerPortal({
         id: ids.portal({ ...candidate, url: page.finalUrl || candidate.url }),
         companyId: company.id,
         url: candidate.url,
@@ -428,9 +430,16 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         pageType: decision.pageType,
         verificationStatus: decision.verificationStatus,
         confidenceScore: decision.confidenceScore,
+        sourceTier: inspected.atsType ? 'OFFICIAL_ATS' : 'OFFICIAL_SITE',
+        officialIdentityConfirmed: decision.verificationStatus === 'VERIFIED',
+        hiringAvailability: inspected.vacancyStatus === 'NO_OPENINGS'
+          ? 'NO_OPENINGS'
+          : 'UNKNOWN',
+        searchCoverage: 'PARTIAL',
         recruitmentTypes: candidate.recruitmentTypes || [],
         evidence: portalEvidence,
         lastVerifiedAt: observedAt,
+        lastCheckedAt: observedAt,
       }, { now: observedAt });
 
       repository.withTransaction(() => {
@@ -455,8 +464,10 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         url: portal.canonicalUrl,
         atsType: portal.atsType,
         pageType: portal.pageType,
+        sourceTier: portal.sourceTier,
         verificationStatus: portal.verificationStatus,
         confidenceScore: portal.confidenceScore,
+        hiringAvailability: portal.hiringAvailability,
         vacancyStatus: inspected.vacancyStatus || 'UNKNOWN',
         evidence: portal.evidence,
       }));
@@ -596,6 +607,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         applyUrl: { present: 0, missing: 0 },
       };
       const retainAllObserved = openingRetention === 'all_observed_active';
+      const recruitmentEventsById = new Map();
       for (const opening of openings || []) {
         if (counters.jobsStored >= intent.targetCount) break;
         const openingFieldPresence = {
@@ -624,23 +636,100 @@ export async function discoverMarketJobs(input, dependencies = {}) {
           }, opening.sourceUrl);
           continue;
         }
-        if (storedJobIds.has(opening.id)) continue;
-        repository.upsertJobOpening(opening);
-        storedJobIds.add(opening.id);
-        storedJobsById.set(opening.id, opening);
+        let classifiedEvent;
+        try {
+          classifiedEvent = classifyRecruitmentEvent({
+            pageTitle: page.title || '',
+            pageText: page.text || page.html || page.body || '',
+            linkText: candidate.title || '',
+            jobTitle: opening.title,
+            employmentType: opening.employmentType || '',
+            directoryUrl: portal.canonicalUrl,
+            directoryPageType: portal.pageType,
+            sourceTier: portal.sourceTier,
+            structuredStartAt: page.startAt ?? page.publishedAt ?? opening.publishedAt,
+            structuredClosesAt: page.closesAt ?? opening.closesAt,
+            locations: opening.locations,
+          });
+        } catch (error) {
+          recordFailure({
+            stage: 'recruitment_event_classification',
+            code: 'FAILED',
+            query: candidate.query,
+            message: error,
+            url: portal.canonicalUrl,
+          });
+          appendLog(candidate, keywords, 'REVIEW_REQUIRED', {
+            stage: 'recruitment_event_classification',
+            error: boundedError(error),
+          }, portal.canonicalUrl);
+          continue;
+        }
+
+        let recruitmentEvent = createRecruitmentEvent({
+          ...classifiedEvent,
+          companyId: company.id,
+          careerPortalId: portal.id,
+          sourceTier: portal.sourceTier,
+          lastVerifiedAt: observedAt,
+        }, { now: observedAt });
+        const previousEvent = recruitmentEventsById.get(recruitmentEvent.id);
+        if (previousEvent) {
+          const explicitStarts = [previousEvent.startAt, recruitmentEvent.startAt]
+            .filter(Boolean)
+            .sort();
+          const explicitCloses = [previousEvent.closesAt, recruitmentEvent.closesAt]
+            .filter(Boolean)
+            .sort();
+          recruitmentEvent = createRecruitmentEvent({
+            ...recruitmentEvent,
+            locations: [
+              ...new Set([
+                ...previousEvent.locations,
+                ...recruitmentEvent.locations,
+              ]),
+            ],
+            startAt: explicitStarts[0] || null,
+            closesAt: explicitCloses[0] || null,
+            firstSeenAt: previousEvent.firstSeenAt,
+          }, { now: observedAt });
+        }
+        recruitmentEventsById.set(recruitmentEvent.id, recruitmentEvent);
+        repository.upsertRecruitmentEvent(recruitmentEvent);
+
+        const { id: legacyOpeningId, ...openingData } = opening;
+        const storedOpening = createJobOpening({
+          ...openingData,
+          recruitmentEventId: recruitmentEvent.id,
+          sourceTier: portal.sourceTier,
+        }, { now: opening.firstSeenAt || observedAt });
+        if (storedJobIds.has(storedOpening.id)) continue;
+        repository.upsertJobOpening(storedOpening);
+        storedJobIds.add(storedOpening.id);
+        storedJobsById.set(storedOpening.id, storedOpening);
         const portalJobIds = jobIdsByPortalId.get(portal.id) || new Set();
-        portalJobIds.add(opening.id);
+        portalJobIds.add(storedOpening.id);
         jobIdsByPortalId.set(portal.id, portalJobIds);
         for (const [field, present] of Object.entries(openingFieldPresence)) {
           fieldCoverage[field][present ? 'present' : 'missing'] += 1;
           if (!present) missingFieldsForPortal.add(field);
         }
         counters.jobsStored = storedJobIds.size;
-        if (opening.applyUrl) usableApplyJobIds.add(opening.id);
+        if (storedOpening.applyUrl) usableApplyJobIds.add(storedOpening.id);
         counters.usableApplyEntries = usableApplyJobIds.size;
         storedForPortal += 1;
       }
       if (storedForPortal > 0) {
+        portal = createCareerPortal({
+          ...portal,
+          hiringAvailability: 'OPENINGS_FOUND',
+          lastCheckedAt: observedAt,
+        }, { now: observedAt });
+        repository.upsertCareerPortal(portal);
+        portalDecisionsById.set(portal.id, Object.freeze({
+          ...portalDecisionsById.get(portal.id),
+          hiringAvailability: portal.hiringAvailability,
+        }));
         extractionSuccessPortalIds.add(portal.id);
         qualityObservations.extractionSuccesses = extractionSuccessPortalIds.size;
         appendLog(candidate, keywords, 'JOBS_EXTRACTED', {

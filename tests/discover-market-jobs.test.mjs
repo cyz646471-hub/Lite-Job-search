@@ -194,7 +194,67 @@ test('AI 产品经理 intent stores only jobs from verified portals', async (t) 
   assert.equal(result.report.extractedJobs.length, 2);
   assert.ok(result.report.extractedJobs.every((job) => job.title === 'AI 产品经理'));
   assert.ok(repository.listJobOpenings().every((job) => job.title === 'AI 产品经理'));
+  assert.equal(repository.listRecruitmentEvents().length, 2);
+  assert.ok(repository.listJobOpenings().every((job) => job.recruitmentEventId));
   assert.ok(repository.listDiscoveryLogs().some((item) => item.outcome === 'VERIFIED_PORTAL'));
+});
+
+test('groups campus full-time and internship jobs into explicit 2027 events', async (t) => {
+  const directoryUrl = 'https://jobs.example.com/campus/2027';
+  const { repository, dependencies } = await createHarness({
+    searchItems: [{
+      ...OFFICIAL_SEARCH_ITEM,
+      url: directoryUrl,
+    }],
+  });
+  t.after(() => repository.close());
+  dependencies.openingRetention = 'all_observed_active';
+  dependencies.fetchPage = async (url) => ({
+    status: 200,
+    finalUrl: url,
+    title: '2027 届校园招聘',
+    text: '招聘于 2026年7月1日开放，投递于 2026年9月30日截止。',
+    html: '<h1>2027 届校园招聘</h1>',
+    links: [],
+  });
+  dependencies.jobExtractor.extract = async ({ company, portal }) => [
+    createJobOpening({
+      companyId: company.id,
+      careerPortalId: portal.id,
+      sourceJobId: 'graduate-ai-pm',
+      title: 'AI 产品经理（应届生）',
+      employmentType: 'full_time',
+      locations: ['上海'],
+      status: 'ACTIVE',
+      sourceUrl: `${directoryUrl}/positions/graduate-ai-pm`,
+      jobDetailUrl: `${directoryUrl}/positions/graduate-ai-pm`,
+    }, { now: NOW }),
+    createJobOpening({
+      companyId: company.id,
+      careerPortalId: portal.id,
+      sourceJobId: 'intern-ai-pm',
+      title: 'AI 产品经理实习生',
+      employmentType: 'internship',
+      locations: ['深圳'],
+      status: 'ACTIVE',
+      sourceUrl: `${directoryUrl}/positions/intern-ai-pm`,
+      jobDetailUrl: `${directoryUrl}/positions/intern-ai-pm`,
+    }, { now: NOW }),
+  ];
+
+  await discoverMarketJobs(INTENT, dependencies);
+
+  const events = repository.listRecruitmentEvents();
+  assert.equal(events.length, 2);
+  assert.deepEqual(
+    new Set(events.map((event) => event.recruitmentType)),
+    new Set(['CAMPUS_FULL_TIME', 'CAMPUS_INTERNSHIP']),
+  );
+  assert.ok(events.every((event) => event.cohort === '2027'));
+  assert.ok(events.every((event) => event.startAt === '2026-07-01'));
+  assert.ok(events.every((event) => event.closesAt === '2026-09-30'));
+  assert.ok(events.every((event) => event.directoryUrl === directoryUrl));
+  assert.ok(repository.listJobOpenings().every((job) => job.recruitmentEventId));
 });
 
 test('inspects sibling recruitment entries and stores their verified jobs', async (t) => {
@@ -250,6 +310,7 @@ test('inspects sibling recruitment entries and stores their verified jobs', asyn
   assert.equal(result.jobsStored, 2);
   assert.equal(repository.listCareerPortals().length, 3);
   assert.equal(repository.listJobOpenings().length, 2);
+  assert.equal(repository.listRecruitmentEvents().length, 2);
   assert.ok(repository.listDiscoveryLogs().some((item) => (
     item.metadata.parentUrl === socialUrl
   )));
@@ -305,6 +366,13 @@ test('reports explicit no-opening recruitment entries without fabricating jobs',
   assert.equal(result.jobsStored, 0);
   assert.equal(result.report.noOpeningRecruitmentEntryCount, 1);
   assert.equal(result.report.unknownRecruitmentEntryCount, 1);
+  assert.equal(repository.listRecruitmentEvents().length, 0);
+  assert.equal(
+    repository.listCareerPortals()
+      .find((portal) => portal.canonicalUrl === campusUrl)
+      .hiringAvailability,
+    'NO_OPENINGS',
+  );
   assert.deepEqual(extractionUrls, [socialUrl]);
   assert.ok(repository.listDiscoveryLogs().some((item) => (
     item.resultUrl === campusUrl
