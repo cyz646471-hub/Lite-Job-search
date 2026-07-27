@@ -41,6 +41,9 @@
     "diagnose:chrome": "node ./scripts/diagnose-browser-search-challenge.mjs",
     "task:run": "node ./scripts/run-control-task.mjs",
     "prepare:full-recheck": "node ./scripts/prepare-full-database-maintenance.mjs",
+    "monitor:fixed-pool:prepare": "node ./scripts/prepare-fixed-company-monitor.mjs",
+    "monitor:fixed-pool": "node ./scripts/run-fixed-company-monitor.mjs",
+    "report:product-closure": "node ./scripts/report-product-closure.mjs",
     "maintenance:series": "node ./scripts/run-full-maintenance-series.mjs"
   },
   "engines": {

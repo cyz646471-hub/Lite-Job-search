@@ -139,6 +139,30 @@ export function createControlPlaneServer({
         });
         return;
       }
+      if (request.method === 'GET' && url.pathname === '/api/reviews') {
+        json(response, 200, repository.listReviewTasks({
+          status: url.searchParams.get('status'),
+          targetType: url.searchParams.get('target_type'),
+          targetId: url.searchParams.get('target_id'),
+        }));
+        return;
+      }
+      if (request.method === 'GET' && url.pathname === '/api/assignments') {
+        json(response, 200, repository.listJobAssignments({
+          assigneeType: url.searchParams.get('assignee_type'),
+          assigneeId: url.searchParams.get('assignee_id'),
+          jobId: url.searchParams.get('job_id'),
+        }));
+        return;
+      }
+      if (request.method === 'GET' && url.pathname === '/api/actions') {
+        json(response, 200, repository.listUserActions({
+          actorId: url.searchParams.get('actor_id'),
+          studentId: url.searchParams.get('student_id'),
+          jobId: url.searchParams.get('job_id'),
+        }));
+        return;
+      }
       if (request.method === 'GET' && url.pathname === '/api/development-record') {
         const text = await readFile(developmentRecordPath, 'utf8');
         response.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' });
@@ -167,6 +191,26 @@ export function createControlPlaneServer({
         }
         if (url.pathname === '/api/tasks') {
           json(response, 201, service.createTask(body));
+          return;
+        }
+        if (url.pathname === '/api/reviews') {
+          json(response, 201, service.createReviewTask(body));
+          return;
+        }
+        const resolveReviewMatch = url.pathname.match(/^\/api\/reviews\/([^/]+)\/resolve$/);
+        if (resolveReviewMatch) {
+          json(response, 200, service.resolveReviewTask(
+            decodeURIComponent(resolveReviewMatch[1]),
+            body,
+          ));
+          return;
+        }
+        if (url.pathname === '/api/assignments') {
+          json(response, 201, service.assignJob(body));
+          return;
+        }
+        if (url.pathname === '/api/actions') {
+          json(response, 201, service.recordUserAction(body));
           return;
         }
         const stopMatch = url.pathname.match(/^\/api\/batches\/([^/]+)\/stop$/);

@@ -55,6 +55,7 @@ export function planCompanyDiscovery({
   absoluteDateTo = '',
   allowBaiduFallback = false,
   publicLeads = [],
+  confirmedPortalsOnly = false,
 } = {}, {
   repository,
 } = {}) {
@@ -71,6 +72,8 @@ export function planCompanyDiscovery({
     .map((item) => item.value));
   const verifiedPortals = portals.filter((portal) => (
     portal.verificationStatus === 'VERIFIED'
+    && ['OFFICIAL_SITE', 'OFFICIAL_ATS'].includes(portal.sourceTier)
+    && portal.officialIdentityConfirmed === true
     && !rejectedValues.has(portal.canonicalUrl)
   ));
   const officialDomains = unique([
@@ -113,16 +116,20 @@ export function planCompanyDiscovery({
     `https://${String(domain).replace(/^https?:\/\//, '').replace(/\/.*$/, '')}/`
   ));
 
-  const candidates = unique([
-    ...verifiedPortals.map((portal) => portal.canonicalUrl),
-    ...historicalPortals,
-    ...atsTenants,
-    ...cachedCandidates,
-    ...leadCandidates,
-    ...officialRoots,
-    ...commonPaths,
-  ]);
-  const hasLocalEvidence = candidates.length > 0 || officialDomains.length > 0;
+  const candidates = unique(confirmedPortalsOnly
+    ? verifiedPortals.map((portal) => portal.canonicalUrl)
+    : [
+      ...verifiedPortals.map((portal) => portal.canonicalUrl),
+      ...historicalPortals,
+      ...atsTenants,
+      ...cachedCandidates,
+      ...leadCandidates,
+      ...officialRoots,
+      ...commonPaths,
+    ]);
+  const plannedOfficialDomains = confirmedPortalsOnly ? [] : officialDomains;
+  const hasLocalEvidence = candidates.length > 0
+    || (!confirmedPortalsOnly && officialDomains.length > 0);
   const queueType = hasLocalEvidence
     ? BROWSER_QUEUE_TYPES.LOCAL
     : allowBaiduFallback
@@ -143,15 +150,16 @@ export function planCompanyDiscovery({
     cacheKey,
     cacheOutcome: cache?.outcome || null,
     candidates: Object.freeze(candidates),
-    officialDomains: Object.freeze(officialDomains),
+    officialDomains: Object.freeze(plannedOfficialDomains),
+    confirmedPortalsOnly,
     stages: Object.freeze([
       { priority: 1, source: 'VERIFIED_CAREER_PORTAL', count: verifiedPortals.length },
-      { priority: 2, source: 'KNOWN_OFFICIAL_DOMAIN', count: officialDomains.length },
-      { priority: 3, source: 'HISTORICAL_CAREER_PORTAL', count: historicalPortals.length },
-      { priority: 4, source: 'ATS_TENANT_OWNERSHIP', count: atsTenants.length },
-      { priority: 5, source: 'SEARCH_CACHE', count: cachedCandidates.length },
-      { priority: 6, source: 'PUBLIC_LEAD_OFFICIAL_LINK', count: leadCandidates.length },
-      { priority: 7, source: 'COMMON_RECRUITMENT_PATH', count: commonPaths.length },
+      { priority: 2, source: 'KNOWN_OFFICIAL_DOMAIN', count: confirmedPortalsOnly ? 0 : officialDomains.length },
+      { priority: 3, source: 'HISTORICAL_CAREER_PORTAL', count: confirmedPortalsOnly ? 0 : historicalPortals.length },
+      { priority: 4, source: 'ATS_TENANT_OWNERSHIP', count: confirmedPortalsOnly ? 0 : atsTenants.length },
+      { priority: 5, source: 'SEARCH_CACHE', count: confirmedPortalsOnly ? 0 : cachedCandidates.length },
+      { priority: 6, source: 'PUBLIC_LEAD_OFFICIAL_LINK', count: confirmedPortalsOnly ? 0 : leadCandidates.length },
+      { priority: 7, source: 'COMMON_RECRUITMENT_PATH', count: confirmedPortalsOnly ? 0 : commonPaths.length },
       { priority: 8, source: 'BAIDU_BROWSER', enabled: terminalAction === 'BAIDU_DISCOVERY' },
       { priority: 9, source: 'MANUAL_DISCOVERY', enabled: terminalAction === 'MANUAL_OFFICIAL_DISCOVERY' },
     ]),

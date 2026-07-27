@@ -144,7 +144,10 @@ test('repository persists an official recruitment event snapshot atomically', as
   assert.equal(repository.listCompanies().length, 1);
   assert.equal(repository.listCareerPortals()[0].sourceTier, 'OFFICIAL_SITE');
   assert.equal(repository.listRecruitmentEvents().length, 1);
-  assert.equal(repository.listJobOpenings()[0].recruitmentEventId, 'event-1');
+  const [opening] = repository.listJobOpenings();
+  assert.equal(opening.recruitmentEventId, 'event-1');
+  assert.equal(opening.qualityGrade, 'A');
+  assert.equal(opening.publicationStatus, 'PUBLISHED');
 });
 
 test('repository isolates platform-only events and openings', async (t) => {
@@ -185,7 +188,14 @@ test('repository isolates platform-only events and openings', async (t) => {
   }));
 
   assert.equal(repository.listRecruitmentEvents()[0].sourceTier, 'PLATFORM_ONLY');
-  assert.equal(repository.listJobOpenings()[0].sourceTier, 'PLATFORM_ONLY');
+  const [platformOpening] = repository.listJobOpenings();
+  assert.equal(platformOpening.sourceTier, 'PLATFORM_ONLY');
+  assert.equal(platformOpening.qualityGrade, 'C');
+  assert.equal(platformOpening.publicationStatus, 'REVIEW_REQUIRED');
+  assert.deepEqual(repository.listReviewTasks({
+    targetType: 'JOB_OPENING',
+    targetId: 'job-platform',
+  }).map((task) => task.reasonCodes), [['PLATFORM_ONLY_SOURCE']]);
   assert.throws(() => repository.upsertCareerPortal(createPortal({
     id: 'portal-platform-invalid',
     canonicalUrl: 'https://www.liepin.com/company-jobs/456/',
@@ -202,6 +212,109 @@ test('repository isolates platform-only events and openings', async (t) => {
     recruitmentEventId: 'event-platform',
     sourceTier: 'OFFICIAL_SITE',
   })), /PLATFORM_ONLY/);
+});
+
+test('repository persists job assignments and user actions with re-verification review', async (t) => {
+  const repository = await createRepository('lite-job-product-loop-');
+  t.after(() => repository.close());
+  repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal({
+      sourceTier: 'OFFICIAL_SITE',
+      officialIdentityConfirmed: true,
+      hiringAvailability: 'OPENINGS_FOUND',
+      searchCoverage: 'COMPLETE',
+      lastCheckedAt: NOW,
+    }),
+    evidence: [],
+    events: [createEvent()],
+    openings: [createOpening({
+      recruitmentEventId: 'event-1',
+      sourceTier: 'OFFICIAL_SITE',
+    })],
+  });
+
+  const assignment = repository.upsertJobAssignment({
+    id: 'assignment-1',
+    jobId: 'job-1',
+    assigneeType: 'STUDENT',
+    assigneeId: 'student-1',
+    assignedBy: 'planner-1',
+    note: '重点跟进',
+    assignedAt: NOW,
+    updatedAt: NOW,
+  });
+  assert.equal(assignment.assigneeId, 'student-1');
+  assert.equal(repository.listJobAssignments({ assigneeId: 'student-1' }).length, 1);
+
+  repository.appendUserAction({
+    id: 'action-1',
+    actorId: 'student-1',
+    studentId: 'student-1',
+    jobId: 'job-1',
+    actionType: 'REPORT_INVALID',
+    note: '链接已失效',
+    createdAt: NOW,
+  });
+  assert.equal(repository.listUserActions({ jobId: 'job-1' })[0].triggersReverification, true);
+  assert.deepEqual(repository.listReviewTasks({
+    targetType: 'JOB_OPENING',
+    targetId: 'job-1',
+  }).map((task) => task.reviewType), ['DATA_COMPLETENESS']);
+});
+
+test('publication re-evaluation closes review and student assignment requires A grade', async (t) => {
+  const repository = await createRepository('lite-job-publication-review-');
+  t.after(() => repository.close());
+  repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal({
+      sourceTier: 'OFFICIAL_SITE',
+      officialIdentityConfirmed: true,
+      hiringAvailability: 'OPENINGS_FOUND',
+      lastCheckedAt: NOW,
+    }),
+    events: [createEvent({ locations: [] })],
+    openings: [createOpening({
+      recruitmentEventId: 'event-1',
+      sourceTier: 'OFFICIAL_SITE',
+      locations: [],
+    })],
+  });
+  assert.equal(repository.listJobOpenings()[0].qualityGrade, 'B');
+  assert.throws(() => repository.upsertJobAssignment({
+    jobId: 'job-1',
+    assigneeType: 'STUDENT',
+    assigneeId: 'student-1',
+    assignedBy: 'planner-1',
+  }), /A-grade/);
+
+  repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal({
+      sourceTier: 'OFFICIAL_SITE',
+      officialIdentityConfirmed: true,
+      hiringAvailability: 'OPENINGS_FOUND',
+      lastCheckedAt: NOW,
+    }),
+    events: [createEvent({ locations: ['上海'] })],
+    openings: [createOpening({
+      recruitmentEventId: 'event-1',
+      sourceTier: 'OFFICIAL_SITE',
+      locations: ['上海'],
+    })],
+  });
+  assert.equal(repository.listJobOpenings()[0].qualityGrade, 'A');
+  assert.equal(repository.listReviewTasks({
+    targetType: 'JOB_OPENING',
+    targetId: 'job-1',
+  })[0].status, 'RESOLVED');
+  assert.doesNotThrow(() => repository.upsertJobAssignment({
+    jobId: 'job-1',
+    assigneeType: 'STUDENT',
+    assigneeId: 'student-1',
+    assignedBy: 'planner-1',
+  }));
 });
 
 test('company snapshot rolls back every row when an opening violates its event', async (t) => {

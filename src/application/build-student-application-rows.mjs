@@ -32,13 +32,14 @@ export function buildStudentApplicationRows({
   portals = [],
   events = [],
   jobs = [],
-  includeSupersededPlatforms = false,
 } = {}) {
   const companyById = new Map(companies.map((company) => [company.id, company]));
   const portalById = new Map(portals.map((portal) => [portal.id, portal]));
   const jobsByEventId = new Map();
   for (const job of jobs) {
     if (!job.recruitmentEventId || job.status !== 'ACTIVE') continue;
+    if (job.qualityGrade !== 'A' || job.publicationStatus !== 'PUBLISHED') continue;
+    if (!['OFFICIAL_SITE', 'OFFICIAL_ATS'].includes(job.sourceTier)) continue;
     if (!jobsByEventId.has(job.recruitmentEventId)) jobsByEventId.set(job.recruitmentEventId, []);
     jobsByEventId.get(job.recruitmentEventId).push(job);
   }
@@ -48,12 +49,13 @@ export function buildStudentApplicationRows({
     const company = companyById.get(event.companyId);
     const portal = portalById.get(event.careerPortalId);
     if (!company || !portal) continue;
-    if (event.sourceTier === 'PLATFORM_ONLY'
-      && portal.supersededByPortalId
-      && !includeSupersededPlatforms) {
-      continue;
-    }
+    if (!['OFFICIAL_SITE', 'OFFICIAL_ATS'].includes(event.sourceTier)) continue;
+    if (!['OFFICIAL_SITE', 'OFFICIAL_ATS'].includes(portal.sourceTier)) continue;
+    if (portal.verificationStatus !== 'VERIFIED'
+      || portal.officialIdentityConfirmed !== true) continue;
+    if (event.status !== 'OPEN') continue;
     const eventJobs = jobsByEventId.get(event.id) || [];
+    if (eventJobs.length === 0) continue;
     const titles = unique(eventJobs.map((job) => job.title)).sort();
     const locations = unique([
       ...(event.locations || []),
@@ -70,7 +72,10 @@ export function buildStudentApplicationRows({
       截止时间: event.closesAt || '',
       地区: locations.join('、'),
       开放岗位: titles.join('；'),
-      投递链接: event.directoryUrl,
+      投递链接: event.directoryUrl
+        || eventJobs.find((job) => job.applyUrl)?.applyUrl
+        || eventJobs.find((job) => job.jobDetailUrl)?.jobDetailUrl
+        || '',
       招聘状态: clean(event.status),
       最后核验时间: event.lastVerifiedAt || portal.lastVerifiedAt || '',
     }));

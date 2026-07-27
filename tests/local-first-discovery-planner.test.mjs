@@ -37,6 +37,8 @@ test('verified portal is reused without scheduling Baidu', () => {
         companyId: COMPANY.id,
         canonicalUrl: 'https://jobs.example.com/',
         verificationStatus: 'VERIFIED',
+        sourceTier: 'OFFICIAL_SITE',
+        officialIdentityConfirmed: true,
       }],
     }),
   });
@@ -52,6 +54,28 @@ test('known official domain produces deterministic common paths before Baidu', (
   }, { repository: repository() });
   assert.equal(plan.queueType, 'LOCAL_OR_DIRECT_VERIFICATION');
   assert.ok(plan.candidates.includes('https://example.com/careers'));
+});
+
+test('fixed-pool planning checks only confirmed portals without domain expansion', () => {
+  const plan = planCompanyDiscovery({
+    company: { ...COMPANY, officialDomains: ['example.com'] },
+    allowBaiduFallback: false,
+    confirmedPortalsOnly: true,
+  }, {
+    repository: repository({
+      portals: [{
+        companyId: COMPANY.id,
+        canonicalUrl: 'https://jobs.example.com/',
+        verificationStatus: 'VERIFIED',
+        sourceTier: 'OFFICIAL_SITE',
+        officialIdentityConfirmed: true,
+      }],
+    }),
+  });
+  assert.deepEqual(plan.candidates, ['https://jobs.example.com/']);
+  assert.deepEqual(plan.officialDomains, []);
+  assert.equal(plan.confirmedPortalsOnly, true);
+  assert.equal(plan.stages.find((stage) => stage.source === 'BAIDU_BROWSER').enabled, false);
 });
 
 test('no local evidence schedules Baidu only when explicitly allowed', () => {

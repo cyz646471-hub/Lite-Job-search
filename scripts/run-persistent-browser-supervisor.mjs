@@ -242,6 +242,7 @@ export async function runPersistentBrowserSupervisor({
         absoluteDateFrom,
         absoluteDateTo,
         allowBaiduFallback: allowBaiduFallback === true,
+        confirmedPortalsOnly: company.fixedPool === true,
       }, { repository });
       return {
         ...company,

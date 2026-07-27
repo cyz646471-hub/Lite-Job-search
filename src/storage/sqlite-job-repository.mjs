@@ -4,8 +4,12 @@ import { fileURLToPath } from 'node:url';
 
 import Database from 'better-sqlite3';
 
+import { createJobAssignment } from '../domain/job-assignment.mjs';
 import { createJobOpening } from '../domain/job-opening.mjs';
+import { evaluateJobPublication } from '../domain/job-publication.mjs';
 import { createRecruitmentEvent } from '../domain/recruitment-event.mjs';
+import { createReviewTask } from '../domain/review-task.mjs';
+import { createUserAction } from '../domain/user-action.mjs';
 import { assertMarketDiscoveryRepository } from '../ports/job-repository.mjs';
 
 const MIGRATION_DIRECTORY = fileURLToPath(new URL('./migrations/', import.meta.url));
@@ -122,8 +126,62 @@ function mapOpening(row) {
     applyUrl: row.apply_url,
     status: row.status,
     sourceUrl: row.source_url,
+    qualityGrade: row.quality_grade || 'C',
+    publicationStatus: row.publication_status || 'CANDIDATE',
+    qualityReasons: decode(row.quality_reasons_json, []),
+    applicationVerifiedAt: row.application_verified_at || null,
+    dedupeFingerprint: row.dedupe_fingerprint || null,
     firstSeenAt: row.first_seen_at,
     lastSeenAt: row.last_seen_at,
+  };
+}
+
+function mapReviewTask(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    reviewType: row.review_type,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    status: row.status,
+    systemDecision: row.system_decision || null,
+    aiAdvice: row.ai_advice || null,
+    reviewer: row.reviewer || null,
+    result: row.result || null,
+    structuredChanges: decode(row.structured_changes_json, {}),
+    reasonCodes: decode(row.reason_codes_json, []),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    reviewedAt: row.reviewed_at || null,
+  };
+}
+
+function mapJobAssignment(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    jobId: row.job_id,
+    assigneeType: row.assignee_type,
+    assigneeId: row.assignee_id,
+    assignedBy: row.assigned_by,
+    status: row.status,
+    note: row.note || null,
+    assignedAt: row.assigned_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapUserAction(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    actorId: row.actor_id,
+    studentId: row.student_id || null,
+    jobId: row.job_id || null,
+    actionType: row.action_type,
+    note: row.note || null,
+    triggersReverification: row.triggers_reverification === 1,
+    createdAt: row.created_at,
   };
 }
 
@@ -338,7 +396,8 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       `),
       portalStatus: database.prepare(`
         SELECT company_id, verification_status, source_tier,
-               platform_identity_confirmed, hiring_availability
+               official_identity_confirmed, platform_identity_confirmed,
+               hiring_availability, last_verified_at
         FROM career_portals WHERE id = ?
       `),
       portalIdentity: database.prepare(`
@@ -395,12 +454,16 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           id, company_id, career_portal_id, recruitment_event_id, source_tier,
           source_job_id, title, normalized_title, role_family, locations_json,
           employment_type, published_at, closes_at, job_detail_url, apply_url,
-          status, source_url, first_seen_at, last_seen_at
+          status, source_url, quality_grade, publication_status,
+          quality_reasons_json, application_verified_at, dedupe_fingerprint,
+          first_seen_at, last_seen_at
         ) VALUES (
           @id, @companyId, @careerPortalId, @recruitmentEventId, @sourceTier,
           @sourceJobId, @title, @normalizedTitle, @roleFamily, @locationsJson,
           @employmentType, @publishedAt, @closesAt, @jobDetailUrl, @applyUrl,
-          @status, @sourceUrl, @firstSeenAt, @lastSeenAt
+          @status, @sourceUrl, @qualityGrade, @publicationStatus,
+          @qualityReasonsJson, @applicationVerifiedAt, @dedupeFingerprint,
+          @firstSeenAt, @lastSeenAt
         )
         ON CONFLICT(id) DO UPDATE SET
           company_id = excluded.company_id,
@@ -419,7 +482,73 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           apply_url = excluded.apply_url,
           status = excluded.status,
           source_url = excluded.source_url,
+          quality_grade = excluded.quality_grade,
+          publication_status = excluded.publication_status,
+          quality_reasons_json = excluded.quality_reasons_json,
+          application_verified_at = excluded.application_verified_at,
+          dedupe_fingerprint = excluded.dedupe_fingerprint,
           last_seen_at = excluded.last_seen_at
+      `),
+      upsertReviewTask: database.prepare(`
+        INSERT INTO review_tasks (
+          id, review_type, target_type, target_id, status, system_decision,
+          ai_advice, reviewer, result, structured_changes_json,
+          reason_codes_json, created_at, updated_at, reviewed_at
+        ) VALUES (
+          @id, @reviewType, @targetType, @targetId, @status, @systemDecision,
+          @aiAdvice, @reviewer, @result, @structuredChangesJson,
+          @reasonCodesJson, @createdAt, @updatedAt, @reviewedAt
+        )
+        ON CONFLICT(id) DO UPDATE SET
+          status = excluded.status,
+          system_decision = excluded.system_decision,
+          ai_advice = excluded.ai_advice,
+          reviewer = excluded.reviewer,
+          result = excluded.result,
+          structured_changes_json = excluded.structured_changes_json,
+          reason_codes_json = excluded.reason_codes_json,
+          updated_at = excluded.updated_at,
+          reviewed_at = excluded.reviewed_at
+      `),
+      openReviewTaskForTarget: database.prepare(`
+        SELECT * FROM review_tasks
+        WHERE review_type = ? AND target_type = ? AND target_id = ? AND status = 'OPEN'
+        LIMIT 1
+      `),
+      closeOpenPublicationReview: database.prepare(`
+        UPDATE review_tasks
+        SET status = 'RESOLVED',
+            system_decision = @systemDecision,
+            result = @result,
+            updated_at = @updatedAt,
+            reviewed_at = @updatedAt
+        WHERE review_type = 'JOB_PUBLICATION'
+          AND target_type = 'JOB_OPENING'
+          AND target_id = @targetId
+          AND status = 'OPEN'
+      `),
+      upsertJobAssignment: database.prepare(`
+        INSERT INTO job_assignments (
+          id, job_id, assignee_type, assignee_id, assigned_by,
+          status, note, assigned_at, updated_at
+        ) VALUES (
+          @id, @jobId, @assigneeType, @assigneeId, @assignedBy,
+          @status, @note, @assignedAt, @updatedAt
+        )
+        ON CONFLICT(job_id, assignee_type, assignee_id) DO UPDATE SET
+          assigned_by = excluded.assigned_by,
+          status = excluded.status,
+          note = excluded.note,
+          updated_at = excluded.updated_at
+      `),
+      insertUserAction: database.prepare(`
+        INSERT INTO user_actions (
+          id, actor_id, student_id, job_id, action_type, note,
+          triggers_reverification, created_at
+        ) VALUES (
+          @id, @actorId, @studentId, @jobId, @actionType, @note,
+          @triggersReverification, @createdAt
+        )
       `),
       beginRun: database.prepare(`
         INSERT INTO discovery_runs (id, intent_json, status, started_at)
@@ -922,7 +1051,18 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     return event;
   }
 
-  function writeOpening(opening, sourceTier) {
+  function writeOpening(opening, sourceTier, portalRow, eventRow = null) {
+    const policy = evaluateJobPublication({
+      opening: { ...opening, sourceTier },
+      portal: {
+        sourceTier: portalRow.source_tier,
+        verificationStatus: portalRow.verification_status,
+        officialIdentityConfirmed: portalRow.official_identity_confirmed === 1,
+        platformIdentityConfirmed: portalRow.platform_identity_confirmed === 1,
+        lastVerifiedAt: portalRow.last_verified_at || null,
+      },
+      event: eventRow ? mapRecruitmentEvent(eventRow) : {},
+    });
     statements.upsertOpening.run({
       ...opening,
       recruitmentEventId: opening.recruitmentEventId ?? null,
@@ -934,8 +1074,36 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       closesAt: opening.closesAt ?? null,
       jobDetailUrl: opening.jobDetailUrl ?? null,
       applyUrl: opening.applyUrl ?? null,
+      qualityGrade: policy.qualityGrade,
+      publicationStatus: policy.publicationStatus,
+      qualityReasonsJson: encode(policy.reasons, []),
+      applicationVerifiedAt: policy.applicationVerifiedAt,
+      dedupeFingerprint: opening.dedupeFingerprint || opening.id,
     });
-    return opening;
+    if (policy.publicationStatus === 'REVIEW_REQUIRED') {
+      const existing = statements.openReviewTaskForTarget.get(
+        'JOB_PUBLICATION',
+        'JOB_OPENING',
+        opening.id,
+      );
+      if (!existing) {
+        upsertReviewTask(createReviewTask({
+          reviewType: 'JOB_PUBLICATION',
+          targetType: 'JOB_OPENING',
+          targetId: opening.id,
+          systemDecision: policy.publicationStatus,
+          reasonCodes: policy.reasons,
+        }));
+      }
+    } else {
+      statements.closeOpenPublicationReview.run({
+        targetId: opening.id,
+        systemDecision: policy.publicationStatus,
+        result: 'AUTO_POLICY_REEVALUATED',
+        updatedAt: opening.lastSeenAt || new Date().toISOString(),
+      });
+    }
+    return Object.freeze({ ...opening, ...policy, dedupeFingerprint: opening.id });
   }
 
   function upsertJobOpening(opening) {
@@ -953,7 +1121,7 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     if (sourceTier === 'PLATFORM_ONLY') {
       throw new Error('official JobOpening cannot use PLATFORM_ONLY source');
     }
-    return writeOpening(opening, sourceTier);
+    return writeOpening(opening, sourceTier, portal, event);
   }
 
   function upsertPlatformJobOpening(opening) {
@@ -974,7 +1142,147 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     if (!event || event.publication_class !== 'PLATFORM_ONLY') {
       throw new Error('PLATFORM_ONLY JobOpening requires a PLATFORM_ONLY RecruitmentEvent');
     }
-    return writeOpening(opening, 'PLATFORM_ONLY');
+    return writeOpening(opening, 'PLATFORM_ONLY', portal, event);
+  }
+
+  function upsertReviewTask(input) {
+    requireMigration();
+    const task = createReviewTask(input);
+    statements.upsertReviewTask.run({
+      ...task,
+      structuredChangesJson: encode(task.structuredChanges, {}),
+      reasonCodesJson: encode(task.reasonCodes, []),
+    });
+    return mapReviewTask(database.prepare('SELECT * FROM review_tasks WHERE id = ?').get(task.id));
+  }
+
+  function listReviewTasks({ status = null, targetType = null, targetId = null } = {}) {
+    requireMigration();
+    const clauses = [];
+    const parameters = [];
+    if (status) {
+      clauses.push('status = ?');
+      parameters.push(status);
+    }
+    if (targetType) {
+      clauses.push('target_type = ?');
+      parameters.push(targetType);
+    }
+    if (targetId) {
+      clauses.push('target_id = ?');
+      parameters.push(targetId);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return database.prepare(`
+      SELECT * FROM review_tasks ${where}
+      ORDER BY
+        CASE status WHEN 'OPEN' THEN 0 WHEN 'IN_REVIEW' THEN 1 ELSE 2 END,
+        created_at,
+        id
+    `).all(...parameters).map(mapReviewTask);
+  }
+
+  function upsertJobAssignment(input) {
+    requireMigration();
+    const assignment = createJobAssignment(input);
+    const job = database.prepare(`
+      SELECT id, quality_grade, publication_status
+      FROM job_openings WHERE id = ?
+    `).get(assignment.jobId);
+    if (!job) throw new Error(`unknown JobOpening: ${assignment.jobId}`);
+    if (assignment.assigneeType === 'STUDENT'
+      && (job.quality_grade !== 'A' || job.publication_status !== 'PUBLISHED')) {
+      throw new Error('student assignment requires an A-grade published JobOpening');
+    }
+    statements.upsertJobAssignment.run({
+      ...assignment,
+      note: assignment.note ?? null,
+    });
+    return mapJobAssignment(database.prepare(`
+      SELECT * FROM job_assignments
+      WHERE job_id = ? AND assignee_type = ? AND assignee_id = ?
+    `).get(assignment.jobId, assignment.assigneeType, assignment.assigneeId));
+  }
+
+  function listJobAssignments({ assigneeType = null, assigneeId = null, jobId = null } = {}) {
+    requireMigration();
+    const clauses = [];
+    const parameters = [];
+    if (assigneeType) {
+      clauses.push('assignee_type = ?');
+      parameters.push(assigneeType);
+    }
+    if (assigneeId) {
+      clauses.push('assignee_id = ?');
+      parameters.push(assigneeId);
+    }
+    if (jobId) {
+      clauses.push('job_id = ?');
+      parameters.push(jobId);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return database.prepare(`
+      SELECT * FROM job_assignments ${where}
+      ORDER BY assigned_at DESC, id
+    `).all(...parameters).map(mapJobAssignment);
+  }
+
+  function appendUserAction(input) {
+    requireMigration();
+    const action = createUserAction(input);
+    if (action.jobId
+      && !database.prepare('SELECT id FROM job_openings WHERE id = ?').get(action.jobId)) {
+      throw new Error(`unknown JobOpening: ${action.jobId}`);
+    }
+    statements.insertUserAction.run({
+      ...action,
+      studentId: action.studentId ?? null,
+      jobId: action.jobId ?? null,
+      note: action.note ?? null,
+      triggersReverification: action.triggersReverification ? 1 : 0,
+    });
+    if (action.triggersReverification && action.jobId) {
+      const existing = statements.openReviewTaskForTarget.get(
+        'DATA_COMPLETENESS',
+        'JOB_OPENING',
+        action.jobId,
+      );
+      if (!existing) {
+        upsertReviewTask(createReviewTask({
+          reviewType: 'DATA_COMPLETENESS',
+          targetType: 'JOB_OPENING',
+          targetId: action.jobId,
+          systemDecision: 'REVERIFY',
+          reasonCodes: ['USER_REPORTED_INVALID'],
+          createdAt: action.createdAt,
+          updatedAt: action.createdAt,
+        }));
+      }
+    }
+    return action;
+  }
+
+  function listUserActions({ actorId = null, studentId = null, jobId = null } = {}) {
+    requireMigration();
+    const clauses = [];
+    const parameters = [];
+    if (actorId) {
+      clauses.push('actor_id = ?');
+      parameters.push(actorId);
+    }
+    if (studentId) {
+      clauses.push('student_id = ?');
+      parameters.push(studentId);
+    }
+    if (jobId) {
+      clauses.push('job_id = ?');
+      parameters.push(jobId);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return database.prepare(`
+      SELECT * FROM user_actions ${where}
+      ORDER BY created_at DESC, id
+    `).all(...parameters).map(mapUserAction);
   }
 
   function persistCompanySnapshot({
@@ -1701,6 +2009,12 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     upsertRecruitmentEvent,
     upsertJobOpening,
     upsertPlatformJobOpening,
+    upsertReviewTask,
+    listReviewTasks,
+    upsertJobAssignment,
+    listJobAssignments,
+    appendUserAction,
+    listUserActions,
     persistCompanySnapshot,
     appendDiscoveryLog,
     listCompanies,

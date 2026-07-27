@@ -251,6 +251,12 @@ Local task creation, Worker state, batch stop/resume, Baidu manual
 acknowledgement and XLSX download are available through the
 [local control plane](docs/local-control-plane.md).
 
+For periodic maintenance of the local 1,000+ company registry, use the
+[fixed company monitor and A/B/C publication gate](docs/fixed-company-monitor-and-publication-gate.md).
+This path rechecks confirmed official/ATS entries without repeating web search;
+third-party platform records remain review candidates and never enter the
+student-facing workbook.
+
 ## 项目结构
 
 ```text

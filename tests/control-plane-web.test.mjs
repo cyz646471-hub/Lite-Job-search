@@ -55,6 +55,40 @@ test('local web control plane reads real SQLite state and confirms writes', asyn
   const status = await (await fetch(`${base}/api/status`)).json();
   assert.equal(status.tasks[0].id, task.id);
   assert.equal(status.batches[0].status, 'PENDING');
+  assert.deepEqual(status.reviewTasks, []);
+
+  const reviewResponse = await fetch(`${base}/api/reviews`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-ljs-confirm': 'yes',
+    },
+    body: JSON.stringify({
+      id: 'review-1',
+      reviewType: 'PORTAL_VERIFICATION',
+      targetType: 'COMPANY',
+      targetId: 'company-1',
+      reasonCodes: ['OFFICIAL_ENTRY_MISSING'],
+    }),
+  });
+  assert.equal(reviewResponse.status, 201);
+  const reviews = await (await fetch(`${base}/api/reviews?status=OPEN`)).json();
+  assert.equal(reviews[0].id, 'review-1');
+
+  const actionResponse = await fetch(`${base}/api/actions`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-ljs-confirm': 'yes',
+    },
+    body: JSON.stringify({
+      id: 'action-1',
+      actorId: 'planner-1',
+      actionType: 'VIEWED',
+    }),
+  });
+  assert.equal(actionResponse.status, 201);
+  assert.equal((await (await fetch(`${base}/api/actions?actor_id=planner-1`)).json())[0].id, 'action-1');
 
   const stopped = await fetch(`${base}/api/batches/${task.batchId}/stop`, {
     method: 'POST',

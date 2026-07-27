@@ -100,6 +100,9 @@ export function createControlPlaneService({
         workers: repository.listWorkerInstances(),
         circuits: repository.listProviderCircuitStates(),
         deferredItems: repository.listDeferredBatchItems(),
+        reviewTasks: typeof repository.listReviewTasks === 'function'
+          ? repository.listReviewTasks({ status: 'OPEN' })
+          : [],
       };
     },
     stopBatch(batchId) {
@@ -132,6 +135,67 @@ export function createControlPlaneService({
         acknowledgedAt,
       });
       return circuit;
+    },
+    createReviewTask(input) {
+      const createdAt = now();
+      const task = repository.upsertReviewTask({
+        ...input,
+        createdAt,
+        updatedAt: createdAt,
+      });
+      audit('REVIEW_TASK_CREATED', 'REVIEW_TASK', task.id, {
+        reviewType: task.reviewType,
+        targetType: task.targetType,
+        targetId: task.targetId,
+      });
+      return task;
+    },
+    resolveReviewTask(id, input = {}) {
+      const existing = repository.listReviewTasks().find((task) => task.id === id);
+      if (!existing) throw new Error(`unknown ReviewTask: ${id}`);
+      const reviewedAt = now();
+      const task = repository.upsertReviewTask({
+        ...existing,
+        ...input,
+        id,
+        status: input.status || 'RESOLVED',
+        reviewer: input.reviewer || actor,
+        updatedAt: reviewedAt,
+        reviewedAt,
+      });
+      audit('REVIEW_TASK_RESOLVED', 'REVIEW_TASK', id, {
+        status: task.status,
+        result: task.result,
+      });
+      return task;
+    },
+    assignJob(input) {
+      const timestamp = now();
+      const assignment = repository.upsertJobAssignment({
+        ...input,
+        assignedBy: input.assignedBy || actor,
+        assignedAt: input.assignedAt || timestamp,
+        updatedAt: timestamp,
+      });
+      audit('JOB_ASSIGNED', 'JOB_OPENING', assignment.jobId, {
+        assignmentId: assignment.id,
+        assigneeType: assignment.assigneeType,
+        assigneeId: assignment.assigneeId,
+      });
+      return assignment;
+    },
+    recordUserAction(input) {
+      const action = repository.appendUserAction({
+        ...input,
+        actorId: input.actorId || actor,
+        createdAt: input.createdAt || now(),
+      });
+      audit('USER_ACTION_RECORDED', action.jobId ? 'JOB_OPENING' : 'USER', action.jobId || action.actorId, {
+        userActionId: action.id,
+        actionType: action.actionType,
+        triggersReverification: action.triggersReverification,
+      });
+      return action;
     },
   });
 }
