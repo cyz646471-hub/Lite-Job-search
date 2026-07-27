@@ -118,6 +118,59 @@ test('ATS tenant requires directed attribution from a verified official page', a
   assert.ok(result.evidence.some((item) => item.code === 'official_site_confirms_ats_tenant'));
 });
 
+test('reviewed ATS tenant ownership is deterministic company evidence', async () => {
+  const adapter = createOfficialVerificationAdapter({
+    classifyPage: () => ({ pageRole: 'JOB_LIST', vacancyStatus: 'ACTIVE' }),
+    evaluateIdentity: () => ({ strongEvidence: [], riskSignals: [] }),
+  });
+  const result = await adapter.inspect({
+    company: {
+      canonicalName: '安谋科技（中国）',
+      aliases: ['Arm China'],
+      officialDomains: ['armchina.com'],
+    },
+    candidate: {
+      url: 'https://app.mokahr.com/apply/armchina/885#/jobs',
+    },
+    page: {
+      finalUrl: 'https://app.mokahr.com/apply/armchina/885#/jobs',
+      status: 200,
+      html: '<main>招聘职位</main>',
+    },
+  });
+
+  assert.ok(result.evidence.some(
+    (item) => item.code === 'reviewed_ats_tenant_ownership',
+  ));
+  assert.ok(result.evidence.some((item) => item.code === 'verified_ats_tenant'));
+});
+
+test('reviewed ATS tenant ownership does not cross company identities', async () => {
+  const adapter = createOfficialVerificationAdapter({
+    classifyPage: () => ({ pageRole: 'JOB_LIST', vacancyStatus: 'ACTIVE' }),
+    evaluateIdentity: () => ({ strongEvidence: [], riskSignals: [] }),
+  });
+  const result = await adapter.inspect({
+    company: {
+      canonicalName: '无关公司',
+      aliases: [],
+      officialDomains: ['unrelated.example'],
+    },
+    candidate: {
+      url: 'https://app.mokahr.com/apply/armchina/885#/jobs',
+    },
+    page: {
+      finalUrl: 'https://app.mokahr.com/apply/armchina/885#/jobs',
+      status: 200,
+      html: '<main>招聘职位</main>',
+    },
+  });
+
+  assert.ok(!result.evidence.some(
+    (item) => item.code === 'reviewed_ats_tenant_ownership',
+  ));
+});
+
 test('unverified parent cannot create official ATS attribution evidence', async () => {
   const adapter = createVerificationAdapter();
   const result = await adapter.inspect({

@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "reviewedAt": "2026-07-27",
+  "records": [
+    {
+      "company": "阿迪达斯",
+      "aliases": ["adidas", "Adidas AG"],
+      "officialDomains": ["adidas-group.com", "adidas.com.cn"],
+      "evidence": "2026-07-27 visible-browser canary resolved official careers to jobs.adidas-group.com"
+    },
+    {
+      "company": "阿里健康",
+      "aliases": ["Alibaba Health"],
+      "officialDomains": ["alihealth.cn", "alibabaforyou.com"],
+      "evidence": "2026-07-27 rendered page identified 阿里健康招聘官网 at careers.alihealth.cn"
+    },
+    {
+      "company": "阿里云国际",
+      "aliases": ["Alibaba Cloud International", "Alibaba Cloud"],
+      "officialDomains": ["aliyun.com", "alibabacloud.com"],
+      "evidence": "2026-07-27 visible-browser canary resolved official careers to careers.aliyun.com"
+    },
+    {
+      "company": "霸王茶姬",
+      "aliases": ["CHAGEE"],
+      "replace": true,
+      "officialDomains": ["chagee.com"],
+      "evidence": "2026-07-27 visible-browser canary resolved official careers to jobs.chagee.com; replaces erroneous chatee.com"
+    },
+    {
+      "company": "百度地图",
+      "aliases": ["Baidu Maps"],
+      "officialDomains": ["baidu.com", "map.baidu.com"],
+      "evidence": "Product hiring belongs to Baidu unified recruitment identity; map.baidu.com remains product-domain evidence"
+    }
+  ]
+}

@@ -122,11 +122,10 @@ function selectionBatchId(task, companies) {
 
 function workerArguments({ task, selectedFile, outputDir, database, batchId, args }) {
   const values = [
-    path.resolve('scripts/company-browser-discovery.mjs'),
+    path.resolve('scripts/run-persistent-browser-supervisor.mjs'),
     '--input', selectedFile,
     '--output-dir', outputDir,
     '--database', database,
-    '--browser-mode', task.browserMode,
     '--role', task.role,
     '--industry', task.industry,
     '--location', task.location,
@@ -143,9 +142,7 @@ function workerArguments({ task, selectedFile, outputDir, database, batchId, arg
     '--max-companies-per-run', String(task.maxCompaniesPerRun),
   ];
   if (args['profile-dir']) values.push('--profile-dir', path.resolve(args['profile-dir']));
-  if (args['chrome-binding-module']) {
-    values.push('--chrome-binding-module', path.resolve(args['chrome-binding-module']));
-  }
+  if (args['search-engine']) values.push('--search-engine', args['search-engine']);
   if (args['retry-failed']) values.push('--retry-failed');
   if (args.headless) values.push('--headless');
   return values;
@@ -170,7 +167,7 @@ function shouldContinue(report) {
   if (report?.status !== 'PAUSED') return false;
   if ((report?.batch?.pending || 0) < 1) return false;
   if ((report?.batch?.deferred || 0) > 0) return false;
-  return !['OPEN', 'PROBE_REQUIRED'].includes(report?.providerCircuit?.state);
+  return !['OPEN', 'HALF_OPEN'].includes(report?.providerCircuit?.state);
 }
 
 async function buildFinalXlsx({ outputDir, xlsxOutput }) {
@@ -207,15 +204,16 @@ export async function runSearchInstructionCli(argv = process.argv.slice(2)) {
     && args['browser-mode']
     && args['browser-mode'] !== compiled.browserMode) {
     throw new Error(
-      'China production search requires the user normal Chrome session; isolated browser profiles are disabled',
+      'China production search requires the dedicated persistent Chrome worker profile',
     );
   }
+  const outputDirArgument = args['output-dir'] || compiled.outputDir;
   const task = Object.freeze({
     ...compiled,
     registry: args.registry || compiled.registry,
     database: args.database || compiled.database,
-    outputDir: args['output-dir'] || compiled.outputDir,
-    xlsxOutput: args['xlsx-output'] || compiled.xlsxOutput,
+    outputDir: outputDirArgument,
+    xlsxOutput: args['xlsx-output'] || path.join(outputDirArgument, 'student-applications.xlsx'),
     browserMode: args['browser-mode'] || compiled.browserMode,
     maxCompaniesPerRun: boundedInteger(
       args['max-companies-per-run'],
@@ -364,7 +362,7 @@ export async function runSearchInstructionCli(argv = process.argv.slice(2)) {
   }
 
   if (finalStatus === 'PAUSED'
-    && ['OPEN', 'PROBE_REQUIRED'].includes(finalReport?.providerCircuit?.state)) {
+    && ['OPEN', 'HALF_OPEN'].includes(finalReport?.providerCircuit?.state)) {
     finalStatus = 'BLOCKED';
   } else if (finalStatus === 'PAUSED') {
     finalStatus = 'PARTIAL';

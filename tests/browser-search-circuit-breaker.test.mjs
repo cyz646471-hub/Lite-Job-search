@@ -23,19 +23,26 @@ test('Baidu challenge opens the circuit without inventing a retry time', () => {
   assert.equal(opened.nextProbeAt, null);
 });
 
-test('manual resume requires a healthy probe before closing the circuit', () => {
+test('manual acknowledgement requires one HALF_OPEN probe before closing the circuit', () => {
   const opened = transitionCircuit(createClosedCircuit('baidu', NOW), {
     type: 'BLOCKED',
     reasonCode: 'search_challenge_or_access_blocked',
   }, NOW);
-  const probeRequired = transitionCircuit(opened, {
-    type: 'MANUAL_RESUME_REQUESTED',
+  const acknowledged = transitionCircuit(opened, {
+    type: 'MANUAL_ACKNOWLEDGED',
   }, '2026-07-26T00:10:00.000Z');
-  const closed = transitionCircuit(probeRequired, {
+  const halfOpen = transitionCircuit(acknowledged, {
+    type: 'PROBE_LEASE_ACQUIRED',
+    ownerId: 'worker-1',
+    leaseUntil: '2026-07-26T00:12:00.000Z',
+  }, '2026-07-26T00:10:30.000Z');
+  const closed = transitionCircuit(halfOpen, {
     type: 'HEALTHY_PROBE',
   }, '2026-07-26T00:11:00.000Z');
 
-  assert.equal(probeRequired.state, 'PROBE_REQUIRED');
+  assert.equal(acknowledged.state, 'OPEN');
+  assert.equal(halfOpen.state, 'HALF_OPEN');
+  assert.equal(halfOpen.probeOwnerId, 'worker-1');
   assert.equal(closed.state, 'CLOSED');
   assert.equal(closed.reasonCode, null);
   assert.equal(closed.lastHealthyAt, '2026-07-26T00:11:00.000Z');
@@ -68,20 +75,46 @@ test('provider resume persists CLOSED only after a healthy probe', async () => {
   }, NOW);
   const repository = {
     getProviderCircuitState: () => stored,
-    saveProviderCircuitState: (next) => {
-      stored = next;
+    acknowledgeProviderCircuit: ({ acknowledgedAt }) => {
+      stored = transitionCircuit(stored, {
+        type: 'MANUAL_ACKNOWLEDGED',
+      }, acknowledgedAt);
+      return stored;
+    },
+    acquireProviderProbeLease: ({ ownerId, acquiredAt, leaseUntil }) => {
+      if (stored.state !== 'OPEN') return null;
+      stored = transitionCircuit(stored, {
+        type: 'PROBE_LEASE_ACQUIRED',
+        ownerId,
+        leaseUntil,
+      }, acquiredAt);
+      return stored;
+    },
+    completeProviderProbe: ({ ownerId, healthy, reasonCode, completedAt }) => {
+      assert.equal(stored.probeOwnerId, ownerId);
+      stored = transitionCircuit(stored, healthy
+        ? { type: 'HEALTHY_PROBE' }
+        : { type: 'BLOCKED', reasonCode }, completedAt);
       return stored;
     },
   };
+  repository.acknowledgeProviderCircuit({
+    acknowledgedAt: '2026-07-26T00:09:00.000Z',
+  });
 
   const failed = await resumeProviderCircuit({
     provider: 'baidu',
+    ownerId: 'worker-failed',
     healthProbe: async () => ({ healthy: false, reasonCode: 'challenge_visible' }),
   }, { repository, now: () => '2026-07-26T00:10:00.000Z' });
   assert.equal(failed.state, 'OPEN');
 
+  repository.acknowledgeProviderCircuit({
+    acknowledgedAt: '2026-07-26T00:10:30.000Z',
+  });
   const healthy = await resumeProviderCircuit({
     provider: 'baidu',
+    ownerId: 'worker-healthy',
     healthProbe: async () => ({ healthy: true }),
   }, { repository, now: () => '2026-07-26T00:11:00.000Z' });
   assert.equal(healthy.state, 'CLOSED');

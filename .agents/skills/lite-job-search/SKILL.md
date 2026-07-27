@@ -243,6 +243,37 @@ search engine, or a fresh browser profile to bypass it.
 
 Do not bypass login, access controls, CAPTCHA/验证码, rate limits, browser fingerprints, or anti-bot systems. Never submit an application, upload a resume, accept terms, or send messages.
 
+## Current production browser policy
+
+This policy supersedes earlier normal-Chrome and extension-binding guidance in
+this file. China production discovery uses
+`run-persistent-browser-supervisor.mjs`: a long-running Node.js process that
+owns one Playwright `launchPersistentContext` and a dedicated automation
+`userDataDir` for the full SQLite queue run. Never use a daily/default Chrome
+profile or borrow a user Chrome extension host. The dedicated profile is
+exclusive to one supervisor process and may retain only its own browser state
+across restarts. CAPTCHA and access challenges must be checkpointed as
+`BLOCKED`; do not bypass them or silently change to Baidu API, Apify, another
+search engine, or a fresh profile.
+
+## Operate the local control plane
+
+The Web control plane never owns Playwright. Start it with:
+
+```powershell
+npm.cmd run web -- --database data/lite-job-search.sqlite --port 4317
+```
+
+Use `npm.cmd run control -- status`, `stop --batch <id> --confirm`, and
+`resume --batch <id> --confirm` for SQLite-backed worker control. A stop is
+cooperative and batch-scoped.
+
+After a human completes a Baidu challenge, run `control -- baidu-ack --confirm`.
+This does not close the circuit. One worker must atomically acquire the
+`HALF_OPEN` probe lease and reach a real results page before the state becomes
+`CLOSED`. Never refresh, retry, switch engines, or run a second probe while the
+lease is held.
+
 ## Export
 
 ```powershell

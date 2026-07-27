@@ -65,6 +65,25 @@ test('allows only trusted first-party or official-attributed ATS domains', () =>
   ]);
 });
 
+test('skips authentication, employer publishing, and editorial content links', () => {
+  const entries = discoverRecruitmentEntries({
+    baseUrl: 'https://www.example.com/',
+    trustedRegistrableDomains: ['example.com'],
+    links: [
+      { text: '招聘职位登录', href: 'https://passport.example.com/login?path=/jobs' },
+      { text: '发布招聘职位', href: 'https://fabu.example.com/zhaopin/new' },
+      { text: '产品经理招聘趋势', href: 'https://www.example.com/article/123' },
+      { text: 'AI 产品经理', href: 'https://career.example.com/position/42/detail' },
+      { text: '管理简历', href: 'https://career.example.com/resume.html' },
+      { text: '加入我们', href: 'https://career.example.com/careers' },
+    ],
+  });
+
+  assert.deepEqual(entries.map((entry) => entry.url), [
+    'https://career.example.com/careers',
+  ]);
+});
+
 test('verified official page may enqueue a known ATS tenant link', () => {
   const [entry] = discoverRecruitmentEntries({
     baseUrl: 'https://example.com/careers',

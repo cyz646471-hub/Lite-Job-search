@@ -94,6 +94,19 @@ test('official-site-confirmed ATS tenant is an independent identity anchor', () 
   assert.equal(result.confidenceScore, 80);
 });
 
+test('reviewed ATS ownership plus recruitment structure reaches verification threshold', () => {
+  const result = verifyCareerPortal({
+    pageType: 'JOB_LIST',
+    evidence: [
+      { code: 'reviewed_ats_tenant_ownership' },
+      { code: 'recruitment_structure' },
+    ],
+  });
+
+  assert.equal(result.confidenceScore, 50);
+  assert.equal(result.verificationStatus, 'VERIFIED');
+});
+
 test('LLM advisory has no scoring or identity authority', () => {
   const result = verifyCareerPortal({
     pageType: 'JOB_LIST',

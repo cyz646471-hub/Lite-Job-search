@@ -104,6 +104,16 @@ LLM 不参与官网真实性、ATS 归属、verification status 或 confidence s
 用户已经打开并启用扩展的正常 Chrome 会话；会话未连接时返回
 `NOT_CONFIGURED`。不得切换到百度 API、Apify 或其他搜索源来规避安全验证。
 
+## Persistent browser runtime policy
+
+Production instruction runs use `persistent-chrome` through
+`run-persistent-browser-supervisor.mjs`. The Supervisor starts and owns one
+dedicated Playwright Chrome profile for the complete queue run. The profile is
+not a user daily profile, is locked to one process, and retains only its own
+automation browser state across restarts. Do not use extension-host borrowing
+or `normal-chrome` for production work. A CAPTCHA or access challenge is
+recorded as `BLOCKED`; the worker never attempts to bypass it.
+
 ## 输出
 
 任务目录至少包含：

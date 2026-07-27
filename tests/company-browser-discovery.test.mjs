@@ -15,27 +15,45 @@ import {
   normalizeBrowserCompanyInput,
   shouldOpenSearchResult,
 } from '../scripts/company-browser-discovery.mjs';
+import { buildCompanyQueryLadder } from '../src/discovery/company-query-ladder.mjs';
+import {
+  canonicalHost,
+  officialHomepageCandidates,
+  sameCanonicalHost,
+} from '../src/discovery/canonical-domain-resolver.mjs';
 
 function fakeBrowser(pages) {
   const visits = [];
   let currentUrl = '';
+  const currentFixture = () => {
+    let current = pages[currentUrl];
+    if (!current && currentUrl.startsWith('https://www.baidu.com/s?wd=')) {
+      const query = new URL(currentUrl).searchParams.get('wd') || '';
+      const company = query
+        .replace(/\s+(?:招聘官网|校园招聘|社会招聘|招聘|careers|jobs)$/i, '')
+        .replace(/^site:\S+\s+/i, '');
+      const legacy = `https://www.baidu.com/s?wd=${encodeURIComponent(`${company} 招聘`)}`;
+      current = pages[legacy];
+    }
+    return current || {};
+  };
   const page = {
     async goto(url) {
       currentUrl = url;
       visits.push(url);
-      const current = pages[url] || {};
+      const current = currentFixture();
       if (current.error) throw current.error;
       return { status: () => current.status || 200 };
     },
     async waitForTimeout() {},
     url() {
-      return pages[currentUrl]?.finalUrl || currentUrl;
+      return currentFixture().finalUrl || currentUrl;
     },
     async title() {
-      return pages[currentUrl]?.title || '';
+      return currentFixture().title || '';
     },
     locator(selector) {
-      const current = pages[currentUrl] || {};
+      const current = currentFixture();
       return {
         async innerText() {
           return current.text || '';
@@ -60,6 +78,40 @@ function fakeBrowser(pages) {
     },
   };
 }
+
+test('builds market-aware deterministic query ladders', () => {
+  assert.deepEqual(buildCompanyQueryLadder({
+    company: '示例公司',
+    officialDomain: 'www.example.com',
+    market: 'CN',
+  }), [
+    '示例公司 招聘官网',
+    '示例公司 校园招聘',
+    '示例公司 社会招聘',
+    'site:example.com 招聘',
+  ]);
+  assert.deepEqual(buildCompanyQueryLadder({
+    company: '示例中国名',
+    englishName: 'Example Inc',
+    officialDomain: 'example.com',
+    market: 'NA',
+  }), [
+    'Example Inc careers',
+    'Example Inc jobs',
+    'site:example.com careers',
+  ]);
+});
+
+test('restores apex and www official homepage candidates deterministically', () => {
+  assert.equal(canonicalHost('https://www.example.com/path'), 'example.com');
+  assert.deepEqual(officialHomepageCandidates('www.example.com'), [
+    'https://example.com/',
+    'https://www.example.com/',
+    'http://example.com/',
+    'http://www.example.com/',
+  ]);
+  assert.equal(sameCanonicalHost('https://global.example.com/', 'example.com'), true);
+});
 
 test('visits recruitment sibling entries instead of leaving them discovered', async () => {
   const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('示例公司 招聘')}`;
@@ -605,6 +657,63 @@ test('marks Jobui invalid and continues to a later official recruitment result',
   assert.equal(result.officialCandidates[0].url, officialUrl);
 });
 
+test('falls back to one known official homepage and follows its recruitment link', async () => {
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('Example Tech 招聘')}`;
+  const officialHomeUrl = 'https://example.com/';
+  const careersUrl = 'https://jobs.example.com/positions';
+  const browser = fakeBrowser({
+    [searchUrl]: {
+      text: '没有找到相关结果',
+      searchRows: [],
+    },
+    [officialHomeUrl]: {
+      title: 'Example Tech',
+      text: 'Example Tech 企业官网',
+      links: [{ text: '加入我们', href: careersUrl }],
+    },
+    [careersUrl]: {
+      title: 'Example Tech 招聘',
+      text: 'Example Tech 招聘职位列表 Product Manager',
+      links: [],
+    },
+  });
+
+  const result = await discoverCompanyWithBrowser({
+    company: 'Example Tech',
+    officialDomain: 'example.com',
+    browser,
+  });
+
+  assert.equal(browser.visits.filter((url) => url === officialHomeUrl).length, 1);
+  assert.equal(browser.visits.filter((url) => url === careersUrl).length, 1);
+  assert.equal(result.officialCandidates.some((item) => item.url === careersUrl), true);
+});
+
+test('known official homepage is evidence only and is not itself a recruitment candidate', async () => {
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('Example Academy 招聘')}`;
+  const officialHomeUrl = 'https://example.com/';
+  const browser = fakeBrowser({
+    [searchUrl]: {
+      text: '没有找到相关结果',
+      searchRows: [],
+    },
+    [officialHomeUrl]: {
+      title: 'Example Academy 技术学习平台',
+      text: 'Example Academy 技术学习平台 招聘讲师 职位课程 岗位能力培训',
+      links: [{ text: '课程岗位介绍', href: 'https://example.com/course/jobs' }],
+    },
+  });
+
+  const result = await discoverCompanyWithBrowser({
+    company: 'Example Academy',
+    officialDomain: 'example.com',
+    browser,
+  });
+
+  assert.equal(browser.visits.filter((url) => url === officialHomeUrl).length, 1);
+  assert.equal(result.officialCandidates.some((item) => item.url === officialHomeUrl), false);
+});
+
 test('keeps recruitment-shaped ATS URL as an unverified candidate', () => {
   const decision = classifySearchResult({
     company: '示例科技',
@@ -636,6 +745,18 @@ test('normalizes the current Golden Dataset company schema', () => {
   assert.deepEqual(company.aliases, ['示例']);
   assert.deepEqual(company.industry, ['AI']);
   assert.equal(company.countryRegion, '中国大陆');
+});
+
+test('applies reviewed company domain corrections before search planning', () => {
+  const [company] = normalizeBrowserCompanyInput([{
+    name_cn: '霸王茶姬',
+    name_en: 'CHAGEE',
+    official_domains: ['chatee.com'],
+  }]);
+
+  assert.equal(company.officialDomain, 'chagee.com');
+  assert.deepEqual(company.officialDomains, ['chagee.com']);
+  assert.match(company.domainKnowledgeEvidence, /replaces erroneous chatee\.com/);
 });
 
 test('captures rendered DOM and explicit links for downstream verification', async () => {
@@ -785,7 +906,13 @@ test('persistent Chrome mode launches an isolated visible profile explicitly', a
   assert.equal(typeof runtime.newPage, 'function');
   assert.deepEqual(launches, [{
     profileDir: 'C:/tmp/lite-job-profile',
-    options: { channel: 'chrome', headless: false },
+    options: {
+      channel: 'chrome',
+      headless: false,
+      chromiumSandbox: true,
+      viewport: null,
+      args: [],
+    },
   }]);
 });
 
@@ -807,7 +934,7 @@ test('local worker bounds navigation and recursion settings', () => {
     timeoutMs: 30_000,
     searchDelayMs: 60_000,
     searchJitterMs: 60_000,
-    maxCompaniesPerRun: 100,
+    maxCompaniesPerRun: 200,
   });
 });
 
@@ -844,7 +971,7 @@ test('minimum search interval gate delays only subsequent searches', async () =>
 });
 
 test('normal Chrome binding supports an asynchronous tab URL with candidates', async () => {
-  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('异步公司 招聘')}`;
+  const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('异步公司 招聘官网')}`;
   const careerUrl = 'https://jobs.example.com/openings';
   let currentUrl = '';
   const chrome = {

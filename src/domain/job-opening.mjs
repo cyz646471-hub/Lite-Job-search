@@ -22,22 +22,20 @@ function cleanUrl(value) {
 export function stableOpeningId(input = {}) {
   if (input.id) return String(input.id);
   const companyId = String(input.companyId || '');
-  const eventIdentity = input.recruitmentEventId
-    ? `event:${String(input.recruitmentEventId)}`
-    : null;
+  const jobDetailUrl = cleanUrl(input.jobDetailUrl);
+  const sourceUrl = cleanUrl(input.sourceUrl) || '';
   const identity = input.sourceJobId
     ? [
       companyId,
-      eventIdentity,
       `source:${String(input.sourceJobId)}`,
     ].filter(Boolean).join('|')
-    : [
+    : jobDetailUrl
+      ? [companyId, `detail:${jobDetailUrl}`].join('|')
+      : [
       companyId,
-      eventIdentity,
-      cleanUrl(input.jobDetailUrl) || cleanUrl(input.sourceUrl) || '',
+      `source:${sourceUrl}`,
       clean(input.title).toLowerCase(),
-      clean(input.locations?.[0]).toLowerCase(),
-    ].filter((value) => value != null).join('|');
+    ].join('|');
   return createHash('sha256').update(identity).digest('hex');
 }
 

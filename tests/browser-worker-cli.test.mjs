@@ -60,3 +60,42 @@ test('normal Chrome binding module runs candidate verification, extraction and S
   assert.equal(report.verification.verified, 1);
   assert.equal(report.extraction.jobsStored, 1);
 });
+
+test('CLI defaults to a dedicated persistent Chrome profile and fails closed on an invalid profile path', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-persistent-chrome-default-'));
+  const inputFile = path.join(directory, 'companies.json');
+  const profileFile = path.join(directory, 'not-a-directory');
+  await writeFile(profileFile, 'not a profile directory');
+  await writeFile(inputFile, JSON.stringify([{ company: '示例公司' }]));
+
+  const result = await runCli([
+    '--input', inputFile,
+    '--output-dir', path.join(directory, 'output'),
+    '--profile-dir', profileFile,
+  ]);
+
+  assert.equal(result.code, 2);
+  const failure = JSON.parse(result.stderr.trim());
+  assert.equal(failure.status, 'NOT_CONFIGURED');
+  assert.equal(failure.reasonCode, 'persistent_chrome_not_configured');
+});
+
+test('CLI accepts persistent Chrome mode as the production browser mode', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-persistent-browser-mode-'));
+  const inputFile = path.join(directory, 'companies.json');
+  const profileFile = path.join(directory, 'not-a-directory');
+  await writeFile(profileFile, 'not a profile directory');
+  await writeFile(inputFile, JSON.stringify([{ company: '示例公司' }]));
+
+  const result = await runCli([
+    '--input', inputFile,
+    '--output-dir', path.join(directory, 'output'),
+    '--browser-mode', 'persistent-chrome',
+    '--profile-dir', profileFile,
+  ]);
+
+  assert.equal(result.code, 2);
+  const failure = JSON.parse(result.stderr.trim());
+  assert.equal(failure.status, 'NOT_CONFIGURED');
+  assert.equal(failure.reasonCode, 'persistent_chrome_not_configured');
+});

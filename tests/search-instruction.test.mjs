@@ -21,7 +21,7 @@ test('compiles a Chinese product-manager instruction into a complete worker task
   assert.equal(task.location, '');
   assert.equal(task.freshnessDays, 90);
   assert.equal(task.targetCount, 100);
-  assert.equal(task.browserMode, 'normal-chrome');
+  assert.equal(task.browserMode, 'persistent-chrome');
   assert.deepEqual(task.searchSources, ['chrome_baidu_visible_search']);
   assert.deepEqual(task.disabledSearchSources, ['baidu_api', 'apify']);
   assert.equal(task.maxCompaniesPerRun, 10);

@@ -35,6 +35,18 @@ function normalizedDomainSet(values) {
   return new Set((values || []).map(registrableDomain).filter(Boolean));
 }
 
+function isNonCandidateNavigation(url, text = '') {
+  const host = url.hostname.toLowerCase();
+  const path = url.pathname.toLowerCase();
+  return /^(?:passport|fabu|account|auth|sso)\./i.test(host)
+    || /\/(?:login|logout|register|signin|signup)(?:\/|$)/i.test(path)
+    || /\/(?:article|news|blog|media|press)(?:\/|$)/i.test(path)
+    || /\/(?:jobs?|positions?)\/[^/]+\/detail(?:\/|$)/i.test(path)
+    || /\/resume(?:[./]|$)/i.test(path)
+    || /发布(?:招聘)?职位|企业(?:登录|注册)|employer\s+(?:login|sign in|post)/i
+      .test(String(text || ''));
+}
+
 export function recruitmentTypeForEntry(text, url) {
   const value = `${String(text || '')} ${String(url || '')}`.toLowerCase();
   if (/实习|internship|(?:^|[^a-z])intern(?:[^a-z]|$)/i.test(value)) return 'internship';
@@ -90,7 +102,7 @@ export function discoverRecruitmentEntries({
     if (discovered.length >= numericMaxEntries) break;
     const resolved = httpUrl(link?.href, base);
     const recruitmentType = recruitmentTypeForEntry(link?.text, resolved?.href);
-    if (!resolved || !recruitmentType) continue;
+    if (!resolved || !recruitmentType || isNonCandidateNavigation(resolved, link?.text)) continue;
     const domain = registrableDomain(resolved.href);
     const firstPartyEntry = trustedDomains.has(domain);
     const attributedAtsEntry = !firstPartyEntry

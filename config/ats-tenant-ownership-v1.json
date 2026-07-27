@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "reviewedAt": "2026-07-27",
+  "records": [
+    {
+      "company": "安谋科技（中国）",
+      "aliases": ["安谋中国", "Arm China"],
+      "ats": "MOKA",
+      "tenantKey": "armchina",
+      "urlPrefixes": ["https://app.mokahr.com/apply/armchina/"],
+      "officialDomains": ["armchina.com"],
+      "provenance": "2026-07-27 visible-browser canary and company identity registry"
+    },
+    {
+      "company": "百融云创",
+      "aliases": ["百融", "Bairong"],
+      "ats": "MOKA",
+      "tenantKey": "100credit",
+      "urlPrefixes": ["https://app.mokahr.com/campus-recruitment/100credit/"],
+      "officialDomains": ["brgroup.com"],
+      "provenance": "2026-07-27 visible-browser canary; rendered ATS page legal entity matched 百融云创科技股份有限公司"
+    },
+    {
+      "company": "白云机场",
+      "aliases": ["广州白云国际机场", "白云机场股份"],
+      "ats": "HOTJOB",
+      "tenantKey": "baiyunportjob",
+      "urlPrefixes": ["https://baiyunportjob.hotjob.cn/"],
+      "officialDomains": ["baiyunport.com"],
+      "provenance": "2026-07-27 visible-browser canary and company identity registry"
+    },
+    {
+      "company": "安徽合力",
+      "aliases": ["安徽合力股份有限公司"],
+      "ats": "ZHIYE",
+      "tenantKey": "ahhl",
+      "urlPrefixes": ["https://ahhl.zhiye.com/"],
+      "officialDomains": ["helichina.com"],
+      "provenance": "2026-07-27 visible-browser canary; first-party recruitment page and ATS result"
+    }
+  ]
+}

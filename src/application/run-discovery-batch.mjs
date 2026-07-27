@@ -28,14 +28,18 @@ function boundedError(error) {
 export async function runDiscoveryBatch({
   batchId,
   items = [],
+  inputHash = null,
   retryFailed = false,
   retryDeferred = false,
   stopOnResultStatuses = [],
   maxItemsPerRun = Number.POSITIVE_INFINITY,
   pauseBeforeRun = false,
+  pauseOnBlocked = true,
 } = {}, {
   repository,
   runItem,
+  shouldDeferItem = null,
+  shouldStop = null,
   now = () => new Date().toISOString(),
 } = {}) {
   if (!batchId || !Array.isArray(items) || !items.length) {
@@ -50,7 +54,7 @@ export async function runDiscoveryBatch({
   }
   repository.beginBatch({
     id: batchId,
-    inputHash: hash(items),
+    inputHash: inputHash || hash(items),
     startedAt: now(),
   });
   const stopStatuses = new Set(stopOnResultStatuses.map(String));
@@ -66,6 +70,7 @@ export async function runDiscoveryBatch({
   }));
   let attempted = 0;
   let paused = pauseBeforeRun === true;
+  let stopRequested = false;
 
   for (const [position, input] of items.entries()) {
     if (paused) break;
@@ -74,6 +79,36 @@ export async function runDiscoveryBatch({
     if (checkpoint.status === 'SUCCEEDED') continue;
     if (checkpoint.status === 'FAILED' && !retryFailed) continue;
     if (checkpoint.status === 'DEFERRED' && !retryDeferred) continue;
+    if (typeof shouldStop === 'function' && await shouldStop({
+      batchId,
+      itemKey,
+      position,
+      input,
+    })) {
+      stopRequested = true;
+      paused = true;
+      break;
+    }
+    if (typeof shouldDeferItem === 'function') {
+      const deferral = await shouldDeferItem(input, {
+        batchId,
+        itemKey,
+        position,
+      });
+      if (deferral) {
+        repository.deferBatchItem({
+          batchId,
+          itemKey,
+          resultStatus: deferral.resultStatus || 'DEFERRED',
+          retryClass: deferral.retryClass || 'PROVIDER_BLOCKED',
+          deferReason: deferral.deferReason || 'SEARCH_ENGINE_OPEN',
+          deferredUntil: deferral.deferredUntil || null,
+          errorMessage: boundedError(deferral.reason || deferral.deferReason),
+          completedAt: now(),
+        });
+        continue;
+      }
+    }
     if (attempted >= itemBudget) {
       paused = true;
       break;
@@ -90,12 +125,16 @@ export async function runDiscoveryBatch({
           itemKey,
           resultStatus,
           retryClass: 'PROVIDER_BLOCKED',
+          deferReason: result?.deferReason || 'SEARCH_ENGINE_OPEN',
           deferredUntil: null,
           errorMessage: boundedError(result?.reason || resultStatus),
           completedAt: now(),
         });
-        paused = true;
-        break;
+        if (pauseOnBlocked) {
+          paused = true;
+          break;
+        }
+        continue;
       }
       const failed = FAILURE_STATUSES.has(resultStatus);
       repository.completeBatchItem({
@@ -131,10 +170,14 @@ export async function runDiscoveryBatch({
   const pending = checkpoints.filter((item) => (
     ['PENDING', 'RUNNING'].includes(item.status)
   )).length;
-  const status = paused && (pending + deferred) > 0
+  const status = stopRequested
+    ? 'STOPPED'
+    : paused && (pending + deferred) > 0
     ? 'PAUSED'
     : failed > 0
     ? 'COMPLETE_WITH_ERRORS'
+    : deferred > 0
+      ? 'PAUSED'
     : pending > 0
       ? 'PARTIAL'
       : 'COMPLETE';
@@ -147,6 +190,7 @@ export async function runDiscoveryBatch({
     failed,
     deferred,
     pending,
+    stopRequested,
     items: Object.freeze(checkpoints),
   });
 }

@@ -4,6 +4,7 @@ import { classifySurfacePage } from '../../../engine/upstream/planner/cn-surface
 import { registrableDomainOf } from '../../../engine/upstream/planner/cn-url-evidence.mjs';
 import { classifyRecruitmentUrl } from '../../../engine/upstream/planner/official-links.mjs';
 import { bootstrapOfficialDomain } from '../../verification/official-domain-bootstrap.mjs';
+import { resolveAtsTenantOwnership } from '../../verification/ats-tenant-ownership.mjs';
 
 const UNIVERSITY_HOSTS = ['ncss.cn', '91wllm.cn', '91wllm.com'];
 
@@ -74,6 +75,7 @@ export function createOfficialVerificationAdapter({
   detectAts = detectAtsFingerprint,
   classifyPage = classifySurfacePage,
   evaluateIdentity = evaluateCandidateIdentity,
+  resolveTenantOwnership = resolveAtsTenantOwnership,
   now = () => new Date().toISOString(),
 } = {}) {
   return Object.freeze({
@@ -203,9 +205,21 @@ export function createOfficialVerificationAdapter({
           .includes(officialAttributionDomain);
 
       if (ats.ats) {
+        const reviewedOwnership = resolveTenantOwnership({
+          company,
+          url: finalUrl,
+          atsType: ats.ats,
+        });
         const tenantVerified = candidate.verifiedTenant === true
-          || (identity.strongEvidence || []).includes('verified_surface_registry');
+          || (identity.strongEvidence || []).includes('verified_surface_registry')
+          || reviewedOwnership.status === 'VERIFIED';
         push(tenantVerified ? 'verified_ats_tenant' : 'ats_fingerprint_only', ats.ats);
+        if (reviewedOwnership.status === 'VERIFIED') {
+          push(
+            'reviewed_ats_tenant_ownership',
+            `${ats.ats}:${reviewedOwnership.record.tenantKey}`,
+          );
+        }
         if (tenantVerified && officialAttributionConfirmed) {
           push('official_site_confirms_ats_tenant', ats.ats);
         }

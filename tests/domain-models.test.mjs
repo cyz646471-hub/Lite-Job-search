@@ -208,6 +208,25 @@ test('JobOpening uses source job id before URL fallback', () => {
   assert.equal(first, second);
 });
 
+test('JobOpening URL identity is stable across event and location enrichment', () => {
+  const first = stableOpeningId({
+    companyId: 'company-1',
+    recruitmentEventId: 'event-before-enrichment',
+    sourceUrl: 'https://jobs.example.com/42',
+    title: 'AI 产品经理',
+    locations: [],
+  });
+  const second = stableOpeningId({
+    companyId: 'company-1',
+    recruitmentEventId: 'event-after-enrichment',
+    sourceUrl: 'https://jobs.example.com/42',
+    title: 'AI 产品经理',
+    locations: ['北京'],
+  });
+
+  assert.equal(first, second);
+});
+
 test('JobOpening preserves unknown publication date and does not call it recent', () => {
   const job = createJobOpening({
     companyId: 'company-1',

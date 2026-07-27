@@ -149,10 +149,94 @@ function mapProviderCircuitState(row) {
     provider: row.provider,
     state: row.state,
     reasonCode: row.reason_code || null,
+    openedReason: row.opened_reason || row.reason_code || null,
     openedAt: row.opened_at || null,
+    openUntil: row.open_until || null,
     nextProbeAt: row.next_probe_at || null,
     lastHealthyAt: row.last_healthy_at || null,
+    manualActionRequired: row.manual_action_required === 1,
+    manualAcknowledgedAt: row.manual_acknowledged_at || null,
+    probeOwnerId: row.probe_owner_id || null,
+    probeLeaseUntil: row.probe_lease_until || null,
+    lastProbeAt: row.last_probe_at || null,
+    lastSuccessAt: row.last_success_at || row.last_healthy_at || null,
+    consecutiveFailures: Number(row.consecutive_failures) || 0,
+    version: Number(row.version) || 0,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapWorkerInstance(row) {
+  if (!row) return null;
+  return {
+    instanceId: row.instance_id,
+    batchId: row.batch_id,
+    profileKey: row.profile_key,
+    hostName: row.host_name,
+    pid: row.pid,
+    processStartToken: row.process_start_token,
+    state: row.state,
+    startedAt: row.started_at,
+    heartbeatAt: row.heartbeat_at,
+    currentCompanyId: row.current_company_id || null,
+    lastCompletedCompanyId: row.last_completed_company_id || null,
+    stopRequestedAt: row.stop_requested_at || null,
+    exitedAt: row.exited_at || null,
+    exitCode: row.exit_code,
+    lastError: row.last_error || null,
+  };
+}
+
+function mapControlTask(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    batchId: row.batch_id,
+    location: row.location || null,
+    roleKeywords: decode(row.role_keywords_json, []),
+    industry: row.industry || null,
+    absoluteDateFrom: row.absolute_date_from,
+    absoluteDateTo: row.absolute_date_to,
+    targetCount: row.target_count,
+    selectionMode: row.selection_mode,
+    targetUnit: row.target_unit,
+    allowBaiduFallback: row.allow_baidu_fallback === 1,
+    state: row.state,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapWebKnowledge(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    knowledgeType: row.knowledge_type,
+    value: row.value,
+    verificationStatus: row.verification_status,
+    evidenceSource: row.evidence_source,
+    firstSeenAt: row.first_seen_at,
+    lastVerifiedAt: row.last_verified_at || null,
+    expiresAt: row.expires_at || null,
+    rejectionReason: row.rejection_reason || null,
+  };
+}
+
+function mapSearchCache(row) {
+  if (!row) return null;
+  return {
+    cacheKey: row.cache_key,
+    engine: row.engine,
+    normalizedQuery: row.normalized_query,
+    locale: row.locale,
+    absoluteDateFrom: row.absolute_date_from || null,
+    absoluteDateTo: row.absolute_date_to || null,
+    strategyVersion: row.strategy_version,
+    outcome: row.outcome,
+    result: decode(row.result_json, {}),
+    createdAt: row.created_at,
+    expiresAt: row.expires_at || null,
   };
 }
 
@@ -381,9 +465,9 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       `),
       beginBatch: database.prepare(`
         INSERT INTO batch_runs (id, input_hash, status, started_at)
-        VALUES (@id, @inputHash, 'RUNNING', @startedAt)
+        VALUES (@id, @inputHash, @status, @startedAt)
         ON CONFLICT(id) DO UPDATE SET
-          status = 'RUNNING',
+          status = @status,
           completed_at = NULL
       `),
       batchById: database.prepare(`
@@ -391,9 +475,9 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       `),
       ensureBatchItem: database.prepare(`
         INSERT OR IGNORE INTO batch_items (
-          batch_id, item_key, position, input_json, status, created_at
+          batch_id, item_key, position, input_json, status, queue_type, created_at
         ) VALUES (
-          @batchId, @itemKey, @position, @inputJson, 'PENDING', @createdAt
+          @batchId, @itemKey, @position, @inputJson, 'PENDING', @queueType, @createdAt
         )
       `),
       batchItem: database.prepare(`
@@ -416,7 +500,8 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         UPDATE batch_items
         SET status = 'DEFERRED', result_status = @resultStatus,
             retry_class = @retryClass, deferred_until = @deferredUntil,
-            error_message = @errorMessage, completed_at = @completedAt
+            defer_reason = @deferReason, error_message = @errorMessage,
+            completed_at = @completedAt
         WHERE batch_id = @batchId AND item_key = @itemKey
       `),
       completeBatch: database.prepare(`
@@ -426,10 +511,16 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       upsertProviderCircuitState: database.prepare(`
         INSERT INTO provider_circuit_states (
           provider, state, reason_code, opened_at, next_probe_at,
-          last_healthy_at, updated_at
+          last_healthy_at, updated_at, opened_reason, open_until,
+          manual_action_required, manual_acknowledged_at, probe_owner_id,
+          probe_lease_until, last_probe_at, last_success_at,
+          consecutive_failures, version
         ) VALUES (
           @provider, @state, @reasonCode, @openedAt, @nextProbeAt,
-          @lastHealthyAt, @updatedAt
+          @lastHealthyAt, @updatedAt, @openedReason, @openUntil,
+          @manualActionRequired, @manualAcknowledgedAt, @probeOwnerId,
+          @probeLeaseUntil, @lastProbeAt, @lastSuccessAt,
+          @consecutiveFailures, @version
         )
         ON CONFLICT(provider) DO UPDATE SET
           state = excluded.state,
@@ -437,10 +528,154 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           opened_at = excluded.opened_at,
           next_probe_at = excluded.next_probe_at,
           last_healthy_at = excluded.last_healthy_at,
+          opened_reason = excluded.opened_reason,
+          open_until = excluded.open_until,
+          manual_action_required = excluded.manual_action_required,
+          manual_acknowledged_at = excluded.manual_acknowledged_at,
+          probe_owner_id = excluded.probe_owner_id,
+          probe_lease_until = excluded.probe_lease_until,
+          last_probe_at = excluded.last_probe_at,
+          last_success_at = excluded.last_success_at,
+          consecutive_failures = excluded.consecutive_failures,
+          version = excluded.version,
           updated_at = excluded.updated_at
       `),
       providerCircuitState: database.prepare(`
         SELECT * FROM provider_circuit_states WHERE provider = ?
+      `),
+      batchById: database.prepare('SELECT * FROM batch_runs WHERE id = ?'),
+      requestBatchStop: database.prepare(`
+        UPDATE batch_runs SET stop_requested_at = @requestedAt, status = 'STOP_REQUESTED'
+        WHERE id = @batchId
+      `),
+      resumeBatch: database.prepare(`
+        UPDATE batch_runs
+        SET stop_requested_at = NULL, resumed_at = @resumedAt, status = 'PENDING',
+            completed_at = NULL
+        WHERE id = @batchId
+      `),
+      registerWorker: database.prepare(`
+        INSERT INTO worker_instances (
+          instance_id, batch_id, profile_key, host_name, pid, process_start_token,
+          state, started_at, heartbeat_at, current_company_id,
+          last_completed_company_id, stop_requested_at, exited_at, exit_code,
+          last_error
+        ) VALUES (
+          @instanceId, @batchId, @profileKey, @hostName, @pid, @processStartToken,
+          @state, @startedAt, @heartbeatAt, @currentCompanyId,
+          @lastCompletedCompanyId, NULL, NULL, NULL, NULL
+        )
+        ON CONFLICT(instance_id) DO UPDATE SET
+          state = excluded.state,
+          heartbeat_at = excluded.heartbeat_at,
+          current_company_id = excluded.current_company_id,
+          last_completed_company_id = excluded.last_completed_company_id
+      `),
+      heartbeatWorker: database.prepare(`
+        UPDATE worker_instances
+        SET state = @state, heartbeat_at = @heartbeatAt,
+            current_company_id = @currentCompanyId,
+            last_completed_company_id = COALESCE(
+              @lastCompletedCompanyId, last_completed_company_id
+            ),
+            last_error = @lastError
+        WHERE instance_id = @instanceId
+      `),
+      requestWorkerStop: database.prepare(`
+        UPDATE worker_instances
+        SET stop_requested_at = @requestedAt, state = 'STOP_REQUESTED'
+        WHERE instance_id = @instanceId AND state NOT IN ('EXITED', 'CRASHED')
+      `),
+      exitWorker: database.prepare(`
+        UPDATE worker_instances
+        SET state = @state, heartbeat_at = @exitedAt, exited_at = @exitedAt,
+            exit_code = @exitCode, last_error = @lastError,
+            current_company_id = NULL
+        WHERE instance_id = @instanceId
+      `),
+      workerById: database.prepare(`
+        SELECT * FROM worker_instances WHERE instance_id = ?
+      `),
+      profileLockByKey: database.prepare(`
+        SELECT * FROM profile_locks WHERE profile_key = ?
+      `),
+      upsertProfileLock: database.prepare(`
+        INSERT INTO profile_locks (
+          profile_key, lock_id, instance_id, batch_id, profile_real_path,
+          host_name, pid, process_start_token, started_at, heartbeat_at
+        ) VALUES (
+          @profileKey, @lockId, @instanceId, @batchId, @profileRealPath,
+          @hostName, @pid, @processStartToken, @startedAt, @heartbeatAt
+        )
+        ON CONFLICT(profile_key) DO UPDATE SET
+          lock_id = excluded.lock_id,
+          instance_id = excluded.instance_id,
+          batch_id = excluded.batch_id,
+          profile_real_path = excluded.profile_real_path,
+          host_name = excluded.host_name,
+          pid = excluded.pid,
+          process_start_token = excluded.process_start_token,
+          started_at = excluded.started_at,
+          heartbeat_at = excluded.heartbeat_at
+      `),
+      deleteProfileLock: database.prepare(`
+        DELETE FROM profile_locks WHERE profile_key = @profileKey AND lock_id = @lockId
+      `),
+      upsertWebKnowledge: database.prepare(`
+        INSERT INTO company_web_knowledge (
+          id, company_id, knowledge_type, value, verification_status,
+          evidence_source, first_seen_at, last_verified_at, expires_at,
+          rejection_reason
+        ) VALUES (
+          @id, @companyId, @knowledgeType, @value, @verificationStatus,
+          @evidenceSource, @firstSeenAt, @lastVerifiedAt, @expiresAt,
+          @rejectionReason
+        )
+        ON CONFLICT(company_id, knowledge_type, value) DO UPDATE SET
+          verification_status = excluded.verification_status,
+          evidence_source = excluded.evidence_source,
+          last_verified_at = excluded.last_verified_at,
+          expires_at = excluded.expires_at,
+          rejection_reason = excluded.rejection_reason
+      `),
+      searchCacheByKey: database.prepare(`
+        SELECT * FROM search_cache WHERE cache_key = ?
+      `),
+      upsertSearchCache: database.prepare(`
+        INSERT INTO search_cache (
+          cache_key, engine, normalized_query, locale, absolute_date_from,
+          absolute_date_to, strategy_version, outcome, result_json,
+          created_at, expires_at
+        ) VALUES (
+          @cacheKey, @engine, @normalizedQuery, @locale, @absoluteDateFrom,
+          @absoluteDateTo, @strategyVersion, @outcome, @resultJson,
+          @createdAt, @expiresAt
+        )
+        ON CONFLICT(cache_key) DO UPDATE SET
+          outcome = excluded.outcome,
+          result_json = excluded.result_json,
+          created_at = excluded.created_at,
+          expires_at = excluded.expires_at
+      `),
+      createControlTask: database.prepare(`
+        INSERT INTO control_tasks (
+          id, batch_id, location, role_keywords_json, industry,
+          absolute_date_from, absolute_date_to, target_count,
+          selection_mode, target_unit, allow_baidu_fallback, state,
+          created_at, updated_at
+        ) VALUES (
+          @id, @batchId, @location, @roleKeywordsJson, @industry,
+          @absoluteDateFrom, @absoluteDateTo, @targetCount,
+          @selectionMode, @targetUnit, @allowBaiduFallback, @state,
+          @createdAt, @updatedAt
+        )
+      `),
+      appendAuditLog: database.prepare(`
+        INSERT INTO audit_logs (
+          id, action, target_type, target_id, actor, details_json, created_at
+        ) VALUES (
+          @id, @action, @targetType, @targetId, @actor, @detailsJson, @createdAt
+        )
       `),
       supersedePlatformPortals: database.prepare(`
         UPDATE career_portals
@@ -967,6 +1202,8 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       errorMessage: row.error_message,
       retryClass: row.retry_class || null,
       deferredUntil: row.deferred_until || null,
+      queueType: row.queue_type || 'LOCAL_OR_DIRECT_VERIFICATION',
+      deferReason: row.defer_reason || null,
       startedAt: row.started_at,
       completedAt: row.completed_at,
       createdAt: row.created_at,
@@ -975,11 +1212,24 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
 
   function beginBatch(batch) {
     requireMigration();
-    const existing = statements.batchById.get(batch.id);
+    let existing = statements.batchById.get(batch.id);
+    if (
+      existing
+      && existing.input_hash !== batch.inputHash
+      && String(existing.input_hash).startsWith('UNMATERIALIZED:')
+    ) {
+      database.prepare(`
+        UPDATE batch_runs SET input_hash = ? WHERE id = ? AND input_hash = ?
+      `).run(batch.inputHash, batch.id, existing.input_hash);
+      existing = statements.batchById.get(batch.id);
+    }
     if (existing && existing.input_hash !== batch.inputHash) {
       throw new Error('batch input hash mismatch');
     }
-    statements.beginBatch.run(batch);
+    statements.beginBatch.run({
+      ...batch,
+      status: batch.status || 'RUNNING',
+    });
     return batch;
   }
 
@@ -988,6 +1238,7 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     statements.ensureBatchItem.run({
       ...item,
       inputJson: encode(item.input, {}),
+      queueType: item.queueType || item.input?.queueType || 'LOCAL_OR_DIRECT_VERIFICATION',
     });
     return mapBatchItem(statements.batchItem.get(item.batchId, item.itemKey));
   }
@@ -1015,6 +1266,7 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       resultStatus: item.resultStatus || 'BLOCKED',
       retryClass: item.retryClass || 'PROVIDER_BLOCKED',
       deferredUntil: item.deferredUntil ?? null,
+      deferReason: item.deferReason ?? item.retryClass ?? null,
       errorMessage: item.errorMessage ?? null,
     });
     if (result.changes !== 1) {
@@ -1028,6 +1280,15 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     return database.prepare(`
       SELECT * FROM batch_items WHERE batch_id = ? ORDER BY position, item_key
     `).all(batchId).map(mapBatchItem);
+  }
+
+  function listDeferredBatchItems() {
+    requireMigration();
+    return database.prepare(`
+      SELECT * FROM batch_items
+      WHERE status = 'DEFERRED'
+      ORDER BY batch_id, position, item_key
+    `).all().map(mapBatchItem);
   }
 
   function completeBatch(batch) {
@@ -1046,11 +1307,383 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     statements.upsertProviderCircuitState.run({
       ...record,
       reasonCode: record.reasonCode ?? null,
+      openedReason: record.openedReason ?? record.reasonCode ?? null,
       openedAt: record.openedAt ?? null,
+      openUntil: record.openUntil ?? null,
       nextProbeAt: record.nextProbeAt ?? null,
       lastHealthyAt: record.lastHealthyAt ?? null,
+      manualActionRequired: record.manualActionRequired ? 1 : 0,
+      manualAcknowledgedAt: record.manualAcknowledgedAt ?? null,
+      probeOwnerId: record.probeOwnerId ?? null,
+      probeLeaseUntil: record.probeLeaseUntil ?? null,
+      lastProbeAt: record.lastProbeAt ?? null,
+      lastSuccessAt: record.lastSuccessAt ?? record.lastHealthyAt ?? null,
+      consecutiveFailures: Number(record.consecutiveFailures) || 0,
+      version: Number(record.version) || 0,
     });
     return getProviderCircuitState(record.provider);
+  }
+
+  function listProviderCircuitStates() {
+    requireMigration();
+    return database.prepare(`
+      SELECT * FROM provider_circuit_states ORDER BY provider
+    `).all().map(mapProviderCircuitState);
+  }
+
+  function acknowledgeProviderCircuit({ provider, acknowledgedAt }) {
+    requireMigration();
+    return withTransaction(() => {
+      const current = getProviderCircuitState(provider);
+      if (!current || current.state !== 'OPEN') {
+        throw new Error('provider circuit must be OPEN before manual acknowledgement');
+      }
+      database.prepare(`
+        UPDATE provider_circuit_states
+        SET manual_acknowledged_at = ?, updated_at = ?, version = version + 1
+        WHERE provider = ? AND state = 'OPEN'
+      `).run(acknowledgedAt, acknowledgedAt, provider);
+      return getProviderCircuitState(provider);
+    });
+  }
+
+  function acquireProviderProbeLease({
+    provider,
+    ownerId,
+    acquiredAt,
+    leaseUntil,
+  }) {
+    requireMigration();
+    return withTransaction(() => {
+      let current = getProviderCircuitState(provider);
+      if (
+        current?.state === 'HALF_OPEN'
+        && current.probeLeaseUntil
+        && current.probeLeaseUntil <= acquiredAt
+      ) {
+        database.prepare(`
+          UPDATE provider_circuit_states
+          SET state = 'OPEN', probe_owner_id = NULL, probe_lease_until = NULL,
+              updated_at = ?, version = version + 1
+          WHERE provider = ? AND state = 'HALF_OPEN' AND probe_lease_until <= ?
+        `).run(acquiredAt, provider, acquiredAt);
+        current = getProviderCircuitState(provider);
+      }
+      if (!current || current.state !== 'OPEN' || !current.manualAcknowledgedAt) return null;
+      const result = database.prepare(`
+        UPDATE provider_circuit_states
+        SET state = 'HALF_OPEN', probe_owner_id = @ownerId,
+            probe_lease_until = @leaseUntil, last_probe_at = @acquiredAt,
+            updated_at = @acquiredAt, version = version + 1
+        WHERE provider = @provider AND state = 'OPEN'
+          AND manual_acknowledged_at IS NOT NULL
+      `).run({ provider, ownerId, acquiredAt, leaseUntil });
+      return result.changes === 1 ? getProviderCircuitState(provider) : null;
+    });
+  }
+
+  function completeProviderProbe({
+    provider,
+    ownerId,
+    healthy,
+    reasonCode = null,
+    completedAt,
+  }) {
+    requireMigration();
+    return withTransaction(() => {
+      const current = getProviderCircuitState(provider);
+      if (!current || current.state !== 'HALF_OPEN' || current.probeOwnerId !== ownerId) {
+        throw new Error('provider probe lease is not owned by this worker');
+      }
+      const nextState = healthy ? 'CLOSED' : 'OPEN';
+      database.prepare(`
+        UPDATE provider_circuit_states
+        SET state = @nextState,
+            reason_code = @reasonCode,
+            opened_reason = @reasonCode,
+            opened_at = CASE WHEN @healthy = 1 THEN NULL ELSE COALESCE(opened_at, @completedAt) END,
+            manual_action_required = CASE WHEN @healthy = 1 THEN 0 ELSE 1 END,
+            manual_acknowledged_at = NULL,
+            probe_owner_id = NULL,
+            probe_lease_until = NULL,
+            last_success_at = CASE WHEN @healthy = 1 THEN @completedAt ELSE last_success_at END,
+            last_healthy_at = CASE WHEN @healthy = 1 THEN @completedAt ELSE last_healthy_at END,
+            consecutive_failures = CASE WHEN @healthy = 1 THEN 0 ELSE consecutive_failures + 1 END,
+            updated_at = @completedAt,
+            version = version + 1
+        WHERE provider = @provider AND state = 'HALF_OPEN' AND probe_owner_id = @ownerId
+      `).run({
+        provider,
+        ownerId,
+        healthy: healthy ? 1 : 0,
+        nextState,
+        reasonCode: healthy ? null : (reasonCode || 'health_probe_failed'),
+        completedAt,
+      });
+      return getProviderCircuitState(provider);
+    });
+  }
+
+  function getBatchRun(batchId) {
+    requireMigration();
+    const row = statements.batchById.get(batchId);
+    return row ? {
+      id: row.id,
+      inputHash: row.input_hash,
+      status: row.status,
+      startedAt: row.started_at,
+      completedAt: row.completed_at || null,
+      stopRequestedAt: row.stop_requested_at || null,
+      resumedAt: row.resumed_at || null,
+    } : null;
+  }
+
+  function listBatchRuns() {
+    requireMigration();
+    return database.prepare(`
+      SELECT * FROM batch_runs ORDER BY started_at DESC, id
+    `).all().map((row) => ({
+      id: row.id,
+      inputHash: row.input_hash,
+      status: row.status,
+      startedAt: row.started_at,
+      completedAt: row.completed_at || null,
+      stopRequestedAt: row.stop_requested_at || null,
+      resumedAt: row.resumed_at || null,
+    }));
+  }
+
+  function requestBatchStop({ batchId, requestedAt }) {
+    requireMigration();
+    if (statements.requestBatchStop.run({ batchId, requestedAt }).changes !== 1) {
+      throw new Error(`unknown batch: ${batchId}`);
+    }
+    database.prepare(`
+      UPDATE control_tasks SET state = 'STOP_REQUESTED', updated_at = ?
+      WHERE batch_id = ?
+    `).run(requestedAt, batchId);
+    return getBatchRun(batchId);
+  }
+
+  function resumeBatch({ batchId, resumedAt }) {
+    requireMigration();
+    if (statements.resumeBatch.run({ batchId, resumedAt }).changes !== 1) {
+      throw new Error(`unknown batch: ${batchId}`);
+    }
+    database.prepare(`
+      UPDATE control_tasks SET state = 'PENDING', updated_at = ?
+      WHERE batch_id = ?
+    `).run(resumedAt, batchId);
+    return getBatchRun(batchId);
+  }
+
+  function isBatchStopRequested(batchId) {
+    return Boolean(getBatchRun(batchId)?.stopRequestedAt);
+  }
+
+  function registerWorker(record) {
+    requireMigration();
+    statements.registerWorker.run({
+      ...record,
+      state: record.state || 'STARTING',
+      currentCompanyId: record.currentCompanyId ?? null,
+      lastCompletedCompanyId: record.lastCompletedCompanyId ?? null,
+    });
+    return statements.workerById.get(record.instanceId)
+      ? mapWorkerInstance(statements.workerById.get(record.instanceId))
+      : null;
+  }
+
+  function heartbeatWorker(record) {
+    requireMigration();
+    const current = statements.workerById.get(record.instanceId);
+    if (!current) throw new Error(`unknown worker: ${record.instanceId}`);
+    statements.heartbeatWorker.run({
+      instanceId: record.instanceId,
+      state: record.state || current.state,
+      heartbeatAt: record.heartbeatAt,
+      currentCompanyId: record.currentCompanyId ?? null,
+      lastCompletedCompanyId: record.lastCompletedCompanyId ?? null,
+      lastError: record.lastError ?? null,
+    });
+    return mapWorkerInstance(statements.workerById.get(record.instanceId));
+  }
+
+  function requestWorkerStop({ instanceId, requestedAt }) {
+    requireMigration();
+    if (statements.requestWorkerStop.run({ instanceId, requestedAt }).changes !== 1) {
+      throw new Error(`worker cannot be stopped: ${instanceId}`);
+    }
+    return mapWorkerInstance(statements.workerById.get(instanceId));
+  }
+
+  function exitWorker(record) {
+    requireMigration();
+    if (statements.exitWorker.run({
+      instanceId: record.instanceId,
+      state: record.state || (record.exitCode === 0 ? 'EXITED' : 'CRASHED'),
+      exitedAt: record.exitedAt,
+      exitCode: record.exitCode ?? null,
+      lastError: record.lastError ?? null,
+    }).changes !== 1) {
+      throw new Error(`unknown worker: ${record.instanceId}`);
+    }
+    return mapWorkerInstance(statements.workerById.get(record.instanceId));
+  }
+
+  function getWorkerInstance(instanceId) {
+    requireMigration();
+    return mapWorkerInstance(statements.workerById.get(instanceId));
+  }
+
+  function listWorkerInstances() {
+    requireMigration();
+    return database.prepare(`
+      SELECT * FROM worker_instances ORDER BY started_at DESC, instance_id
+    `).all().map(mapWorkerInstance);
+  }
+
+  function saveProfileLock(record) {
+    requireMigration();
+    statements.upsertProfileLock.run(record);
+    return getProfileLock(record.profileKey);
+  }
+
+  function getProfileLock(profileKey) {
+    requireMigration();
+    const row = statements.profileLockByKey.get(profileKey);
+    return row ? {
+      profileKey: row.profile_key,
+      lockId: row.lock_id,
+      instanceId: row.instance_id,
+      batchId: row.batch_id,
+      profileRealPath: row.profile_real_path,
+      hostName: row.host_name,
+      pid: row.pid,
+      processStartToken: row.process_start_token,
+      startedAt: row.started_at,
+      heartbeatAt: row.heartbeat_at,
+    } : null;
+  }
+
+  function releaseProfileLock({ profileKey, lockId }) {
+    requireMigration();
+    return statements.deleteProfileLock.run({ profileKey, lockId }).changes === 1;
+  }
+
+  function upsertCompanyWebKnowledge(record) {
+    requireMigration();
+    statements.upsertWebKnowledge.run({
+      ...record,
+      lastVerifiedAt: record.lastVerifiedAt ?? null,
+      expiresAt: record.expiresAt ?? null,
+      rejectionReason: record.rejectionReason ?? null,
+    });
+    return mapWebKnowledge(database.prepare(`
+      SELECT * FROM company_web_knowledge
+      WHERE company_id = ? AND knowledge_type = ? AND value = ?
+    `).get(record.companyId, record.knowledgeType, record.value));
+  }
+
+  function listCompanyWebKnowledge(companyId = null) {
+    requireMigration();
+    const rows = companyId
+      ? database.prepare(`
+          SELECT * FROM company_web_knowledge
+          WHERE company_id = ? ORDER BY knowledge_type, value
+        `).all(companyId)
+      : database.prepare(`
+          SELECT * FROM company_web_knowledge
+          ORDER BY company_id, knowledge_type, value
+        `).all();
+    return rows.map(mapWebKnowledge);
+  }
+
+  function putSearchCache(record) {
+    requireMigration();
+    statements.upsertSearchCache.run({
+      ...record,
+      absoluteDateFrom: record.absoluteDateFrom ?? null,
+      absoluteDateTo: record.absoluteDateTo ?? null,
+      resultJson: encode(record.result, {}),
+      expiresAt: record.expiresAt ?? null,
+    });
+    return mapSearchCache(statements.searchCacheByKey.get(record.cacheKey));
+  }
+
+  function getReusableSearchCache(cacheKey, at = new Date().toISOString()) {
+    requireMigration();
+    const cached = mapSearchCache(statements.searchCacheByKey.get(cacheKey));
+    if (!cached || !['SUCCESS', 'VERIFIED_NO_RESULTS'].includes(cached.outcome)) return null;
+    if (cached.expiresAt && cached.expiresAt <= at) return null;
+    return cached;
+  }
+
+  function createControlTask(record) {
+    requireMigration();
+    statements.createControlTask.run({
+      ...record,
+      location: record.location ?? null,
+      roleKeywordsJson: encode(record.roleKeywords, []),
+      industry: record.industry ?? null,
+      allowBaiduFallback: record.allowBaiduFallback ? 1 : 0,
+      state: record.state || 'PENDING',
+    });
+    return getControlTask(record.id);
+  }
+
+  function getControlTask(id) {
+    requireMigration();
+    return mapControlTask(database.prepare(`
+      SELECT * FROM control_tasks WHERE id = ?
+    `).get(id));
+  }
+
+  function listControlTasks() {
+    requireMigration();
+    return database.prepare(`
+      SELECT * FROM control_tasks ORDER BY created_at DESC, id
+    `).all().map(mapControlTask);
+  }
+
+  function updateControlTaskState({ id, state, updatedAt }) {
+    requireMigration();
+    const result = database.prepare(`
+      UPDATE control_tasks SET state = ?, updated_at = ? WHERE id = ?
+    `).run(state, updatedAt, id);
+    if (result.changes !== 1) throw new Error(`unknown control task: ${id}`);
+    return getControlTask(id);
+  }
+
+  function appendAuditLog(record) {
+    requireMigration();
+    statements.appendAuditLog.run({
+      ...record,
+      detailsJson: encode(record.details, {}),
+    });
+    return record;
+  }
+
+  function listAuditLogs({ targetType = null, targetId = null } = {}) {
+    requireMigration();
+    const rows = targetType && targetId
+      ? database.prepare(`
+          SELECT * FROM audit_logs
+          WHERE target_type = ? AND target_id = ?
+          ORDER BY created_at DESC
+        `).all(targetType, targetId)
+      : database.prepare(`
+          SELECT * FROM audit_logs ORDER BY created_at DESC
+        `).all();
+    return rows.map((row) => ({
+      id: row.id,
+      action: row.action,
+      targetType: row.target_type,
+      targetId: row.target_id,
+      actor: row.actor,
+      details: decode(row.details_json, {}),
+      createdAt: row.created_at,
+    }));
   }
 
   function close() {
@@ -1083,9 +1716,38 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     completeBatchItem,
     deferBatchItem,
     listBatchItems,
+    listDeferredBatchItems,
     completeBatch,
     getProviderCircuitState,
     saveProviderCircuitState,
+    listProviderCircuitStates,
+    acknowledgeProviderCircuit,
+    acquireProviderProbeLease,
+    completeProviderProbe,
+    getBatchRun,
+    listBatchRuns,
+    requestBatchStop,
+    resumeBatch,
+    isBatchStopRequested,
+    registerWorker,
+    heartbeatWorker,
+    requestWorkerStop,
+    exitWorker,
+    getWorkerInstance,
+    listWorkerInstances,
+    saveProfileLock,
+    getProfileLock,
+    releaseProfileLock,
+    upsertCompanyWebKnowledge,
+    listCompanyWebKnowledge,
+    putSearchCache,
+    getReusableSearchCache,
+    createControlTask,
+    getControlTask,
+    listControlTasks,
+    updateControlTaskState,
+    appendAuditLog,
+    listAuditLogs,
     close,
   };
 

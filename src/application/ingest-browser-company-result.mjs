@@ -59,19 +59,21 @@ function createBrowserPlanningModel(query, role) {
   });
 }
 
-function createBrowserSearchSource(adapted) {
+function createBrowserSearchSource(adapted, companyResult = {}) {
+  const provider = companyResult.discoveryProvider || BROWSER_PROVIDER;
+  const liveSearchExecuted = companyResult.liveSearchExecuted !== false;
   return Object.freeze({
     async search(query) {
       return Object.freeze({
         status: 'ok',
-        provider: BROWSER_PROVIDER,
+        provider,
         attempts: Object.freeze([{
-          provider: BROWSER_PROVIDER,
+          provider,
           status: 'ok',
-          networkRequest: true,
+          networkRequest: liveSearchExecuted,
           query: query.text,
         }]),
-        liveSearchExecuted: true,
+        liveSearchExecuted,
         items: adapted.items,
       });
     },
@@ -407,7 +409,7 @@ export async function ingestBrowserCompanyResult({
   }, {
     repository: staged.repository,
     planningModel: createBrowserPlanningModel(adapted.query, String(role || '公开招聘岗位')),
-    searchSource: createBrowserSearchSource(adapted),
+    searchSource: createBrowserSearchSource(adapted, companyResult),
     verificationAdapter,
     pageAdvisoryClassifier: null,
     jobExtractor,

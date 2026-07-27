@@ -1,5 +1,39 @@
 # 本地 Chrome 招聘发现 Worker
 
+> Current production runtime: `run-persistent-browser-supervisor.mjs`. It owns
+> one dedicated Playwright persistent context for the entire batch. Earlier
+> normal-Chrome extension binding guidance below is legacy test-only material
+> and must not be used for production discovery.
+
+## Persistent supervisor
+
+The Supervisor implements the Scheduler, SQLite-backed queue, Browser Manager,
+and single-company worker in one long-running Node.js process. It launches
+Chrome with `launchPersistentContext(userDataDir)` and keeps that context open
+until the batch completes, blocks, or fails. The `userDataDir` must be a
+dedicated automation profile; it cannot be a daily Chrome profile and it is
+protected by `.lite-job-search-worker.lock` so two worker processes cannot own
+it concurrently.
+
+```powershell
+npm.cmd run discover:persistent-supervisor -- `
+  --input .\data\company-registry\companies.json `
+  --output-dir .\test-output\persistent-worker `
+  --database .\data\lite-job-search.sqlite `
+  --profile-dir .\data\persistent-chrome-worker-profile `
+  --batch-id daily-cn-company-discovery `
+  --target-count 100 `
+  --max-companies-per-run 100 `
+  --search-delay-ms 10000 `
+  --search-jitter-ms 4000
+```
+
+Each company is checkpointed by the existing SQLite batch queue immediately
+after its deterministic verification and extraction result. A failed company
+does not stop later work; CAPTCHA or access verification creates a truthful
+`BLOCKED` checkpoint and stops unsafe further queries. This design does not
+borrow a user browser, extension host, cookies, or default Chrome profile.
+
 本 Worker 用本机 Google Chrome 的可见会话检索公司招聘入口，进入候选页采集页面证据，再交给确定性 Verification Engine。LLM 不参与官网真实性、验证状态或置信度判断；百度 API 仅保留为独立的小额度补充来源。
 
 ## 生产链路

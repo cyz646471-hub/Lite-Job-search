@@ -99,7 +99,7 @@ test('plan-only reports a truthful local-list shortage without a supplement modu
   assert.equal(response.supplementStatus, 'NOT_CONFIGURED');
 });
 
-test('China instruction refuses an isolated Chrome override for Baidu search', async (t) => {
+test('China instruction accepts the configured persistent Chrome worker mode', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'lite-job-browser-policy-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const registry = path.join(directory, 'registry.json');
@@ -121,8 +121,7 @@ test('China instruction refuses an isolated Chrome override for Baidu search', a
     encoding: 'utf8',
   });
 
-  assert.equal(result.status, 1);
-  const failure = JSON.parse(result.stderr.trim());
-  assert.equal(failure.reasonCode, 'instruction_runner_failed');
-  assert.match(failure.error, /normal Chrome/i);
+  assert.equal(result.status, 0, result.stderr);
+  const response = JSON.parse(result.stdout.trim());
+  assert.equal(response.status, 'PLANNED');
 });

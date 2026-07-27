@@ -1,6 +1,7 @@
 import { assertBrowserPage, assertBrowserSession } from '../src/ports/browser-session.mjs';
 import { createPlaywrightBrowserSession } from '../src/adapters/browser/playwright-browser-session.mjs';
 import { observeRenderedRecruitmentPage } from '../src/adapters/browser/recruitment-page-observer.mjs';
+import { buildSafePersistentChromeOptions } from '../src/runtime/chrome-launch-policy.mjs';
 
 async function captureChromeSnapshot(tab) {
   return tab.playwright.evaluate(() => ({
@@ -91,6 +92,7 @@ export async function createBrowserRuntime({
   chromium = null,
   profileDir,
   headless = false,
+  args = [],
 } = {}) {
   if (mode === 'normal-chrome') {
     if (chrome) return createChromeExtensionBrowser(chrome);
@@ -111,9 +113,9 @@ export async function createBrowserRuntime({
   if (!profileDir) {
     throw new Error('persistent Chrome profileDir is required');
   }
-  const context = await chromium.launchPersistentContext(profileDir, {
-    channel: 'chrome',
-    headless: headless === true,
-  });
+  const context = await chromium.launchPersistentContext(
+    profileDir,
+    buildSafePersistentChromeOptions({ channel: 'chrome', headless, args }),
+  );
   return createPlaywrightBrowserSession(context);
 }

@@ -223,14 +223,33 @@ try {
 
 ## 浏览器搜索
 
-- 中国生产 Worker 只使用扩展 binding 或显式 binding 模块连接的 `normal-chrome`；模式不可用时明确返回 `NOT_CONFIGURED`，不会静默降级。
-- 百度搜索默认至少间隔 10 秒并叠加 0–20 秒抖动；首次安全验证立即将当前公司记为 `DEFERRED`、打开持久化断路器并停止后续 Query。
+- 中国生产 Worker 使用长期运行的 Persistent Chrome Supervisor 和独立自动化 Profile，不连接用户日常 Chrome Profile。
+- 发现顺序是已验证 Portal、官方域名、历史入口、ATS、缓存、公开线索外链、常见招聘路径、百度、人工发现。
+- Direct HTTP 与 ATS Adapter 优先；只有动态渲染、分页或交互确有需要时才启动 Playwright。
+- 百度搜索默认至少间隔 10 秒并叠加抖动；首次安全验证立即将百度任务记为 `DEFERRED` 并打开持久化断路器，直接官网核验任务继续执行。
 - 浏览器搜索不绕过验证码、登录、限流或访问控制；人工健康探测成功后才恢复延迟队列。
-- 不得使用隔离 `persistent-chrome`、百度 API、Apify 或其他搜索源规避百度安全验证。
+- 不得使用百度 API、Apify、其他搜索源或新 Profile 规避百度安全验证。
 - 默认不启用住宅代理。
 - 预算耗尽返回 `search_deferred_by_budget`，不等于“没有官网”。
 
 完整命令、断点恢复、来源边界、SQLite 完整性与 XLSX 输出见[本地 Chrome 招聘发现 Worker](docs/local-browser-worker.md)。
+
+## Persistent Chrome Supervisor
+
+Production browser discovery runs through `npm.cmd run
+discover:persistent-supervisor`. The Supervisor is a long-running Node.js
+process that owns one Playwright persistent context and a dedicated automation
+profile for its entire SQLite-backed company queue. It never attaches to a
+user's daily Chrome profile or extension host. The profile is exclusive to one
+process and uses a lock file to fail closed on a second worker. CAPTCHA and
+access challenges remain `BLOCKED`; the worker does not try to bypass them.
+
+See [Persistent Chrome Supervisor](docs/persistent-chrome-supervisor.md) for
+the service/container command and profile requirements.
+
+Local task creation, Worker state, batch stop/resume, Baidu manual
+acknowledgement and XLSX download are available through the
+[local control plane](docs/local-control-plane.md).
 
 ## 项目结构
 

@@ -30,11 +30,18 @@
     "canary:ai-product-manager": "node ./scripts/run-ai-product-manager-canary.mjs",
     "canary": "node ./bin/lite-job-search.mjs discover",
     "discover:batch": "node ./bin/lite-job-search.mjs discover-batch",
-    "test:local-worker": "node --test tests/recruitment-event.test.mjs tests/recruitment-source-policy.test.mjs tests/recruitment-event-classifier.test.mjs tests/browser-search-circuit-breaker.test.mjs tests/platform-company-page-adapter.test.mjs tests/company-browser-discovery.test.mjs tests/browser-company-batch.test.mjs tests/browser-worker-cli.test.mjs tests/sqlite-repository.test.mjs tests/discover-market-jobs.test.mjs",
+    "test:local-worker": "node --test tests/recruitment-event.test.mjs tests/recruitment-source-policy.test.mjs tests/recruitment-event-classifier.test.mjs tests/browser-search-circuit-breaker.test.mjs tests/platform-company-page-adapter.test.mjs tests/company-browser-discovery.test.mjs tests/browser-company-batch.test.mjs tests/browser-worker-cli.test.mjs tests/persistent-browser-supervisor.test.mjs tests/sqlite-repository.test.mjs tests/discover-market-jobs.test.mjs",
     "test:instruction": "node --test tests/search-instruction.test.mjs tests/task-company-resolver.test.mjs tests/search-instruction-cli.test.mjs",
-    "discover:browser-companies": "node ./scripts/company-browser-discovery.mjs",
-    "discover:local-worker": "node ./scripts/company-browser-discovery.mjs",
-    "discover:instruction": "node ./scripts/run-search-instruction.mjs"
+    "discover:browser-companies": "node ./scripts/run-persistent-browser-supervisor.mjs",
+    "discover:local-worker": "node ./scripts/run-persistent-browser-supervisor.mjs",
+    "discover:persistent-supervisor": "node ./scripts/run-persistent-browser-supervisor.mjs",
+    "discover:instruction": "node ./scripts/run-search-instruction.mjs",
+    "control": "node ./scripts/ljs-control.mjs",
+    "web": "node ./scripts/run-local-control-plane.mjs",
+    "diagnose:chrome": "node ./scripts/diagnose-browser-search-challenge.mjs",
+    "task:run": "node ./scripts/run-control-task.mjs",
+    "prepare:full-recheck": "node ./scripts/prepare-full-database-maintenance.mjs",
+    "maintenance:series": "node ./scripts/run-full-maintenance-series.mjs"
   },
   "engines": {
     "node": ">=20"
