@@ -170,6 +170,7 @@ export async function runControlTask(args = {}) {
       ),
       maxCompaniesPerRun: maxPerRun,
       allowBaiduFallback: task.allowBaiduFallback,
+      searchEngine: args['search-engine'] || 'baidu',
       xlsxOutput: args.xlsx || path.join(outputDir, 'student-applications.xlsx'),
       writeArtifacts: false,
     });
