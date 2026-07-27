@@ -43,6 +43,9 @@ try {
       result = service.resumeBatch(args.batch);
     } else if (args.command === 'baidu-ack') {
       result = service.acknowledgeBaidu();
+    } else if (args.command === 'provider-ack') {
+      if (!args.provider) throw new Error('provider-ack requires --provider baidu|google');
+      result = service.acknowledgeSearchProvider(args.provider);
     } else {
       throw new Error(`unsupported control command: ${args.command}`);
     }

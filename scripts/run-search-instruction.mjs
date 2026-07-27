@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { compileSearchInstruction } from '../src/application/compile-search-instruction.mjs';
+import { normalizePublicSearchEngine } from '../src/adapters/browser/public-search-page-adapter.mjs';
 import {
   normalizeCompanyRegistry,
   selectUnseenCompanies,
@@ -142,7 +143,7 @@ function workerArguments({ task, selectedFile, outputDir, database, batchId, arg
     '--max-companies-per-run', String(task.maxCompaniesPerRun),
   ];
   if (args['profile-dir']) values.push('--profile-dir', path.resolve(args['profile-dir']));
-  if (args['search-engine']) values.push('--search-engine', args['search-engine']);
+  values.push('--search-engine', task.searchEngine);
   if (args['retry-failed']) values.push('--retry-failed');
   if (args.headless) values.push('--headless');
   return values;
@@ -215,6 +216,12 @@ export async function runSearchInstructionCli(argv = process.argv.slice(2)) {
     outputDir: outputDirArgument,
     xlsxOutput: args['xlsx-output'] || path.join(outputDirArgument, 'student-applications.xlsx'),
     browserMode: args['browser-mode'] || compiled.browserMode,
+    searchEngine: normalizePublicSearchEngine(
+      args['search-engine'] || compiled.searchEngine,
+    ),
+    searchSources: Object.freeze([
+      `chrome_${normalizePublicSearchEngine(args['search-engine'] || compiled.searchEngine)}_visible_search`,
+    ]),
     maxCompaniesPerRun: boundedInteger(
       args['max-companies-per-run'],
       compiled.maxCompaniesPerRun,

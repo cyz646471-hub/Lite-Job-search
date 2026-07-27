@@ -91,6 +91,23 @@ test('no local evidence schedules Baidu only when explicitly allowed', () => {
   assert.equal(manual.terminalAction, 'MANUAL_OFFICIAL_DISCOVERY');
 });
 
+test('no local evidence can schedule Google with an engine-specific cache key', () => {
+  const plan = planCompanyDiscovery({
+    company: COMPANY,
+    searchEngine: 'google',
+    allowSearchFallback: true,
+  }, { repository: repository() });
+  assert.equal(plan.queueType, 'PUBLIC_SEARCH_DISCOVERY_REQUIRED');
+  assert.equal(plan.terminalAction, 'GOOGLE_DISCOVERY');
+  assert.equal(plan.searchEngine, 'google');
+  assert.equal(plan.stages.find((stage) => stage.source === 'GOOGLE_BROWSER').enabled, true);
+  assert.notEqual(plan.cacheKey, createSearchCacheKey({
+    engine: 'baidu',
+    query: '示例公司 招聘',
+    locale: 'zh-CN',
+  }));
+});
+
 test('search cache key includes absolute date range and strategy', () => {
   const a = createSearchCacheKey({
     engine: 'baidu',

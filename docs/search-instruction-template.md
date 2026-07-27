@@ -11,6 +11,7 @@
 ```text
 检索近90天内中国，开放产品经理方向岗位公司100个
 检索近3个月内中国，开放AI产品经理方向岗位公司50个
+使用Google检索近3个月内中国，开放AI产品经理方向岗位公司50个
 检索近8周内北美地区，在多伦多开放后端开发岗位的公司25家
 ```
 
@@ -46,9 +47,10 @@ npm.cmd run discover:instruction -- `
 - 输出目录；
 - XLSX 路径；
 - 稳定任务 ID 和与公司清单绑定的 batch ID；
-- 用户正常 Chrome 扩展会话（`normal-chrome`）；
-- 唯一搜索源 `chrome_baidu_visible_search`；
-- 禁用百度 API 与 Apify，不允许自动回退；
+- 专用 Persistent Chrome 自动化 Profile；
+- 默认搜索源 `chrome_baidu_visible_search`，指令包含 Google/谷歌时使用
+  `chrome_google_visible_search`；
+- 禁用百度 API、Apify 和搜索引擎自动切换；
 - 每轮 10 家；
 - 搜索最少间隔 10 秒并增加 0–20 秒随机抖动；
 - 候选页、招聘入口和递归访问上限。
@@ -84,7 +86,7 @@ npm.cmd run discover:instruction -- `
 → 本地名单与可替换补充源
 → SQLite 公司去重
 → selected-companies.json
-→ 用户正常 Chrome 百度搜索
+→ Persistent Chrome 中显式选择的百度或 Google 搜索
 → 候选页面访问
 → Verification Engine
 → CareerPortal

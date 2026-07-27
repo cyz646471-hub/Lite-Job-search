@@ -13,14 +13,19 @@ import {
   discoverCompanyWithBrowser,
   isSearchBlockedPage,
   normalizeBrowserCompanyInput,
+  probePublicSearchHealth,
   shouldOpenSearchResult,
 } from '../scripts/company-browser-discovery.mjs';
-import { buildCompanyQueryLadder } from '../src/discovery/company-query-ladder.mjs';
+import {
+  buildCompanyQueryLadder,
+  buildCompanyQueryPlan,
+} from '../src/discovery/company-query-ladder.mjs';
 import {
   canonicalHost,
   officialHomepageCandidates,
   sameCanonicalHost,
 } from '../src/discovery/canonical-domain-resolver.mjs';
+import { publicSearchUrl } from '../src/adapters/browser/public-search-page-adapter.mjs';
 
 function fakeBrowser(pages) {
   const visits = [];
@@ -100,6 +105,90 @@ test('builds market-aware deterministic query ladders', () => {
     'Example Inc jobs',
     'site:example.com careers',
   ]);
+});
+
+test('builds tiered Google queries for Chinese official recruitment sites', () => {
+  const plan = buildCompanyQueryPlan({
+    company: '示例公司',
+    officialDomain: 'example.com',
+    market: 'CN',
+    searchEngine: 'google',
+  });
+  assert.deepEqual(plan.map((step) => step.tier), [1, 2, 2, 2, 3]);
+  assert.deepEqual(plan.map((step) => step.purpose), [
+    'official_career_home',
+    'campus_recruitment',
+    'experienced_recruitment',
+    'internship_recruitment',
+    'known_domain_recruitment',
+  ]);
+  assert.match(plan[0].text, /^"示例公司" 招聘官网/);
+  assert.match(plan[0].text, /-site:jobui\.com/);
+  assert.match(plan[4].text, /^site:example\.com/);
+  assert.ok(plan.every((step) => !/\bcareers?\b/i.test(step.text)));
+});
+
+test('Google browser discovery executes the tiered Chinese official query', async () => {
+  const [firstStep] = buildCompanyQueryPlan({
+    company: '示例公司',
+    officialDomain: 'example.com',
+    market: 'CN',
+    searchEngine: 'google',
+  });
+  const searchUrl = publicSearchUrl('google', firstStep.text);
+  const careerUrl = 'https://jobs.example.com/positions';
+  const browser = fakeBrowser({
+    [searchUrl]: {
+      text: '示例公司招聘官网',
+      searchRows: [{
+        title: '示例公司招聘官网',
+        href: careerUrl,
+        snippet: '示例公司官方招聘职位',
+        kind: 'organic',
+      }],
+    },
+    [careerUrl]: {
+      title: '示例公司招聘',
+      text: '示例公司 招聘 职位列表 产品经理 上海 立即申请',
+      links: [],
+    },
+  });
+  const result = await discoverCompanyWithBrowser({
+    company: '示例公司',
+    officialDomain: 'example.com',
+    market: 'CN',
+    searchEngine: 'google',
+    browser,
+    maxCandidates: 1,
+  });
+  assert.equal(result.discoveryProvider, 'chrome_google_visible_search');
+  assert.equal(result.queryPlan[0].tier, 1);
+  assert.equal(result.queryPlan[0].status, 'COMPLETED');
+  assert.equal(result.queries[0], firstStep.text);
+  assert.ok(browser.visits.includes(searchUrl));
+  assert.ok(browser.visits.includes(careerUrl));
+});
+
+test('Google health probe requires a readable real result page', async () => {
+  const searchUrl = publicSearchUrl('google', '招聘官网');
+  const browser = fakeBrowser({
+    [searchUrl]: {
+      text: '招聘官网搜索结果',
+      searchRows: [{
+        title: '示例招聘官网',
+        href: 'https://jobs.example.com/',
+        snippet: '公开职位',
+        kind: 'organic',
+      }],
+    },
+  });
+  assert.deepEqual(await probePublicSearchHealth({
+    browser,
+    engine: 'google',
+  }), {
+    healthy: true,
+    reasonCode: null,
+  });
 });
 
 test('restores apex and www official homepage candidates deterministically', () => {

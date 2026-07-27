@@ -22,8 +22,9 @@ test('compiles a Chinese product-manager instruction into a complete worker task
   assert.equal(task.freshnessDays, 90);
   assert.equal(task.targetCount, 100);
   assert.equal(task.browserMode, 'persistent-chrome');
+  assert.equal(task.searchEngine, 'baidu');
   assert.deepEqual(task.searchSources, ['chrome_baidu_visible_search']);
-  assert.deepEqual(task.disabledSearchSources, ['baidu_api', 'apify']);
+  assert.deepEqual(task.disabledSearchSources, ['baidu_api', 'apify', 'automatic_engine_fallback']);
   assert.equal(task.maxCompaniesPerRun, 10);
   assert.match(task.batchId, /^instruction-cn-product-manager-20260726-[a-f0-9]{8}$/);
   assert.equal(
@@ -33,6 +34,16 @@ test('compiles a Chinese product-manager instruction into a complete worker task
   assert.equal(task.database, 'data/lite-job-search.sqlite');
   assert.match(task.outputDir, /instruction-cn-product-manager-20260726-[a-f0-9]{8}$/);
   assert.match(task.xlsxOutput, /student-applications\.xlsx$/);
+});
+
+test('a Chinese instruction may explicitly select Google browser discovery', () => {
+  const task = compileSearchInstruction(
+    '使用Google检索近90天内中国，开放产品经理方向岗位公司20个',
+    { now: () => NOW },
+  );
+  assert.equal(task.searchEngine, 'google');
+  assert.deepEqual(task.searchSources, ['chrome_google_visible_search']);
+  assert.ok(task.disabledSearchSources.includes('automatic_engine_fallback'));
 });
 
 test('parses days, weeks and months without using an LLM', () => {

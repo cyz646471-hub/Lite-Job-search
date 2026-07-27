@@ -88,6 +88,10 @@ function parseIndustry(instruction) {
   return clean(match?.[1]);
 }
 
+function parseSearchEngine(instruction) {
+  return /google|谷歌/i.test(instruction) ? 'google' : 'baidu';
+}
+
 export function compileSearchInstruction(instruction, {
   now = () => new Date(),
 } = {}) {
@@ -112,6 +116,7 @@ export function compileSearchInstruction(instruction, {
     .slice(0, 8);
   const batchId = `instruction-${market.market.toLowerCase()}-${roleSlug}-${dateStamp(current)}-${digest}`;
   const outputDir = `test-output/instructions/${batchId}`;
+  const searchEngine = parseSearchEngine(normalizedInstruction);
 
   return Object.freeze({
     instruction: normalizedInstruction,
@@ -128,8 +133,9 @@ export function compileSearchInstruction(instruction, {
     outputDir,
     xlsxOutput: `${outputDir}/student-applications.xlsx`,
     browserMode: 'persistent-chrome',
-    searchSources: Object.freeze(['chrome_baidu_visible_search']),
-    disabledSearchSources: Object.freeze(['baidu_api', 'apify']),
+    searchEngine,
+    searchSources: Object.freeze([`chrome_${searchEngine}_visible_search`]),
+    disabledSearchSources: Object.freeze(['baidu_api', 'apify', 'automatic_engine_fallback']),
     maxCompaniesPerRun: 10,
     searchDelayMs: 10_000,
     searchJitterMs: 20_000,

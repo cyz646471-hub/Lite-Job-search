@@ -227,6 +227,13 @@ export function createControlPlaneServer({
           json(response, 200, service.acknowledgeBaidu());
           return;
         }
+        const providerAckMatch = url.pathname.match(/^\/api\/providers\/([^/]+)\/manual-ack$/);
+        if (providerAckMatch) {
+          json(response, 200, service.acknowledgeSearchProvider(
+            decodeURIComponent(providerAckMatch[1]),
+          ));
+          return;
+        }
       }
       json(response, 404, { status: 'NOT_FOUND' });
     } catch (error) {

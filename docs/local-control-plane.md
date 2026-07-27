@@ -50,15 +50,17 @@ npm.cmd run control -- resume `
 `stop` 是指定批次的协作停止请求，不会模糊结束所有 Node 或 Chrome 进程。
 Worker 在公司边界读取请求，保存当前断点后退出。
 
-## 百度人工恢复
+## 搜索引擎人工恢复
 
-百度出现 CAPTCHA、SECURITY_CHALLENGE、UNUSUAL_TRAFFIC、HTTP 429 或访问拒绝时，
-百度任务进入 `DEFERRED`，断路器进入 `OPEN`。本地官网核验队列继续运行。
+百度或 Google 出现 CAPTCHA、SECURITY_CHALLENGE、UNUSUAL_TRAFFIC、HTTP 429
+或访问拒绝时，该引擎任务进入 `DEFERRED`，其独立断路器进入 `OPEN`。本地官网
+核验队列继续运行，系统不会自动切换搜索引擎。
 
 人工完成验证码后：
 
 ```powershell
-npm.cmd run control -- baidu-ack `
+npm.cmd run control -- provider-ack `
+  --provider google `
   --database data/lite-job-search.sqlite `
   --confirm
 ```
@@ -67,14 +69,15 @@ npm.cmd run control -- baidu-ack `
 
 ```powershell
 node scripts/company-browser-discovery.mjs `
-  --resume-provider baidu `
+  --resume-provider google `
   --health-probe `
   --database data/lite-job-search.sqlite `
   --profile-dir data/browser-profiles/career-op-main
 ```
 
-探针必须进入真实百度结果页并识别结果结构。成功后才进入 `CLOSED`；再次出现验证则
-回到 `OPEN`。`HALF_OPEN` 探针使用 SQLite 租约，同一时刻只允许一个 Owner。
+探针必须进入所选引擎的真实结果页并识别结果结构。成功后才进入 `CLOSED`；再次
+出现验证则回到 `OPEN`。`HALF_OPEN` 探针使用 SQLite 租约，同一时刻只允许
+一个 Owner。旧的 `baidu-ack` 命令仍兼容百度断路器。
 
 ## Chrome 诊断
 

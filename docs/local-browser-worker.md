@@ -34,13 +34,15 @@ does not stop later work; CAPTCHA or access verification creates a truthful
 `BLOCKED` checkpoint and stops unsafe further queries. This design does not
 borrow a user browser, extension host, cookies, or default Chrome profile.
 
-本 Worker 用本机 Google Chrome 的可见会话检索公司招聘入口，进入候选页采集页面证据，再交给确定性 Verification Engine。LLM 不参与官网真实性、验证状态或置信度判断；百度 API 仅保留为独立的小额度补充来源。
+本 Worker 用本机 Google Chrome 的可见会话，通过显式选择的百度或 Google
+检索公司招聘入口，进入候选页采集页面证据，再交给确定性 Verification Engine。
+LLM 不参与官网真实性、验证状态或置信度判断；百度 API 与 Apify 不作为自动降级。
 
 ## 生产链路
 
 ```text
 Golden Dataset 公司
-→ 每家公司一次百度 Query
+→ 中文招聘官网分级多关键词 Query
 → 候选 URL 过滤
 → 官网/官方 ATS/平台公司页归属验证
 → 招聘事件与届次识别
@@ -87,6 +89,7 @@ npm.cmd run discover:local-worker -- `
   --database data/lite-job-search.sqlite `
   --browser-mode persistent-chrome `
   --batch-id daily-cn-current `
+  --search-engine google `
   --max-results 10 `
   --max-candidates 3 `
   --max-career-entries 5 `
@@ -102,18 +105,19 @@ npm.cmd run discover:local-worker -- `
 
 - 搜索间隔下限为 10 秒，不能配置得更低；
 - 每次叠加 0–20 秒随机抖动；
-- 每家公司只发起一个百度 Query，候选页和招聘站内下钻不增加搜索 Query；
+- 查询按官网、校园招聘、社会招聘/职位、实习和已知域名站内检索分级；一旦找到
+  可用的一方招聘入口即停止后续层级；
 - 单轮默认最多 10 家，可配置 1–100 家，硬上限为 100。
 
-## 百度阻断与断路器
+## 搜索引擎阻断与断路器
 
 Worker 不识别、点击、自动刷新或绕过 CAPTCHA、限流和访问控制。
 
-第一次检测到百度安全验证时：
+第一次检测到所选引擎的安全验证、异常流量或访问限制时：
 
 1. 当前公司从 `RUNNING` 变为 `DEFERRED`，不是 `FAILED`；
 2. Provider 断路器变为 `OPEN`；
-3. 后续公司保持 `PENDING`，本轮不再发起百度 Query；
+3. 后续公司保持 `PENDING`，本轮不再向该引擎发起 Query；
 4. SQLite、JSON 报告和断点立即保留；
 5. 后续批次遇到同一 `OPEN` 状态会零 Query 暂停，并在报告中写明断路器原因。
 
@@ -127,11 +131,12 @@ Worker 不识别、点击、自动刷新或绕过 CAPTCHA、限流和访问控�
 
 ## 人工健康探测与恢复
 
-用户先在正常 Chrome 中完成百度要求的人工验证，并确认普通搜索结果页可读取，再执行一次健康探测：
+用户先在 Chrome 中完成所选引擎要求的人工验证，并确认普通搜索结果页可读取，
+再执行一次健康探测：
 
 ```powershell
 npm.cmd run discover:local-worker -- `
-  --resume-provider baidu `
+  --resume-provider google `
   --health-probe `
   --database data/lite-job-search.sqlite `
   --profile-dir data/local-chrome-worker-profile

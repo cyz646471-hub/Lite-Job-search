@@ -12,12 +12,14 @@ cookies, or local storage. A requested sandbox setting is recorded as a
 Playwright launch configuration; OS-level sandbox enforcement still requires an
 environment-specific diagnostic run.
 
-Production search is Baidu-only and sequential. A challenge, CAPTCHA, 429,
-unusual-traffic, or access-denied signal opens Baidu's SQLite circuit. The worker stores a
-small screenshot, final URL, title, and classified reason; it does not click or
-solve challenges, refresh the page, or turn the challenge into an official job
-result. Resume occurs only after a person completes the visible Baidu security
-verification in the dedicated automation profile, then runs one health probe.
+Production search explicitly selects Baidu or Google for a run and remains
+sequential. It never switches engines automatically. A challenge, CAPTCHA, 429,
+unusual-traffic, or access-denied signal opens that engine's independent SQLite
+circuit. The worker stores a small screenshot, final URL, title, and classified
+reason; it does not click or solve challenges, refresh the page, or turn the
+challenge into an official job result. Resume occurs only after a person
+completes the visible security verification in the dedicated automation profile,
+then acknowledges and runs one health probe for the same engine.
 
 Use `scripts/diagnose-browser-search-challenge.mjs` for a small controlled A/B
 comparison. Variant A only records a manual normal-Chrome observation. Variant

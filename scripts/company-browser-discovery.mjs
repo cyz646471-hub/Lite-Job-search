@@ -22,7 +22,7 @@ import {
   discoverRecruitmentEntries,
   KNOWN_ATS_REGISTRABLE_DOMAINS,
 } from '../src/discovery/recruitment-entry-discovery.mjs';
-import { buildCompanyQueryLadder } from '../src/discovery/company-query-ladder.mjs';
+import { buildCompanyQueryPlan } from '../src/discovery/company-query-ladder.mjs';
 import { applyCompanyDomainKnowledge } from '../src/discovery/company-domain-knowledge.mjs';
 import {
   officialHomepageCandidates,
@@ -382,6 +382,12 @@ export function buildBrowserRunReport({
           (result) => result.queries?.length ? result.queries : [result.query],
         ).filter(Boolean)),
       ]),
+      queryPlan: Object.freeze(companyResults.flatMap((result) => (
+        (result.queryPlan || []).map((step) => ({
+          company: result.company || null,
+          ...step,
+        }))
+      ))),
       searchResultCount: companyResults.reduce((sum, result) => {
         const urls = [
           ...(result.officialCandidates || []),
@@ -426,13 +432,23 @@ export function isSearchBlockedPage(text, {
   return isPublicSearchBlockedSnapshot({ engine, text, status, url });
 }
 
-function isExplicitBaiduNoResults(text) {
+function isExplicitPublicSearchNoResults(text, engine = 'baidu') {
+  const value = String(text || '');
+  if (engine === 'google') {
+    return /找不到和您查询相符的内容|没有任何与这些字词相符的结果|did not match any documents|no results found/i
+      .test(value);
+  }
   return /没有找到.{0,40}(?:相关|匹配)?(?:结果|内容)|未找到.{0,40}(?:相关|匹配)?(?:结果|内容)|no results found/i
-    .test(String(text || ''));
+    .test(value);
 }
 
 async function readSearchRows(page, maxResults, engine = 'baidu') {
-  if (engine === 'baidu' && typeof page.readSearchRows === 'function') return page.readSearchRows(maxResults);
+  if (engine === 'baidu' && typeof page.readSearchRows === 'function') {
+    return page.readSearchRows(maxResults);
+  }
+  if (typeof page.readPublicSearchRows === 'function') {
+    return page.readPublicSearchRows(engine, maxResults);
+  }
   return readPublicSearchRows(page, engine, maxResults);
 }
 
@@ -553,7 +569,8 @@ async function discoverCompanyWithBrowserQuery({
       };
     }
     const rows = await readSearchRows(page, maxResults, publicSearchEngine);
-    const unreadableSearchResults = !rows.length && !isExplicitBaiduNoResults(bodyText);
+    const unreadableSearchResults = !rows.length
+      && !isExplicitPublicSearchNoResults(bodyText, publicSearchEngine);
     if (unreadableSearchResults && !(enableOfficialDomainFallback && officialDomain)) {
       return {
         company,
@@ -570,7 +587,7 @@ async function discoverCompanyWithBrowserQuery({
           stage: 'search',
           url: searchFinalUrl,
           reasonCode: 'search_results_unreadable',
-          error: 'Baidu result page contained no readable result rows',
+          error: `${publicSearchEngine} result page contained no readable result rows`,
         }],
       };
     }
@@ -579,7 +596,7 @@ async function discoverCompanyWithBrowserQuery({
         stage: 'search',
         url: searchFinalUrl,
         reasonCode: 'search_results_unreadable',
-        error: 'Baidu result page contained no readable result rows; official-domain fallback continued',
+        error: `${publicSearchEngine} result page contained no readable result rows; official-domain fallback continued`,
       });
     }
     const navigationState = candidateNavigationState || {
@@ -879,35 +896,40 @@ export async function discoverCompanyWithBrowser({
   officialDomain = '',
   market = 'CN',
   browser,
+  searchEngine = 'baidu',
   beforeSearchQuery = null,
   ...limits
 }) {
-  const queryLadder = buildCompanyQueryLadder({
+  const queryPlan = buildCompanyQueryPlan({
     company: chineseName || company,
     englishName,
     officialDomain,
     market,
+    searchEngine,
   });
   const results = [];
   const candidateNavigationState = {
     opened: 0,
     visited: new Set(),
   };
-  for (let index = 0; index < queryLadder.length; index++) {
+  for (let index = 0; index < queryPlan.length; index++) {
     if (typeof beforeSearchQuery === 'function') {
       await beforeSearchQuery({
         company,
-        query: queryLadder[index],
+        query: queryPlan[index].text,
+        tier: queryPlan[index].tier,
+        purpose: queryPlan[index].purpose,
         index,
-        total: queryLadder.length,
+        total: queryPlan.length,
       });
     }
     const result = await discoverCompanyWithBrowserQuery({
       company,
       officialDomain,
       browser,
-      query: queryLadder[index],
-      enableOfficialDomainFallback: index === queryLadder.length - 1,
+      query: queryPlan[index].text,
+      searchEngine,
+      enableOfficialDomainFallback: index === queryPlan.length - 1,
       candidateNavigationState,
       ...limits,
     });
@@ -934,8 +956,13 @@ export async function discoverCompanyWithBrowser({
   return {
     company,
     officialDomain,
-    query: queryLadder[0],
+    query: queryPlan[0].text,
     queries: Object.freeze(results.map((result) => result.query)),
+    queryPlan: Object.freeze(queryPlan.map((step, index) => Object.freeze({
+      ...step,
+      status: results[index]?.status || 'NOT_RUN',
+      reasonCode: results[index]?.reasonCode || null,
+    }))),
     status: blocked ? 'BLOCKED' : completed ? 'COMPLETED' : 'FAILED',
     reasonCode: blocked?.reasonCode
       || (!completed ? results.find((result) => result.reasonCode)?.reasonCode : null),
@@ -946,6 +973,8 @@ export async function discoverCompanyWithBrowser({
     observations: uniqueByUrl(results.flatMap((result) => result.observations || [])),
     failures: results.flatMap((result) => result.failures || []),
     queryStatuses: Object.freeze(statuses),
+    discoveryProvider: `chrome_${normalizePublicSearchEngine(searchEngine)}_visible_search`,
+    liveSearchExecuted: true,
   };
 }
 
@@ -1041,14 +1070,16 @@ async function loadChromeBinding(modulePath) {
   return loaded.chromeBrowserBinding || loaded.default || null;
 }
 
-export async function probeBaiduSearchHealth({
+export async function probePublicSearchHealth({
   browser,
+  engine = 'baidu',
   timeoutMs = 10_000,
 } = {}) {
   if (!browser) throw new Error('browser is required');
+  const selectedEngine = normalizePublicSearchEngine(engine);
   const page = await browser.newPage();
   try {
-    await page.goto(`https://www.baidu.com/s?wd=${encodeURIComponent('招聘')}`, {
+    await page.goto(publicSearchUrl(selectedEngine, '招聘官网'), {
       waitUntil: 'domcontentloaded',
       timeout: timeoutMs,
     });
@@ -1056,10 +1087,13 @@ export async function probeBaiduSearchHealth({
     const bodyText = typeof page.readBodyText === 'function'
       ? await page.readBodyText()
       : await page.locator('body').innerText({ timeout: timeoutMs }).catch(() => '');
-    if (isSearchBlockedPage(bodyText)) {
+    if (isSearchBlockedPage(bodyText, {
+      engine: selectedEngine,
+      url: await page.url(),
+    })) {
       return { healthy: false, reasonCode: 'search_challenge_or_access_blocked' };
     }
-    const rows = await readSearchRows(page, 1);
+    const rows = await readSearchRows(page, 1, selectedEngine);
     return rows.length
       ? { healthy: true, reasonCode: null }
       : { healthy: false, reasonCode: 'search_results_unreadable' };
@@ -1070,12 +1104,16 @@ export async function probeBaiduSearchHealth({
   }
 }
 
+export function probeBaiduSearchHealth(options = {}) {
+  return probePublicSearchHealth({ ...options, engine: 'baidu' });
+}
+
 async function runCli() {
   const runtimeProcess = globalThis.process;
   const args = parseArgs(runtimeProcess?.argv?.slice(2) || []);
   const healthProbeMode = Boolean(args['resume-provider'] && args['health-probe']);
   if (args.help || (!healthProbeMode && (!args.input || !args['output-dir']))) {
-    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--xlsx-output outputs/student-applications.xlsx] [--browser-mode persistent-chrome] [--profile-dir data/persistent-chrome-worker-profile] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 10000] [--search-jitter-ms 20000] [--max-companies-per-run 10]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/persistent-chrome-worker-profile]\n');
+    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--xlsx-output outputs/student-applications.xlsx] [--browser-mode persistent-chrome] [--profile-dir data/persistent-chrome-worker-profile] [--search-engine baidu|google] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 10000] [--search-jitter-ms 20000] [--max-companies-per-run 10]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu|google --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/persistent-chrome-worker-profile]\n');
     return args.help ? 0 : 2;
   }
   let companies = [];
@@ -1139,8 +1177,9 @@ async function runCli() {
       const circuit = await resumeProviderCircuit({
         provider: args['resume-provider'],
         ownerId: `health-probe-${process.pid}`,
-        healthProbe: () => probeBaiduSearchHealth({
+        healthProbe: () => probePublicSearchHealth({
           browser,
+          engine: args['resume-provider'],
           timeoutMs: limits.timeoutMs,
         }),
       }, { repository });

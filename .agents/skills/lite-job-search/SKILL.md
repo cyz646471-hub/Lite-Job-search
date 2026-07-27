@@ -144,9 +144,11 @@ Run:
 node bin/lite-job-search.mjs batch --input .\companies.json --output .\candidates.json --json
 ```
 
-Use small batches first. The natural-language China production workflow uses only
-the user's normal Chrome session and visible Baidu results. Baidu API and Apify
-are disabled for that workflow and must not be used as fallbacks.
+Use small batches first. The natural-language China production workflow uses an
+explicitly selected visible browser engine: Baidu by default, or Google when the
+instruction says Google/谷歌 or the CLI passes `--search-engine google`. Baidu
+API and Apify are disabled. Never switch engines automatically after a
+challenge.
 
 ## Run browser company discovery
 
@@ -235,11 +237,10 @@ Use the degradation order:
 
 `local HTTP → user's normal Chrome session → manual review`.
 
-Do not use an isolated `persistent-chrome` profile for Baidu search pages in the
-China production workflow. If the normal Chrome extension binding is unavailable,
-return `NOT_CONFIGURED`. If Baidu shows CAPTCHA or access verification, preserve
-the checkpoint and return `BLOCKED`; do not switch to Baidu API, Apify, another
-search engine, or a fresh browser profile to bypass it.
+If the selected search engine shows CAPTCHA, unusual traffic, consent/access
+verification, or rate limiting, preserve the checkpoint and return `BLOCKED`.
+Do not switch to Baidu API, Apify, another search engine, or a fresh browser
+profile to bypass it.
 
 Do not bypass login, access controls, CAPTCHA/验证码, rate limits, browser fingerprints, or anti-bot systems. Never submit an application, upload a resume, accept terms, or send messages.
 
@@ -253,8 +254,8 @@ owns one Playwright `launchPersistentContext` and a dedicated automation
 profile or borrow a user Chrome extension host. The dedicated profile is
 exclusive to one supervisor process and may retain only its own browser state
 across restarts. CAPTCHA and access challenges must be checkpointed as
-`BLOCKED`; do not bypass them or silently change to Baidu API, Apify, another
-search engine, or a fresh profile.
+`BLOCKED`; do not bypass them or silently change the explicitly selected search
+engine or profile.
 
 ## Operate the local control plane
 
@@ -268,8 +269,10 @@ Use `npm.cmd run control -- status`, `stop --batch <id> --confirm`, and
 `resume --batch <id> --confirm` for SQLite-backed worker control. A stop is
 cooperative and batch-scoped.
 
-After a human completes a Baidu challenge, run `control -- baidu-ack --confirm`.
-This does not close the circuit. One worker must atomically acquire the
+After a human completes a challenge, run
+`control -- provider-ack --provider baidu|google --confirm`. The legacy
+`baidu-ack` command remains available. Acknowledgement does not close the
+circuit. One worker must atomically acquire the
 `HALF_OPEN` probe lease and reach a real results page before the state becomes
 `CLOSED`. Never refresh, retry, switch engines, or run a second probe while the
 lease is held.

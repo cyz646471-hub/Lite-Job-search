@@ -55,3 +55,43 @@ test('Baidu challenge defers only Baidu tasks while direct verification continue
   assert.equal(batch.status, 'PAUSED');
   assert.equal(repository.getProviderCircuitState('baidu').state, 'OPEN');
 });
+
+test('Google challenge opens only the Google circuit and never switches to Baidu', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'ljs-google-isolation-'));
+  const repository = openSqliteMarketDiscoveryRepository({
+    file: path.join(directory, 'jobs.sqlite'),
+  });
+  repository.migrate();
+  t.after(() => {
+    repository.close();
+    return rm(directory, { recursive: true, force: true });
+  });
+  const calls = [];
+  const batch = await runBrowserCompanyBatch({
+    batchId: 'google-isolation',
+    provider: 'google',
+    companies: [{
+      id: 'google-blocked',
+      company: 'Google任务',
+      queueType: BROWSER_QUEUE_TYPES.SEARCH,
+    }, {
+      id: 'direct-continues',
+      company: '直接官网任务',
+      queueType: BROWSER_QUEUE_TYPES.LOCAL,
+    }],
+  }, {
+    repository,
+    now: () => '2026-07-27T00:00:00.000Z',
+    discoverCompany: async (company) => {
+      calls.push(company.id);
+      return company.id === 'google-blocked'
+        ? { status: 'BLOCKED', reasonCode: 'search_challenge_or_access_blocked' }
+        : { status: 'COMPLETED', officialCandidates: [], observations: [] };
+    },
+    ingestCompany: async () => ({ status: 'PARTIAL', runId: 'direct-run' }),
+  });
+  assert.deepEqual(calls, ['google-blocked', 'direct-continues']);
+  assert.equal(batch.providerCircuit.provider, 'google');
+  assert.equal(repository.getProviderCircuitState('google').state, 'OPEN');
+  assert.equal(repository.getProviderCircuitState('baidu'), null);
+});

@@ -7,7 +7,10 @@ import { discoverCompanyLocally } from '../src/application/discover-company-loca
 import { ingestBrowserCompanyResult } from '../src/application/ingest-browser-company-result.mjs';
 import { buildStudentApplicationRows } from '../src/application/build-student-application-rows.mjs';
 import { planCompanyDiscovery } from '../src/application/local-first-discovery-planner.mjs';
-import { runBrowserCompanyBatch } from '../src/application/run-browser-company-batch.mjs';
+import {
+  isPublicSearchQueueType,
+  runBrowserCompanyBatch,
+} from '../src/application/run-browser-company-batch.mjs';
 import { createAdaptiveSearchIntervalGate } from '../src/application/browser-search-circuit-breaker.mjs';
 import { acquireProfileLock } from '../src/runtime/profile-lock-manager.mjs';
 import { currentHostName, currentProcessStartToken } from '../src/runtime/process-identity.mjs';
@@ -79,7 +82,7 @@ async function observeCandidateWithBrowser(browser, url, timeoutMs) {
 }
 
 function usage() {
-  return 'Usage: node scripts/run-persistent-browser-supervisor.mjs --input companies.json --output-dir output --database data/lite-job-search.sqlite [--profile-dir data/browser-profiles/career-op-main] [--search-engine baidu] [--batch-id id] [--target-count 100] [--max-companies-per-run 100]';
+  return 'Usage: node scripts/run-persistent-browser-supervisor.mjs --input companies.json --output-dir output --database data/lite-job-search.sqlite [--profile-dir data/browser-profiles/career-op-main] [--search-engine baidu|google] [--batch-id id] [--target-count 100] [--max-companies-per-run 100]';
 }
 
 export async function runPersistentBrowserSupervisor({
@@ -109,6 +112,7 @@ export async function runPersistentBrowserSupervisor({
   searchEngine = 'baidu',
   instanceId = '',
   allowBaiduFallback = true,
+  allowSearchFallback = undefined,
   heartbeatIntervalMs = 15_000,
 } = {}) {
   if (!input || !outputDir || !database) throw new Error(usage());
@@ -116,12 +120,20 @@ export async function runPersistentBrowserSupervisor({
   const companies = normalizeBrowserCompanyInput(rawInput).slice(0, bounded(targetCount, 100, 1, 10_000));
   if (!companies.length) throw new Error('input has no usable companies');
   const selectedSearchEngine = normalizePublicSearchEngine(searchEngine);
-  if (selectedSearchEngine !== 'baidu') {
-    throw new Error('production supervisor supports only baidu as the final search fallback');
-  }
+  const searchFallbackAllowed = allowSearchFallback == null
+    ? allowBaiduFallback === true
+    : allowSearchFallback === true;
   const dedicatedProfile = path.resolve(profileDir);
   assertDedicatedProfile(dedicatedProfile);
-  const id = batchId || `persistent-${inputHash(companies).slice(0, 16)}`;
+  const effectiveInputHash = batchInputHash || inputHash({
+    companies,
+    searchEngine: selectedSearchEngine,
+    role,
+    industry,
+    location,
+    freshnessDays: Number(freshnessDays) || 90,
+  });
+  const id = batchId || `persistent-${effectiveInputHash.slice(0, 16)}`;
   const workerId = instanceId || `worker-${randomUUID()}`;
   const processStartToken = currentProcessStartToken();
   const hostName = currentHostName();
@@ -241,7 +253,9 @@ export async function runPersistentBrowserSupervisor({
         locale: company.market === 'NA' ? 'en-US' : 'zh-CN',
         absoluteDateFrom,
         absoluteDateTo,
-        allowBaiduFallback: allowBaiduFallback === true,
+        allowBaiduFallback: selectedSearchEngine === 'baidu' && searchFallbackAllowed,
+        allowSearchFallback: searchFallbackAllowed,
+        searchEngine: selectedSearchEngine,
         confirmedPortalsOnly: company.fixedPool === true,
       }, { repository });
       return {
@@ -254,7 +268,7 @@ export async function runPersistentBrowserSupervisor({
     const directFetcher = createPageFetcher({ timeoutMs: limits.timeoutMs });
     const batch = await runBrowserCompanyBatch({
       batchId: id,
-      batchInputHash: batchInputHash || id,
+      batchInputHash: effectiveInputHash,
       companies: plannedCompanies,
       retryFailed: retryFailed === true,
       maxCompaniesPerRun: limits.maxCompaniesPerRun,
@@ -291,7 +305,7 @@ export async function runPersistentBrowserSupervisor({
               beforeSearchQuery: gate,
               ...limits,
             });
-        if (company.queueType === 'BAIDU_DISCOVERY_REQUIRED') {
+        if (isPublicSearchQueueType(company.queueType)) {
           const candidates = (discovered.officialCandidates || []).map((item) => item.url);
           const outcome = discovered.status === 'BLOCKED'
             ? 'CHALLENGE'
@@ -307,7 +321,7 @@ export async function runPersistentBrowserSupervisor({
               : null;
             repository.putSearchCache({
               cacheKey: company.discoveryPlan.cacheKey,
-              engine: 'baidu',
+              engine: selectedSearchEngine,
               normalizedQuery: company.discoveryPlan.query.toLowerCase(),
               locale: company.market === 'NA' ? 'en-US' : 'zh-CN',
               absoluteDateFrom,
@@ -334,10 +348,10 @@ export async function runPersistentBrowserSupervisor({
         return {
           ...company,
           ...discovered,
-          discoveryProvider: company.queueType === 'BAIDU_DISCOVERY_REQUIRED'
-            ? 'chrome_baidu_visible_search'
+          discoveryProvider: isPublicSearchQueueType(company.queueType)
+            ? `chrome_${selectedSearchEngine}_visible_search`
             : discovered.discoveryProvider || 'local_direct_verification',
-          liveSearchExecuted: company.queueType === 'BAIDU_DISCOVERY_REQUIRED',
+          liveSearchExecuted: isPublicSearchQueueType(company.queueType),
         };
       },
       ingestCompany: async (options) => {
@@ -483,6 +497,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       allowBaiduFallback: args['no-baidu-fallback'] === true
         ? false
         : args['allow-baidu-fallback'] === true || undefined,
+      allowSearchFallback: args['no-search-fallback'] === true
+        ? false
+        : args['allow-search-fallback'] === true || undefined,
       heartbeatIntervalMs: args['heartbeat-interval-ms'],
     }).then((result) => process.stdout.write(`${JSON.stringify(result)}\n`))
       .catch((error) => { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'persistent_supervisor_failed', error: String(error.message || error) })}\n`); process.exitCode = 2; });

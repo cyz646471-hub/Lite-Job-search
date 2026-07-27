@@ -8,8 +8,17 @@ import { runDiscoveryBatch } from './run-discovery-batch.mjs';
 
 export const BROWSER_QUEUE_TYPES = Object.freeze({
   LOCAL: 'LOCAL_OR_DIRECT_VERIFICATION',
+  SEARCH: 'PUBLIC_SEARCH_DISCOVERY_REQUIRED',
+  LEGACY_BAIDU: 'BAIDU_DISCOVERY_REQUIRED',
   BAIDU: 'BAIDU_DISCOVERY_REQUIRED',
 });
+
+export function isPublicSearchQueueType(value) {
+  return [
+    BROWSER_QUEUE_TYPES.SEARCH,
+    BROWSER_QUEUE_TYPES.LEGACY_BAIDU,
+  ].includes(value);
+}
 
 function companyItemId(company = {}) {
   if (company.id) return String(company.id);
@@ -51,7 +60,9 @@ export async function runBrowserCompanyBatch({
       id: companyItemId({ ...company, company: name }),
       queueType: company.queueType === BROWSER_QUEUE_TYPES.LOCAL
         ? BROWSER_QUEUE_TYPES.LOCAL
-        : BROWSER_QUEUE_TYPES.BAIDU,
+        : isPublicSearchQueueType(company.queueType)
+          ? company.queueType
+          : BROWSER_QUEUE_TYPES.SEARCH,
     });
   });
   const companyResults = [];
@@ -78,7 +89,7 @@ export async function runBrowserCompanyBatch({
       && repository.isBatchStopRequested(batchId)
     ),
     shouldDeferItem: (company) => (
-      company.queueType === BROWSER_QUEUE_TYPES.BAIDU && circuit.state !== 'CLOSED'
+      isPublicSearchQueueType(company.queueType) && circuit.state !== 'CLOSED'
         ? {
             resultStatus: 'BLOCKED',
             retryClass: 'PROVIDER_BLOCKED',
@@ -91,7 +102,7 @@ export async function runBrowserCompanyBatch({
       const companyResult = await discoverCompany(company);
       companyResults.push(companyResult);
       if (companyResult?.status === 'BLOCKED') {
-        if (company.queueType === BROWSER_QUEUE_TYPES.BAIDU) {
+        if (isPublicSearchQueueType(company.queueType)) {
           circuit = transitionCircuit(circuit, {
             type: 'BLOCKED',
             reasonCode: companyResult.reasonCode || 'browser_search_blocked',

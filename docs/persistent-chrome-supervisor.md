@@ -23,10 +23,12 @@ npm.cmd run discover:persistent-supervisor -- `
   --batch-id persistent-cn-100 `
   --target-count 100 `
   --max-companies-per-run 100 `
+  --search-engine google `
   --search-delay-ms 10000 `
   --search-jitter-ms 4000
 ```
 
 The same profile directory must not be used by another browser or Worker. A
-Baidu CAPTCHA or access-control page opens the existing provider circuit and
-stops the queue; it is never refreshed, solved, or bypassed automatically.
+Baidu or Google CAPTCHA, unusual-traffic, consent, or access-control page opens
+that engine's independent provider circuit and stops its search queue. It is
+never refreshed, solved, bypassed, or followed by an automatic engine switch.

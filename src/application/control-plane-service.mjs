@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { normalizePublicSearchEngine } from '../adapters/browser/public-search-page-adapter.mjs';
 
 const SELECTION_MODES = new Set([
   'NEW_COMPANIES_ONLY',
@@ -69,6 +70,18 @@ export function createControlPlaneService({
     details,
     createdAt: now(),
   });
+  const acknowledgeSearchProvider = (provider) => {
+    const normalizedProvider = normalizePublicSearchEngine(provider);
+    const acknowledgedAt = now();
+    const circuit = repository.acknowledgeProviderCircuit({
+      provider: normalizedProvider,
+      acknowledgedAt,
+    });
+    audit('SEARCH_PROVIDER_MANUAL_VERIFICATION_ACKNOWLEDGED', 'PROVIDER', normalizedProvider, {
+      acknowledgedAt,
+    });
+    return circuit;
+  };
 
   return Object.freeze({
     createTask(input) {
@@ -125,16 +138,9 @@ export function createControlPlaneService({
       audit('BATCH_RESUMED', 'BATCH', batchId);
       return batch;
     },
+    acknowledgeSearchProvider,
     acknowledgeBaidu() {
-      const acknowledgedAt = now();
-      const circuit = repository.acknowledgeProviderCircuit({
-        provider: 'baidu',
-        acknowledgedAt,
-      });
-      audit('BAIDU_MANUAL_VERIFICATION_ACKNOWLEDGED', 'PROVIDER', 'baidu', {
-        acknowledgedAt,
-      });
-      return circuit;
+      return acknowledgeSearchProvider('baidu');
     },
     createReviewTask(input) {
       const createdAt = now();

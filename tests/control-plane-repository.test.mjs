@@ -129,3 +129,24 @@ test('control service creates structured tasks and audits stop and resume', asyn
     ['BATCH_RESUMED', 'BATCH_STOP_REQUESTED', 'TASK_CREATED'],
   );
 });
+
+test('control service acknowledges a Google challenge without switching engines', async (t) => {
+  const repository = await repositoryFor(t);
+  repository.saveProviderCircuitState({
+    provider: 'google',
+    state: 'OPEN',
+    reasonCode: 'search_challenge_or_access_blocked',
+    openedAt: NOW,
+    manualActionRequired: true,
+    updatedAt: NOW,
+  });
+  const service = createControlPlaneService({
+    repository,
+    now: () => '2026-07-27T00:01:00.000Z',
+  });
+  const result = service.acknowledgeSearchProvider('google');
+  assert.equal(result.provider, 'google');
+  assert.equal(result.state, 'OPEN');
+  assert.equal(result.manualAcknowledgedAt, '2026-07-27T00:01:00.000Z');
+  assert.equal(repository.getProviderCircuitState('baidu'), null);
+});

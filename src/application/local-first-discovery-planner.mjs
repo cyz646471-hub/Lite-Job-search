@@ -54,6 +54,8 @@ export function planCompanyDiscovery({
   absoluteDateFrom = '',
   absoluteDateTo = '',
   allowBaiduFallback = false,
+  allowSearchFallback = undefined,
+  searchEngine = 'baidu',
   publicLeads = [],
   confirmedPortalsOnly = false,
 } = {}, {
@@ -94,9 +96,13 @@ export function planCompanyDiscovery({
     && item.verificationStatus === 'VERIFIED'
   )).map((item) => item.value);
 
+  const selectedSearchEngine = String(searchEngine || 'baidu').trim().toLowerCase();
+  const searchFallbackAllowed = allowSearchFallback == null
+    ? allowBaiduFallback === true
+    : allowSearchFallback === true;
   const query = `${company.canonicalName} ${roleKeywords.join(' ')} 招聘`.trim();
   const cacheKey = createSearchCacheKey({
-    engine: 'baidu',
+    engine: selectedSearchEngine,
     query,
     locale,
     absoluteDateFrom,
@@ -132,13 +138,15 @@ export function planCompanyDiscovery({
     || (!confirmedPortalsOnly && officialDomains.length > 0);
   const queueType = hasLocalEvidence
     ? BROWSER_QUEUE_TYPES.LOCAL
-    : allowBaiduFallback
-      ? BROWSER_QUEUE_TYPES.BAIDU
+    : searchFallbackAllowed
+      ? selectedSearchEngine === 'baidu'
+        ? BROWSER_QUEUE_TYPES.LEGACY_BAIDU
+        : BROWSER_QUEUE_TYPES.SEARCH
       : BROWSER_QUEUE_TYPES.LOCAL;
   const terminalAction = hasLocalEvidence
     ? 'VERIFY_CANDIDATES'
-    : allowBaiduFallback
-      ? 'BAIDU_DISCOVERY'
+    : searchFallbackAllowed
+      ? `${selectedSearchEngine.toUpperCase()}_DISCOVERY`
       : 'MANUAL_OFFICIAL_DISCOVERY';
 
   return Object.freeze({
@@ -149,6 +157,7 @@ export function planCompanyDiscovery({
     query,
     cacheKey,
     cacheOutcome: cache?.outcome || null,
+    searchEngine: selectedSearchEngine,
     candidates: Object.freeze(candidates),
     officialDomains: Object.freeze(plannedOfficialDomains),
     confirmedPortalsOnly,
@@ -160,7 +169,11 @@ export function planCompanyDiscovery({
       { priority: 5, source: 'SEARCH_CACHE', count: confirmedPortalsOnly ? 0 : cachedCandidates.length },
       { priority: 6, source: 'PUBLIC_LEAD_OFFICIAL_LINK', count: confirmedPortalsOnly ? 0 : leadCandidates.length },
       { priority: 7, source: 'COMMON_RECRUITMENT_PATH', count: confirmedPortalsOnly ? 0 : commonPaths.length },
-      { priority: 8, source: 'BAIDU_BROWSER', enabled: terminalAction === 'BAIDU_DISCOVERY' },
+      {
+        priority: 8,
+        source: `${selectedSearchEngine.toUpperCase()}_BROWSER`,
+        enabled: terminalAction === `${selectedSearchEngine.toUpperCase()}_DISCOVERY`,
+      },
       { priority: 9, source: 'MANUAL_DISCOVERY', enabled: terminalAction === 'MANUAL_OFFICIAL_DISCOVERY' },
     ]),
   });

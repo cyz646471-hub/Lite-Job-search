@@ -29,7 +29,7 @@ Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具�
 
 | 模块 | 中国市场 | 北美市场 |
 |---|---|---|
-| 搜索服务 | 当前生产流程仅使用用户正常 Chrome 的可见百度结果；百度 API 与 Apify 已禁用 | Tavily、Brave、人工候选 |
+| 搜索服务 | Persistent Chrome 中显式选择百度或 Google；百度 API 与 Apify 已禁用 | Tavily、Brave、人工候选 |
 | 发现源 | Gank Interview、牛客招聘日程、牛企直聘、实习僧等公开线索；浪浪网申已移除 | 企业官网、VC portfolio seeds、公开职位板 |
 | ATS / 招聘系统 | Moka、北森/Hotjob、飞书招聘、智联招聘系统、Moseeker 等 | Greenhouse、Lever、Ashby、Workday、SmartRecruiters、Teamtailor 等 |
 | 验证 | 企业主域、品牌信号、ATS 租户、招聘语义、页面角色 | 企业域名、ATS 租户、职位列表/详情/申请动作 |
@@ -224,11 +224,11 @@ try {
 ## 浏览器搜索
 
 - 中国生产 Worker 使用长期运行的 Persistent Chrome Supervisor 和独立自动化 Profile，不连接用户日常 Chrome Profile。
-- 发现顺序是已验证 Portal、官方域名、历史入口、ATS、缓存、公开线索外链、常见招聘路径、百度、人工发现。
+- 发现顺序是已验证 Portal、官方域名、历史入口、ATS、缓存、公开线索外链、常见招聘路径、显式选择的百度或 Google、人工发现。
 - Direct HTTP 与 ATS Adapter 优先；只有动态渲染、分页或交互确有需要时才启动 Playwright。
-- 百度搜索默认至少间隔 10 秒并叠加抖动；首次安全验证立即将百度任务记为 `DEFERRED` 并打开持久化断路器，直接官网核验任务继续执行。
+- 浏览器搜索默认至少间隔 10 秒并叠加抖动；首次安全验证立即将该引擎任务记为 `DEFERRED` 并打开独立断路器，直接官网核验任务继续执行。
 - 浏览器搜索不绕过验证码、登录、限流或访问控制；人工健康探测成功后才恢复延迟队列。
-- 不得使用百度 API、Apify、其他搜索源或新 Profile 规避百度安全验证。
+- 不得通过自动切换引擎、百度 API、Apify 或新 Profile 规避安全验证。
 - 默认不启用住宅代理。
 - 预算耗尽返回 `search_deferred_by_budget`，不等于“没有官网”。
 
@@ -247,7 +247,7 @@ access challenges remain `BLOCKED`; the worker does not try to bypass them.
 See [Persistent Chrome Supervisor](docs/persistent-chrome-supervisor.md) for
 the service/container command and profile requirements.
 
-Local task creation, Worker state, batch stop/resume, Baidu manual
+Local task creation, Worker state, batch stop/resume, Baidu/Google manual
 acknowledgement and XLSX download are available through the
 [local control plane](docs/local-control-plane.md).
 
