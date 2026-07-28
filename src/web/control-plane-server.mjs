@@ -91,6 +91,7 @@ export function createControlPlaneServer({
   xlsxPath = '',
   buildStudentWorkbook = null,
   buildCompanyWorkbook = null,
+  workerLauncher = null,
   actor = 'local-web-user',
 } = {}) {
   const service = createControlPlaneService({ repository, actor });
@@ -270,7 +271,16 @@ export function createControlPlaneServer({
         }
         const resumeMatch = url.pathname.match(/^\/api\/batches\/([^/]+)\/resume$/);
         if (resumeMatch) {
-          json(response, 200, service.resumeBatch(decodeURIComponent(resumeMatch[1])));
+          const batchId = decodeURIComponent(resumeMatch[1]);
+          const batch = service.resumeBatch(batchId);
+          const worker = workerLauncher
+            ? await workerLauncher.start(batchId)
+            : { status: 'NOT_CONFIGURED' };
+          json(response, 200, {
+            status: batch.status,
+            batch,
+            worker,
+          });
           return;
         }
         if (url.pathname === '/api/providers/baidu/manual-ack') {

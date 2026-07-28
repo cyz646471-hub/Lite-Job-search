@@ -32,7 +32,7 @@ export function dashboardHtml() {
 </div></header>
 <main class="shell">
   <div id="error" class="error"></div>
-  <div class="toolbar"><div><h2>全量补齐看板</h2><p id="updated">等待第一次刷新</p></div><div><button id="refresh">立即刷新</button> <a class="button" href="/api/export">下载正式投递 XLSX</a> <a class="button" href="/api/export/companies">下载企业采集状态 XLSX</a></div></div>
+  <div class="toolbar"><div><h2>全量补齐看板</h2><p id="updated">等待第一次刷新</p></div><div><button id="refresh">立即刷新</button> <button id="pause-worker">暂停 Worker</button> <button id="resume-worker" class="primary">开始 / 继续 Worker</button> <a class="button" href="/api/export">下载正式投递 XLSX</a> <a class="button" href="/api/export/companies">下载企业采集状态 XLSX</a></div></div>
   <section class="hero">
     <div class="hero-head"><div><div class="eyebrow">CURRENT BATCH</div><h3 id="batch-name">尚未选择批次</h3><div id="batch-meta" class="meta">—</div></div><div id="percent" class="percent">0%</div></div>
     <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
@@ -70,6 +70,7 @@ const fmt=(n)=>new Intl.NumberFormat('zh-CN').format(Number(n)||0);
 const healthLabels={HEALTHY:'正常运行',STALE:'心跳超时',NOT_STARTED:'尚未启动',EXITED:'已退出',CRASHED:'异常退出'};
 const itemStatusLabels={PENDING:'待处理',RUNNING:'处理中',FAILED:'失败',DEFERRED:'延后',SUCCEEDED:'已完成'};
 let companyOffset=0;const companyLimit=50;let companySearchTimer;
+let currentBatchId='';let currentBatchStatus='';
 const duration=(seconds)=>{if(seconds==null)return '暂不可用';if(seconds<3600)return Math.ceil(seconds/60)+' 分钟';if(seconds<86400)return (seconds/3600).toFixed(1)+' 小时';return (seconds/86400).toFixed(1)+' 天'};
 const dt=(value)=>value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'—';
 const escapeHtml=(value)=>String(value??'—').replace(/[&<>"']/g,(char)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
@@ -89,6 +90,9 @@ async function loadCompanyList(){
 }
 function render(data){
   const p=data.progress||{};const worker=data.worker;const health=worker?.health;
+  currentBatchId=data.batch?.id||'';currentBatchStatus=data.batch?.status||'';
+  el('pause-worker').disabled=!currentBatchId||!['RUNNING','PENDING'].includes(currentBatchStatus);
+  el('resume-worker').disabled=!currentBatchId||['RUNNING','PENDING'].includes(currentBatchStatus);
   el('batch-name').textContent=data.task?.roleKeywords?.join(' / ')||data.batch?.id||'无活动批次';
   el('batch-meta').textContent=(data.batch?.id||'—')+' · '+(data.batch?.status||data.status)+' · '+(data.task?.dateFrom||'—')+' 至 '+(data.task?.dateTo||'—');
   el('percent').textContent=(p.percent||0).toFixed(2)+'%';el('progress-fill').style.width=(p.percent||0)+'%';
@@ -107,6 +111,8 @@ function render(data){
 }
 async function refresh(){try{el('error').style.display='none';render(await api('/api/progress'));await loadCompanyList()}catch(error){el('error').textContent='读取进度失败：'+error.message;el('error').style.display='block';el('live-dot').className='dot bad';el('live-text').textContent='状态读取失败'}}
 el('refresh').onclick=refresh;
+el('pause-worker').onclick=async()=>{if(!currentBatchId||!confirm('暂停当前 Worker？当前公司完成后会安全停止并保存断点。'))return;await api('/api/batches/'+encodeURIComponent(currentBatchId)+'/stop',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:'{}'});await refresh()};
+el('resume-worker').onclick=async()=>{if(!currentBatchId||!confirm('开始或继续当前 Worker？'))return;await api('/api/batches/'+encodeURIComponent(currentBatchId)+'/resume',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:'{}'});await refresh()};
 el('company-prev').onclick=()=>{companyOffset=Math.max(0,companyOffset-companyLimit);loadCompanyList()};
 el('company-next').onclick=()=>{companyOffset+=companyLimit;loadCompanyList()};
 el('company-scope').onchange=()=>{companyOffset=0;loadCompanyList()};

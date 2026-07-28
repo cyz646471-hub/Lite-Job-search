@@ -43,6 +43,26 @@ function hardNegativeCode(url, page = {}) {
   const title = String(page.title || titleOf(html));
   const h1 = String(page.h1 || headingOf(html));
   const primaryText = `${title} ${h1}`;
+  if (
+    Number(page.status) === 404
+    || Number(page.status) === 410
+    || /^404\./i.test(host)
+    || /\/(?:404|not-found)(?:\.html?)?(?:\/|$)/i.test(pathname)
+  ) {
+    return 'error_page_url';
+  }
+  if (
+    /\/(?:antibot|captcha|verifycode)(?:\/|$)/i.test(pathname)
+    || /^callback\./i.test(host)
+  ) {
+    return 'access_challenge_url';
+  }
+  if (
+    hostMatches(host, '36kr.com')
+    && /^\/(?:p|topics)\//i.test(pathname)
+  ) {
+    return 'content_article_page';
+  }
   if (UNIVERSITY_HOSTS.some((domain) => hostMatches(host, domain)) || /\.edu\.cn$/i.test(host)) {
     return 'university_employment_site';
   }
@@ -58,6 +78,44 @@ function hardNegativeCode(url, page = {}) {
     .test(primaryText);
   if (trainingPath || trainingHeading) return 'training_provider';
   return '';
+}
+
+function recruitmentRouteRole(url, atsType = '') {
+  let host = '';
+  let pathname = '';
+  try {
+    const parsed = new URL(url);
+    host = parsed.hostname.toLowerCase();
+    pathname = parsed.pathname.toLowerCase();
+  } catch {
+    return 'UNKNOWN';
+  }
+  if (/\/(?:job|position)s?\/[^/]+/i.test(pathname)) return 'JOB_DETAIL';
+  if (/\/(?:job|position)s?(?:\/|$)/i.test(pathname)) return 'JOB_LIST';
+  if (/\/(?:campus-recruitment|campus_apply|social-recruitment|campus)(?:\/|$)/i
+    .test(pathname)) return 'CAMPAIGN';
+  if (
+    atsType
+    && (
+      /\/apply\/[^/]+(?:\/\d+)?\/?$/i.test(pathname)
+      || /^(?:career|careers|job|jobs|hr|recruit|campus)\./i.test(host)
+    )
+  ) {
+    return /\/\d+\/?$/.test(pathname) ? 'CAMPAIGN' : 'CAREER_HOME';
+  }
+  return 'UNKNOWN';
+}
+
+function isCorporateRoot(url, atsType = '') {
+  if (atsType) return false;
+  try {
+    const parsed = new URL(url);
+    const recruitmentSubdomain = /^(?:career|careers|job|jobs|hr|recruit|campus)\./i
+      .test(parsed.hostname.toLowerCase());
+    return (!parsed.pathname || parsed.pathname === '/') && !recruitmentSubdomain;
+  } catch {
+    return false;
+  }
 }
 
 function pageText(page) {
@@ -166,6 +224,14 @@ export function createOfficialVerificationAdapter({
         requests: page.requests || [],
       }) || { ats: '', confidence: 0 };
       const hardNegative = hardNegativeCode(finalUrl, { ...page, html });
+      const routeRole = recruitmentRouteRole(finalUrl, ats.ats);
+      const resolvedPageRole = hardNegative
+        ? 'UNKNOWN'
+        : routeRole !== 'UNKNOWN'
+          ? routeRole
+          : isCorporateRoot(finalUrl, ats.ats)
+            ? 'CORPORATE_HOME'
+            : classified.pageRole;
       const wechatArticle = isWechatArticle(finalUrl);
       const existingOfficialDomains = [...new Set(company.officialDomains || [])];
       const bootstrap = existingOfficialDomains.length || hardNegative || wechatArticle
@@ -174,7 +240,7 @@ export function createOfficialVerificationAdapter({
           company,
           candidate,
           page,
-          pageType: classified.pageRole,
+          pageType: resolvedPageRole,
           atsType: ats.ats,
         });
       const confirmedOfficialDomain = bootstrap?.status === 'CONFIRMED'
@@ -199,12 +265,12 @@ export function createOfficialVerificationAdapter({
           httpStatus: page.status || 200,
           title: page.title || titleOf(html),
           h1: page.h1 || '',
-          recruitmentSemantics: classified.pageRole !== 'UNKNOWN',
-          jobContentMatched: ['JOB_LIST', 'JOB_DETAIL', 'APPLY'].includes(classified.pageRole),
+          recruitmentSemantics: !['UNKNOWN', 'CORPORATE_HOME'].includes(resolvedPageRole),
+          jobContentMatched: ['JOB_LIST', 'JOB_DETAIL', 'APPLY'].includes(resolvedPageRole),
           officialSiteLinked: page.officialSiteLinked === true,
           riskSignals: page.riskSignals || [],
         },
-        pageRole: classified.pageRole,
+        pageRole: resolvedPageRole,
         vacancyStatus: classified.vacancyStatus,
       }) || {};
 
@@ -278,6 +344,7 @@ export function createOfficialVerificationAdapter({
         || '',
       ).trim();
 
+      let atsTenantVerified = false;
       if (ats.ats) {
         const reviewedOwnership = resolveTenantOwnership({
           company,
@@ -287,6 +354,7 @@ export function createOfficialVerificationAdapter({
         const tenantVerified = candidate.verifiedTenant === true
           || (identity.strongEvidence || []).includes('verified_surface_registry')
           || reviewedOwnership.status === 'VERIFIED';
+        atsTenantVerified = tenantVerified;
         push(tenantVerified ? 'verified_ats_tenant' : 'ats_fingerprint_only', ats.ats);
         if (reviewedOwnership.status === 'VERIFIED') {
           push(
@@ -298,13 +366,23 @@ export function createOfficialVerificationAdapter({
           push('official_site_confirms_ats_tenant', ats.ats);
         }
       }
-      if (['CAMPAIGN', 'JOB_LIST', 'JOB_DETAIL', 'APPLY'].includes(classified.pageRole)) {
+      if (ats.ats && atsTenantVerified && routeRole !== 'UNKNOWN') {
+        push('ats_recruitment_route', routeRole);
+      }
+      if (resolvedPageRole === 'CORPORATE_HOME') {
+        push('corporate_home_only');
+      }
+      if (
+        !hardNegative
+        && resolvedPageRole !== 'CORPORATE_HOME'
+        && ['CAMPAIGN', 'JOB_LIST', 'JOB_DETAIL', 'APPLY'].includes(classified.pageRole)
+      ) {
         push('recruitment_structure', classified.pageRole);
       } else if (
-        classified.pageRole === 'CAREER_HOME'
+        resolvedPageRole === 'CAREER_HOME'
         && careerPageIdentityConfirmed({ url: finalUrl, page: { ...page, html } })
       ) {
-        push('career_page_identity', classified.pageRole);
+        push('career_page_identity', resolvedPageRole);
       }
       if (wechatArticle) {
         if (
@@ -320,12 +398,12 @@ export function createOfficialVerificationAdapter({
             officialAccountId || officialAccountName || finalUrl,
           );
         }
-        if (['CAMPAIGN', 'JOB_LIST', 'JOB_DETAIL', 'APPLY'].includes(classified.pageRole)) {
-          push('official_recruitment_announcement', classified.pageRole);
+        if (['CAMPAIGN', 'JOB_LIST', 'JOB_DETAIL', 'APPLY'].includes(resolvedPageRole)) {
+          push('official_recruitment_announcement', resolvedPageRole);
         }
       }
       if (
-        classified.pageRole === 'APPLY'
+        resolvedPageRole === 'APPLY'
         || page.parsed?.applyUrl
         || candidate.applyUrl
         || /立即(?:申请|投递)|apply now|submit application/i.test(html)
@@ -349,7 +427,7 @@ export function createOfficialVerificationAdapter({
       }
 
       return Object.freeze({
-        pageType: classified.pageRole || 'UNKNOWN',
+        pageType: resolvedPageRole || 'UNKNOWN',
         vacancyStatus: classified.vacancyStatus || 'UNKNOWN',
         atsType: ats.ats || '',
         channelType: wechatArticle

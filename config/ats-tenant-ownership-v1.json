@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "reviewedAt": "2026-07-27",
+  "reviewedAt": "2026-07-28",
   "records": [
     {
       "company": "安谋科技（中国）",
@@ -18,7 +18,7 @@
       "tenantKey": "100credit",
       "urlPrefixes": ["https://app.mokahr.com/campus-recruitment/100credit/"],
       "officialDomains": ["brgroup.com"],
-      "provenance": "2026-07-27 visible-browser canary; rendered ATS page legal entity matched 百融云创科技股份有限公司"
+      "provenance": "2026-07-27 visible-browser canary; rendered ATS legal entity matched 百融云创科技股份有限公司"
     },
     {
       "company": "白云机场",
@@ -37,6 +37,19 @@
       "urlPrefixes": ["https://ahhl.zhiye.com/"],
       "officialDomains": ["helichina.com"],
       "provenance": "2026-07-27 visible-browser canary; first-party recruitment page and ATS result"
+    },
+    {
+      "company": "360 数科",
+      "aliases": ["360数科", "奇富科技", "360金融"],
+      "ats": "MOKA",
+      "tenantKey": "360jinrong",
+      "urlPrefixes": [
+        "https://app.mokahr.com/apply/360jinrong",
+        "https://app.mokahr.com/campus-recruitment/360jinrong/",
+        "https://app.mokahr.com/social-recruitment/360jinrong/"
+      ],
+      "officialDomains": ["360shuke.com"],
+      "provenance": "2026-07-28 verified campus tenant and official-site attribution in the LJS canary database"
     }
   ]
 }

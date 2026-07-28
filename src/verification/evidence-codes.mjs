@@ -68,6 +68,17 @@ export const EVIDENCE_RULES = Object.freeze({
     identityAnchor: false,
     recruitmentAnchor: true,
   }),
+  ats_recruitment_route: Object.freeze({
+    direction: 'POSITIVE',
+    weight: 15,
+    identityAnchor: false,
+    recruitmentAnchor: true,
+  }),
+  corporate_home_only: Object.freeze({
+    direction: 'NEUTRAL',
+    weight: 0,
+    identityAnchor: false,
+  }),
   ats_fingerprint_only: Object.freeze({
     direction: 'NEUTRAL',
     weight: 0,
@@ -131,6 +142,24 @@ export const EVIDENCE_RULES = Object.freeze({
   private_or_payment_risk: Object.freeze({
     direction: 'NEGATIVE',
     weight: -100,
+    identityAnchor: false,
+    hardReject: true,
+  }),
+  error_page_url: Object.freeze({
+    direction: 'NEGATIVE',
+    weight: -100,
+    identityAnchor: false,
+    hardReject: true,
+  }),
+  access_challenge_url: Object.freeze({
+    direction: 'NEGATIVE',
+    weight: -100,
+    identityAnchor: false,
+    hardReject: true,
+  }),
+  content_article_page: Object.freeze({
+    direction: 'NEGATIVE',
+    weight: -70,
     identityAnchor: false,
     hardReject: true,
   }),

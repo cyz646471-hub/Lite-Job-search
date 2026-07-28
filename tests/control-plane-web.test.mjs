@@ -15,9 +15,16 @@ test('local web control plane reads real SQLite state and confirms writes', asyn
   repository.migrate();
   const record = path.join(directory, 'record.md');
   await writeFile(record, '# Development Record\n');
+  const workerStarts = [];
   const server = createControlPlaneServer({
     repository,
     developmentRecordPath: record,
+    workerLauncher: {
+      async start(batchId) {
+        workerStarts.push(batchId);
+        return { status: 'STARTED', batchId, pid: 1234 };
+      },
+    },
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
@@ -117,6 +124,15 @@ test('local web control plane reads real SQLite state and confirms writes', asyn
   });
   assert.equal(stopped.status, 200);
   assert.equal((await stopped.json()).status, 'STOP_REQUESTED');
+  const resumed = await fetch(`${base}/api/batches/${task.batchId}/resume`, {
+    method: 'POST',
+    headers: { 'x-ljs-confirm': 'yes' },
+  });
+  assert.equal(resumed.status, 200);
+  const resumedPayload = await resumed.json();
+  assert.equal(resumedPayload.status, 'PENDING');
+  assert.equal(resumedPayload.worker.status, 'STARTED');
+  assert.deepEqual(workerStarts, [task.batchId]);
   assert.equal(
     await (await fetch(`${base}/api/development-record`)).text(),
     '# Development Record\n',

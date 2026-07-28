@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import { createControlPlaneExportService } from '../src/application/generate-control-plane-exports.mjs';
+import { createControlPlaneWorkerLauncher } from '../src/application/control-plane-worker-launcher.mjs';
 import { openSqliteMarketDiscoveryRepository } from '../src/storage/sqlite-job-repository.mjs';
 import { createControlPlaneServer } from '../src/web/control-plane-server.mjs';
 
@@ -30,12 +31,26 @@ const exportService = createControlPlaneExportService({
   repository,
   outputDirectory: path.resolve(args['export-dir'] || 'test-output/control-plane-exports'),
 });
+const workerLauncher = args['worker-registry']
+  ? createControlPlaneWorkerLauncher({
+    repository,
+    database,
+    registry: path.resolve(args['worker-registry']),
+    outputDirectory: path.resolve(args['worker-output-dir'] || 'test-output/control-plane-worker'),
+    profileDirectory: path.resolve(args['worker-profile-dir'] || 'data/browser-profiles/career-op-main'),
+    maxCompaniesPerRun: Math.max(
+      1,
+      Math.min(200, Number(args['worker-max-companies-per-run']) || 10),
+    ),
+  })
+  : null;
 const server = createControlPlaneServer({
   repository,
   developmentRecordPath: path.resolve('docs/LJS_DEVELOPMENT_RECORD.md'),
   xlsxPath: args.xlsx ? path.resolve(args.xlsx) : '',
   buildStudentWorkbook: exportService.buildStudentWorkbook,
   buildCompanyWorkbook: exportService.buildCompanyWorkbook,
+  workerLauncher,
 });
 server.listen(port, host, () => {
   process.stdout.write(`${JSON.stringify({

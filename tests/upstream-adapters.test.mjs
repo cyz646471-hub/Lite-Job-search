@@ -391,6 +391,89 @@ test('blocked page produces a non-bypass evidence code', async () => {
   assert.ok(result.evidence.some((item) => item.code === 'blocked_page'));
 });
 
+test('publisher article paths cannot become employer recruitment portals', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '36氪', officialDomains: ['36kr.com'] },
+    candidate: { url: 'https://36kr.com/p/123456' },
+    page: {
+      status: 200,
+      finalUrl: 'https://36kr.com/p/123456',
+      title: '某公司招聘报道',
+      html: '<h1>某公司招聘报道</h1><p>岗位职责与任职要求</p>',
+      parsed: { pageRole: 'JOB_DETAIL' },
+    },
+  });
+
+  assert.equal(result.pageType, 'UNKNOWN');
+  assert.ok(result.evidence.some((item) => item.code === 'content_article_page'));
+  assert.ok(!result.evidence.some((item) => item.code === 'recruitment_structure'));
+});
+
+test('corporate root is identity evidence but not a recruitment portal', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '51CTO', officialDomains: ['51cto.com'] },
+    candidate: { url: 'https://51cto.com/' },
+    page: {
+      status: 200,
+      finalUrl: 'https://51cto.com/',
+      title: '51CTO',
+      html: '<h1>51CTO</h1><nav>招聘频道</nav>',
+    },
+  });
+
+  assert.equal(result.pageType, 'CORPORATE_HOME');
+  assert.ok(result.evidence.some((item) => item.code === 'corporate_home_only'));
+  assert.ok(!result.evidence.some((item) => item.code === 'recruitment_structure'));
+});
+
+test('error and access-challenge URLs are rejected as portal candidates', async () => {
+  const adapter = createVerificationAdapter();
+  const error = await adapter.inspect({
+    company: { canonicalName: '58同城', officialDomains: ['58.com'] },
+    candidate: { url: 'https://404.58.com/404.html?from=58.com/careers' },
+    page: {
+      status: 200,
+      finalUrl: 'https://404.58.com/404.html?from=58.com/careers',
+      html: '<h1>招聘</h1>',
+    },
+  });
+  const challenge = await adapter.inspect({
+    company: { canonicalName: '58同城', officialDomains: ['58.com'] },
+    candidate: { url: 'https://callback.58.com/antibot/verifycode?code=300' },
+    page: {
+      status: 200,
+      finalUrl: 'https://callback.58.com/antibot/verifycode?code=300',
+      html: '<h1>安全验证</h1>',
+    },
+  });
+
+  assert.ok(error.evidence.some((item) => item.code === 'error_page_url'));
+  assert.ok(challenge.evidence.some((item) => item.code === 'access_challenge_url'));
+});
+
+test('reviewed ATS tenant plus deterministic ATS route supplies recruitment evidence', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: {
+      canonicalName: '360 数科',
+      aliases: ['360数科', '360金融'],
+      officialDomains: ['360shuke.com'],
+    },
+    candidate: { url: 'https://app.mokahr.com/apply/360jinrong' },
+    page: {
+      status: 200,
+      finalUrl: 'https://app.mokahr.com/apply/360jinrong',
+      html: '<div id="app"></div>',
+    },
+  });
+
+  assert.equal(result.pageType, 'CAREER_HOME');
+  assert.ok(result.evidence.some((item) => item.code === 'reviewed_ats_tenant_ownership'));
+  assert.ok(result.evidence.some((item) => item.code === 'ats_recruitment_route'));
+});
+
 test('job extraction maps page provider jobs without inventing dates', async () => {
   const extractor = createUpstreamJobExtractionAdapter({
     now: () => NOW,
