@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildFullFlowQueue } from '../scripts/prepare-full-database-maintenance.mjs';
+import {
+  buildFullFlowQueue,
+  isDomesticChinaCompany,
+} from '../scripts/prepare-full-database-maintenance.mjs';
 
 test('full-flow queue includes unverified companies and verified portals without formal jobs', () => {
   const queue = buildFullFlowQueue({
@@ -23,4 +26,11 @@ test('full-flow queue includes unverified companies and verified portals without
     ['待发现', ['OFFICIAL_PORTAL_NOT_VERIFIED']],
     ['待提取', ['NO_FORMAL_JOB_OPENING_RECORDED']],
   ]);
+});
+
+test('domestic China scope excludes Global and US companies mislabeled as CN market', () => {
+  assert.equal(isDomesticChinaCompany({ market: 'CN', countryRegion: 'China' }), true);
+  assert.equal(isDomesticChinaCompany({ market: 'CN', countryRegion: '中国大陆' }), true);
+  assert.equal(isDomesticChinaCompany({ market: 'CN', countryRegion: 'Global' }), false);
+  assert.equal(isDomesticChinaCompany({ market: 'CN', countryRegion: 'US' }), false);
 });

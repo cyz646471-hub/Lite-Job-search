@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,6 +48,14 @@ function companyMatches(stored, input) {
   ].map(normalized).some((name) => inputNames.has(name))
     || (stored.officialDomains || []).map(normalized)
       .some((domain) => inputDomains.has(domain));
+}
+
+function stableCompanyId(company) {
+  if (company.id) return String(company.id);
+  return `company-plan-${createHash('sha256')
+    .update(JSON.stringify([company]))
+    .digest('hex')
+    .slice(0, 24)}`;
 }
 
 export function selectCompanies(task, companies, repository) {
@@ -121,7 +129,8 @@ export async function runControlTask(args = {}, dependencies = {}) {
   repository.migrate();
   const task = repository.getControlTask(args.task);
   if (!task) throw new Error(`unknown control task: ${args.task}`);
-  const selected = selectCompanies(task, companies, repository);
+  const selected = selectCompanies(task, companies, repository)
+    .map((company) => ({ ...company, id: stableCompanyId(company) }));
   if (!selected.length) {
     repository.updateControlTaskState({
       id: task.id,
@@ -130,6 +139,16 @@ export async function runControlTask(args = {}, dependencies = {}) {
     });
     repository.close();
     return { status: 'PARTIAL', reason: 'NO_ELIGIBLE_COMPANIES', selected: 0 };
+  }
+  const materializedAt = new Date().toISOString();
+  for (const [position, company] of selected.entries()) {
+    repository.ensureBatchItem({
+      batchId: task.batchId,
+      itemKey: String(company.id),
+      position,
+      input: company,
+      createdAt: materializedAt,
+    });
   }
   repository.updateControlTaskState({
     id: task.id,

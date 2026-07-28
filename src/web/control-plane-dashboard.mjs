@@ -18,7 +18,7 @@ export function dashboardHtml() {
     .cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}.card,.panel{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:17px}.card{min-height:112px}.card .label,.sub{color:var(--muted);font-size:12px}.card .value{font-size:27px;font-weight:720;margin-top:8px}.value.green{color:var(--green)}.value.red{color:var(--red)}.value.amber{color:var(--amber)}
     .grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(300px,.65fr);gap:18px}.panel{margin-bottom:18px}.panel h3{font-size:15px;margin:0 0 14px}.status-row{display:grid;grid-template-columns:minmax(0,130px) minmax(0,1fr);gap:8px;padding:7px 0;border-bottom:1px solid #eef1f4}.status-row>*{min-width:0;overflow-wrap:anywhere}.status-row:last-child{border-bottom:0}.status-row span:first-child{color:var(--muted)}
     .badge{display:inline-flex;padding:3px 8px;border-radius:99px;font-size:11px;font-weight:650;background:#e8eefc;color:var(--blue)}.badge.good{background:#e4f4ed;color:var(--green)}.badge.warn{background:#fff1dc;color:var(--amber)}.badge.bad{background:#fdeaea;color:var(--red)}
-    table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;color:var(--muted);font-weight:600;border-bottom:1px solid var(--line);padding:8px}td{border-bottom:1px solid #eef1f4;padding:9px 8px}.empty{color:var(--muted);padding:16px 0}
+    table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;color:var(--muted);font-weight:600;border-bottom:1px solid var(--line);padding:8px}td{border-bottom:1px solid #eef1f4;padding:9px 8px}.empty{color:var(--muted);padding:16px 0}.table-wrap{overflow:auto}.list-head,.list-controls,.pager{display:flex;align-items:center;justify-content:space-between;gap:12px}.list-head{margin-bottom:12px}.list-head h3{margin:0}.list-controls input{min-width:240px;margin:0}.list-controls select{width:auto;margin:0}.pager{justify-content:flex-end;margin-top:12px;color:var(--muted)}button:disabled{opacity:.45;cursor:not-allowed}
     details{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin-top:18px}summary{cursor:pointer;font-weight:650}.advanced{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px}.advanced label{display:block;margin:9px 0;color:var(--muted)}input,select{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;margin-top:4px}pre{white-space:pre-wrap;max-height:280px;overflow:auto;background:#111d2d;color:#dce6f2;padding:14px;border-radius:10px}
     .error{display:none;background:#fdeaea;color:#8f2424;border:1px solid #f2bcbc;padding:12px 14px;border-radius:10px;margin-bottom:16px}
     @media(max-width:850px){.cards{grid-template-columns:repeat(2,1fr)}.grid,.advanced{grid-template-columns:1fr}.topbar,.toolbar,.hero-head{align-items:flex-start;flex-direction:column}.topbar{padding:16px 0}}
@@ -44,6 +44,11 @@ export function dashboardHtml() {
     <article class="card"><div class="label">剩余公司</div><div id="remaining" class="value amber">0</div><div id="remaining-sub" class="sub">含尚未装载的公司</div></article>
     <article class="card"><div class="label">正式岗位记录</div><div id="jobs" class="value">0</div><div id="quality-sub" class="sub">0 个 VERIFIED 门户</div></article>
   </section>
+  <section class="panel">
+    <div class="list-head"><div><h3>剩余公司清单 <span id="company-total" class="badge">0</span></h3><div class="sub">来自当前任务的 SQLite 队列，可搜索并按处理状态筛选</div></div><div class="list-controls"><input id="company-search" placeholder="搜索公司、域名或地区"><select id="company-scope"><option value="REMAINING">全部剩余</option><option value="PENDING">待处理</option><option value="RUNNING">处理中</option><option value="FAILED">失败待重试</option><option value="DEFERRED">延后</option><option value="SUCCEEDED">已完成</option><option value="ALL">全部</option></select></div></div>
+    <div id="remaining-companies" class="table-wrap"><div class="empty">正在读取公司清单…</div></div>
+    <div class="pager"><span id="company-page">第 1 页</span><button id="company-prev">上一页</button><button id="company-next">下一页</button></div>
+  </section>
   <div class="grid">
     <div><section class="panel"><h3>Worker 活动</h3><div id="worker"></div></section><section class="panel"><h3>最近失败公司</h3><div id="recent-failures"></div></section></div>
     <div><section class="panel"><h3>队列构成</h3><div id="queue"></div></section><section class="panel"><h3>失败原因</h3><div id="failure-reasons"></div></section><section class="panel"><h3>搜索引擎熔断</h3><div id="circuits"></div></section></div>
@@ -63,12 +68,25 @@ export function dashboardHtml() {
 const el=(id)=>document.getElementById(id);
 const fmt=(n)=>new Intl.NumberFormat('zh-CN').format(Number(n)||0);
 const healthLabels={HEALTHY:'正常运行',STALE:'心跳超时',NOT_STARTED:'尚未启动',EXITED:'已退出',CRASHED:'异常退出'};
+const itemStatusLabels={PENDING:'待处理',RUNNING:'处理中',FAILED:'失败',DEFERRED:'延后',SUCCEEDED:'已完成'};
+let companyOffset=0;const companyLimit=50;let companySearchTimer;
 const duration=(seconds)=>{if(seconds==null)return '暂不可用';if(seconds<3600)return Math.ceil(seconds/60)+' 分钟';if(seconds<86400)return (seconds/3600).toFixed(1)+' 小时';return (seconds/86400).toFixed(1)+' 天'};
 const dt=(value)=>value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'—';
 const escapeHtml=(value)=>String(value??'—').replace(/[&<>"']/g,(char)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
 async function api(url,options={}){const response=await fetch(url,options);const text=await response.text();if(!response.ok)throw Error(text);return text?JSON.parse(text):null}
 function row(label,value){return '<div class="status-row"><span>'+escapeHtml(label)+'</span><strong>'+value+'</strong></div>'}
 function badge(value,kind=''){return '<span class="badge '+kind+'">'+escapeHtml(value)+'</span>'}
+function itemStatusBadge(status){return badge(itemStatusLabels[status]||status,status==='SUCCEEDED'?'good':status==='FAILED'?'bad':status==='RUNNING'?'warn':'')}
+async function loadCompanyList(){
+  const scope=el('company-scope').value;const query=el('company-search').value.trim();
+  const params=new URLSearchParams({scope,query,offset:String(companyOffset),limit:String(companyLimit)});
+  const data=await api('/api/progress/companies?'+params);
+  if(companyOffset>=data.total&&companyOffset>0){companyOffset=Math.max(0,Math.floor((Math.max(0,data.total-1))/companyLimit)*companyLimit);return loadCompanyList()}
+  el('company-total').textContent=fmt(data.total);
+  el('company-page').textContent='第 '+fmt(Math.floor(companyOffset/companyLimit)+1)+' 页 · '+fmt(companyOffset+1)+'–'+fmt(Math.min(companyOffset+companyLimit,data.total))+' / '+fmt(data.total);
+  el('company-prev').disabled=companyOffset===0;el('company-next').disabled=companyOffset+companyLimit>=data.total;
+  el('remaining-companies').innerHTML=data.items?.length?'<table><thead><tr><th>序号</th><th>公司</th><th>地区</th><th>官网域名</th><th>状态</th><th>尝试</th><th>原因</th></tr></thead><tbody>'+data.items.map((x)=>'<tr><td>'+fmt(x.position+1)+'</td><td><strong>'+escapeHtml(x.company)+'</strong></td><td>'+escapeHtml(x.countryRegion||'—')+'</td><td>'+escapeHtml(x.officialDomain||'—')+'</td><td>'+itemStatusBadge(x.status)+'</td><td>'+fmt(x.attemptCount)+'</td><td>'+escapeHtml(x.reason||'—')+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">当前筛选条件下没有公司。</div>';
+}
 function render(data){
   const p=data.progress||{};const worker=data.worker;const health=worker?.health;
   el('batch-name').textContent=data.task?.roleKeywords?.join(' / ')||data.batch?.id||'无活动批次';
@@ -87,8 +105,12 @@ function render(data){
   el('updated').textContent='数据更新时间 '+dt(data.updatedAt)+' · 页面刷新 '+dt(data.generatedAt);el('raw').textContent=JSON.stringify(data,null,2);
   const healthy=health==='HEALTHY';el('live-dot').className='dot '+(healthy?'':health==='STALE'?'bad':'warn');el('live-text').textContent=healthy?'Worker 正常运行':health==='STALE'?'Worker 心跳已过期':'Worker 当前未运行';
 }
-async function refresh(){try{el('error').style.display='none';render(await api('/api/progress'))}catch(error){el('error').textContent='读取进度失败：'+error.message;el('error').style.display='block';el('live-dot').className='dot bad';el('live-text').textContent='状态读取失败'}}
+async function refresh(){try{el('error').style.display='none';render(await api('/api/progress'));await loadCompanyList()}catch(error){el('error').textContent='读取进度失败：'+error.message;el('error').style.display='block';el('live-dot').className='dot bad';el('live-text').textContent='状态读取失败'}}
 el('refresh').onclick=refresh;
+el('company-prev').onclick=()=>{companyOffset=Math.max(0,companyOffset-companyLimit);loadCompanyList()};
+el('company-next').onclick=()=>{companyOffset+=companyLimit;loadCompanyList()};
+el('company-scope').onchange=()=>{companyOffset=0;loadCompanyList()};
+el('company-search').oninput=()=>{clearTimeout(companySearchTimer);companySearchTimer=setTimeout(()=>{companyOffset=0;loadCompanyList()},250)};
 el('task').onsubmit=async(event)=>{event.preventDefault();const form=new FormData(event.target);const body=Object.fromEntries(form);body.role_keywords=body.role_keywords.split(',');body.target_count=Number(body.target_count);body.allow_baidu_fallback=form.has('allow_baidu_fallback');await api('/api/tasks',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:JSON.stringify(body)});await refresh()};
 async function acknowledge(provider){if(!confirm('确认已人工完成 '+provider+' 安全验证？'))return;await api('/api/providers/'+provider+'/manual-ack',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:'{}'});await refresh()}
 el('ack-google').onclick=()=>acknowledge('google');el('ack-baidu').onclick=()=>acknowledge('baidu');refresh();setInterval(refresh,10000);

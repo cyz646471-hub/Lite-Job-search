@@ -3,6 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { buildControlProgress } from '../application/build-control-progress.mjs';
+import { buildControlCompanyList } from '../application/build-control-company-list.mjs';
 import { createControlPlaneService } from '../application/control-plane-service.mjs';
 import { dashboardHtml as progressDashboardHtml } from './control-plane-dashboard.mjs';
 
@@ -107,6 +108,21 @@ export function createControlPlaneServer({
         json(response, 200, buildControlProgress({
           repository,
           batchId: url.searchParams.get('batch_id'),
+        }));
+        return;
+      }
+      if (request.method === 'GET' && url.pathname === '/api/progress/companies') {
+        const progress = buildControlProgress({
+          repository,
+          batchId: url.searchParams.get('batch_id'),
+        });
+        json(response, 200, buildControlCompanyList({
+          repository,
+          batchId: progress.task?.batchId || progress.batch?.id,
+          scope: url.searchParams.get('scope') || 'REMAINING',
+          query: url.searchParams.get('query') || '',
+          offset: url.searchParams.get('offset') || 0,
+          limit: url.searchParams.get('limit') || 50,
         }));
         return;
       }

@@ -60,6 +60,20 @@ test('local web control plane reads real SQLite state and confirms writes', asyn
   assert.equal(progress.task.id, task.id);
   assert.equal(progress.progress.target, 10);
   assert.equal(progress.progress.notMaterialized, 10);
+  repository.ensureBatchItem({
+    batchId: task.batchId,
+    itemKey: 'company-cn',
+    position: 0,
+    input: {
+      company: '国内示例公司',
+      market: 'CN',
+      countryRegion: 'China',
+    },
+    createdAt: '2026-07-27T00:00:00.000Z',
+  });
+  const companies = await (await fetch(`${base}/api/progress/companies`)).json();
+  assert.equal(companies.total, 1);
+  assert.equal(companies.items[0].company, '国内示例公司');
   const dashboard = await (await fetch(base)).text();
   assert.match(dashboard, /全量补齐看板/);
   assert.match(dashboard, /尚未装载/);

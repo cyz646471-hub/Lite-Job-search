@@ -33,6 +33,20 @@ function atomicJson(file, value) {
   return writeFile(file, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+const DOMESTIC_CHINA_REGIONS = new Set([
+  'china',
+  'cn',
+  '中国',
+  '中国大陆',
+  'mainland china',
+]);
+
+export function isDomesticChinaCompany(company = {}) {
+  return DOMESTIC_CHINA_REGIONS.has(
+    String(company.countryRegion || company.country_region || '').trim().toLowerCase(),
+  );
+}
+
 export function buildFullFlowQueue({ companies, portals, jobs }) {
   const portalsByCompany = new Map();
   const jobsByCompany = new Map();
@@ -130,6 +144,7 @@ export async function prepareFullDatabaseMaintenance({
   from,
   to,
   limit = null,
+  countryScope = 'all',
   createTask = false,
   now = () => new Date(),
 } = {}) {
@@ -147,7 +162,13 @@ export async function prepareFullDatabaseMaintenance({
     const companies = repository.listCompanies();
     const portals = repository.listCareerPortals();
     const jobs = repository.listJobOpenings();
-    const fullQueue = buildFullFlowQueue({ companies, portals, jobs });
+    const unfilteredQueue = buildFullFlowQueue({ companies, portals, jobs });
+    const fullQueue = countryScope === 'domestic-china'
+      ? unfilteredQueue.filter(isDomesticChinaCompany)
+      : unfilteredQueue;
+    if (!['all', 'domestic-china'].includes(countryScope)) {
+      throw new Error('country-scope must be all or domestic-china');
+    }
     const requestedLimit = limit == null ? fullQueue.length : Number(limit);
     if (!Number.isInteger(requestedLimit) || requestedLimit < 1) {
       throw new Error('limit must be a positive integer');
@@ -166,8 +187,12 @@ export async function prepareFullDatabaseMaintenance({
     const preflight = {
       generatedAt: current.toISOString(),
       database: path.resolve(database),
-      scope: 'COMPANIES_WITHOUT_VERIFIED_PORTAL_OR_FORMAL_JOB_RECORD',
+      scope: countryScope === 'domestic-china'
+        ? 'DOMESTIC_CHINA_COMPANIES_WITHOUT_VERIFIED_PORTAL_OR_FORMAL_JOB_RECORD'
+        : 'COMPANIES_WITHOUT_VERIFIED_PORTAL_OR_FORMAL_JOB_RECORD',
       totalCompanies: companies.length,
+      countryScope,
+      excludedByCountryScope: unfilteredQueue.length - fullQueue.length,
       availableQueueCompanies: fullQueue.length,
       queuedCompanies: queue.length,
       alreadyCompleteCompanies: companies.length - queue.length,
@@ -191,7 +216,7 @@ export async function prepareFullDatabaseMaintenance({
     const taskRequest = {
       role_keywords: ['公开招聘岗位'],
       industry: '',
-      location: '',
+      location: countryScope === 'domestic-china' ? '中国大陆' : '',
       absolute_date_from: fromDate,
       absolute_date_to: toDate,
       target_count: queue.length,
@@ -228,6 +253,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     from: args.from,
     to: args.to,
     limit: args.limit,
+    countryScope: args['country-scope'] || 'all',
     createTask: args.createTask,
   }).then((result) => process.stdout.write(`${JSON.stringify(result)}\n`))
     .catch((error) => {
