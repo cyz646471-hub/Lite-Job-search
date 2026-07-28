@@ -102,7 +102,10 @@ export async function runBrowserCompanyBatch({
       const companyResult = await discoverCompany(company);
       companyResults.push(companyResult);
       if (companyResult?.status === 'BLOCKED') {
-        if (isPublicSearchQueueType(company.queueType)) {
+        if (
+          isPublicSearchQueueType(company.queueType)
+          || companyResult.liveSearchExecuted === true
+        ) {
           circuit = transitionCircuit(circuit, {
             type: 'BLOCKED',
             reasonCode: companyResult.reasonCode || 'browser_search_blocked',

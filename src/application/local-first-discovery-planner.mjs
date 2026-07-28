@@ -16,6 +16,17 @@ function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
+function normalizedHost(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  try {
+    return new URL(raw.includes('://') ? raw : `https://${raw}`).hostname
+      .replace(/^www\./, '');
+  } catch {
+    return raw.replace(/^www\./, '').replace(/\/.*$/, '');
+  }
+}
+
 export function createSearchCacheKey({
   engine,
   query,
@@ -72,11 +83,18 @@ export function planCompanyDiscovery({
   const rejectedValues = new Set(knowledge
     .filter((item) => ['REJECTED_DOMAIN', 'REJECTED_PORTAL'].includes(item.knowledgeType))
     .map((item) => item.value));
+  const rejectedHosts = new Set([
+    ...(company.rejectedOfficialDomains || []),
+    ...rejectedValues,
+  ].map(normalizedHost).filter(Boolean));
+  const isRejectedValue = (value) => (
+    rejectedValues.has(value) || rejectedHosts.has(normalizedHost(value))
+  );
   const verifiedPortals = portals.filter((portal) => (
     portal.verificationStatus === 'VERIFIED'
     && ['OFFICIAL_SITE', 'OFFICIAL_ATS'].includes(portal.sourceTier)
     && portal.officialIdentityConfirmed === true
-    && !rejectedValues.has(portal.canonicalUrl)
+    && !isRejectedValue(portal.canonicalUrl)
   ));
   const officialDomains = unique([
     ...(company.officialDomains || []),
@@ -85,11 +103,11 @@ export function planCompanyDiscovery({
       item.knowledgeType === 'OFFICIAL_DOMAIN'
       && item.verificationStatus === 'VERIFIED'
     )).map((item) => item.value),
-  ]).filter((value) => !rejectedValues.has(value));
+  ]).filter((value) => !isRejectedValue(value));
   const historicalPortals = knowledge.filter((item) => (
     item.knowledgeType === 'CAREER_PORTAL'
     && item.verificationStatus === 'VERIFIED'
-    && !rejectedValues.has(item.value)
+    && !isRejectedValue(item.value)
   )).map((item) => item.value);
   const atsTenants = knowledge.filter((item) => (
     item.knowledgeType === 'ATS_TENANT'
@@ -122,7 +140,7 @@ export function planCompanyDiscovery({
     `https://${String(domain).replace(/^https?:\/\//, '').replace(/\/.*$/, '')}/`
   ));
 
-  const candidates = unique(confirmedPortalsOnly
+  const candidates = unique((confirmedPortalsOnly
     ? verifiedPortals.map((portal) => portal.canonicalUrl)
     : [
       ...verifiedPortals.map((portal) => portal.canonicalUrl),
@@ -132,7 +150,7 @@ export function planCompanyDiscovery({
       ...leadCandidates,
       ...officialRoots,
       ...commonPaths,
-    ]);
+    ]).filter((value) => !isRejectedValue(value)));
   const plannedOfficialDomains = confirmedPortalsOnly ? [] : officialDomains;
   const hasLocalEvidence = candidates.length > 0
     || (!confirmedPortalsOnly && officialDomains.length > 0);
@@ -158,6 +176,7 @@ export function planCompanyDiscovery({
     cacheKey,
     cacheOutcome: cache?.outcome || null,
     searchEngine: selectedSearchEngine,
+    searchFallbackAllowed,
     candidates: Object.freeze(candidates),
     officialDomains: Object.freeze(plannedOfficialDomains),
     confirmedPortalsOnly,

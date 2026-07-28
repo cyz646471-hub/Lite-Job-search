@@ -21,6 +21,7 @@ export function loadCompanyDomainOverrides() {
       ...record,
       aliases: Object.freeze(record.aliases || []),
       officialDomains: Object.freeze(record.officialDomains || []),
+      rejectedOfficialDomains: Object.freeze(record.rejectedOfficialDomains || []),
     })));
   }
   return cachedRecords;
@@ -47,7 +48,11 @@ export function applyCompanyDomainKnowledge(company = {}) {
   ];
   return Object.freeze({
     ...company,
+    aliases: Object.freeze([
+      ...new Set([...(company.aliases || []), ...(override?.aliases || [])]),
+    ]),
     officialDomains: Object.freeze(officialDomains),
+    rejectedOfficialDomains: Object.freeze(override?.rejectedOfficialDomains || []),
     officialDomain: officialDomains[0] || company.officialDomain || '',
     domainKnowledgeEvidence: override?.evidence || null,
   });

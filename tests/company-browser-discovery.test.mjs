@@ -84,6 +84,19 @@ function fakeBrowser(pages) {
   };
 }
 
+test('reviewed domain knowledge replaces the stale 360 Finance domain', () => {
+  const [company] = normalizeBrowserCompanyInput([{
+    company: '360 数科',
+    officialDomains: ['360shuoke.com'],
+  }]);
+
+  assert.equal(company.officialDomain, 'qifu.tech');
+  assert.deepEqual(company.officialDomains, ['qifu.tech', '360shuke.com']);
+  assert.deepEqual(company.rejectedOfficialDomains, ['360shuoke.com']);
+  assert.ok(company.aliases.includes('奇富科技'));
+  assert.match(company.domainKnowledgeEvidence, /Qifu Technology/);
+});
+
 test('builds market-aware deterministic query ladders', () => {
   assert.deepEqual(buildCompanyQueryLadder({
     company: '示例公司',

@@ -32,6 +32,14 @@
       "aliases": ["Baidu Maps"],
       "officialDomains": ["baidu.com", "map.baidu.com"],
       "evidence": "Product hiring belongs to Baidu unified recruitment identity; map.baidu.com remains product-domain evidence"
+    },
+    {
+      "company": "360 数科",
+      "aliases": ["360数科", "360 Shuoke", "360 金融", "奇富科技", "Qifu Technology"],
+      "replace": true,
+      "officialDomains": ["qifu.tech", "360shuke.com"],
+      "rejectedOfficialDomains": ["360shuoke.com"],
+      "evidence": "2026-07-28 official 360shuke.com states the brand became Qifu Technology and links to qifu.tech; replaces erroneous 360shuoke.com"
     }
   ]
 }

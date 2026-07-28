@@ -1406,7 +1406,18 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       SELECT alias FROM company_aliases WHERE company_id = ? ORDER BY alias
     `);
     const domains = database.prepare(`
-      SELECT domain FROM company_domains WHERE company_id = ? ORDER BY domain
+      SELECT domains.domain
+      FROM company_domains AS domains
+      WHERE domains.company_id = ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM company_web_knowledge AS knowledge
+          WHERE knowledge.company_id = domains.company_id
+            AND knowledge.knowledge_type = 'REJECTED_DOMAIN'
+            AND knowledge.verification_status = 'REJECTED'
+            AND knowledge.value = domains.domain
+        )
+      ORDER BY domains.domain
     `);
     return database.prepare('SELECT * FROM companies ORDER BY canonical_name, id').all()
       .map((row) => mapCompany(

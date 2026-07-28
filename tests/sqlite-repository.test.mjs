@@ -588,6 +588,31 @@ test('company knowledge base matches an incoming alias to an existing formal nam
   assert.equal(repository.listCompanies().length, 1);
 });
 
+test('reviewed rejected domains are hidden from the current company read model', async (t) => {
+  const repository = await createRepository();
+  t.after(() => repository.close());
+  const company = repository.upsertCompany(createCompany({
+    id: 'company-domain-correction',
+    canonicalName: 'Example Company',
+    primaryOfficialDomain: 'correct.example',
+    officialDomains: ['correct.example', 'typo.example'],
+    market: 'CN',
+  }));
+  repository.upsertCompanyWebKnowledge({
+    id: 'knowledge-rejected-domain',
+    companyId: company.id,
+    knowledgeType: 'REJECTED_DOMAIN',
+    value: 'typo.example',
+    verificationStatus: 'REJECTED',
+    evidenceSource: 'reviewed_correction',
+    firstSeenAt: NOW,
+    lastVerifiedAt: NOW,
+    rejectionReason: 'typographical_error',
+  });
+
+  assert.deepEqual(repository.listCompanies()[0].officialDomains, ['correct.example']);
+});
+
 test('career portal knowledge retains recruitment types and evidence', async (t) => {
   const repository = await createRepository();
   const company = createCompany();

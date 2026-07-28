@@ -8,6 +8,10 @@ import { ingestBrowserCompanyResult } from '../src/application/ingest-browser-co
 import { buildStudentApplicationRows } from '../src/application/build-student-application-rows.mjs';
 import { planCompanyDiscovery } from '../src/application/local-first-discovery-planner.mjs';
 import {
+  mergeLocalAndSearchDiscovery,
+  shouldEscalateLocalDiscovery,
+} from '../src/application/local-search-fallback.mjs';
+import {
   isPublicSearchQueueType,
   runBrowserCompanyBatch,
 } from '../src/application/run-browser-company-batch.mjs';
@@ -65,20 +69,31 @@ async function atomicJson(file, value) {
 }
 
 async function observeCandidateWithBrowser(browser, url, timeoutMs) {
-  const page = await browser.newPage();
-  try {
-    const response = await page.goto(url, {
-      waitUntil: 'domcontentloaded',
-      timeout: timeoutMs,
-    });
-    return page.observeCareerPage({
-      requestedUrl: url,
-      response,
-      renderWaitMs: 3_000,
-    });
-  } finally {
-    await page.close();
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const page = await browser.newPage();
+    try {
+      const response = await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: timeoutMs,
+      });
+      return await page.observeCareerPage({
+        requestedUrl: url,
+        response,
+        renderWaitMs: 3_000,
+      });
+    } catch (error) {
+      lastError = error;
+      if (!/target page, context or browser has been closed/i.test(
+        String(error?.message || error),
+      ) || attempt === 2) {
+        throw error;
+      }
+    } finally {
+      await page.close().catch(() => {});
+    }
   }
+  throw lastError;
 }
 
 function usage() {
@@ -238,15 +253,33 @@ export async function runPersistentBrowserSupervisor({
           ...(candidate.aliases || []),
         ].some((name) => normalizedName(name) === normalizedName(company.company))
       ));
-      const planningCompany = stored || {
-        id: company.id || `company-plan-${inputHash([company]).slice(0, 24)}`,
-        canonicalName: company.company,
-        chineseName: company.chineseName,
-        englishName: company.englishName,
-        aliases: company.aliases || [],
-        officialDomains: company.officialDomain ? [company.officialDomain] : [],
-        primaryOfficialDomain: company.officialDomain || null,
-      };
+      const correctedDomains = company.officialDomains?.length
+        ? company.officialDomains
+        : company.officialDomain
+          ? [company.officialDomain]
+          : [];
+      const planningCompany = stored
+        ? {
+            ...stored,
+            aliases: [...new Set([...(stored.aliases || []), ...(company.aliases || [])])],
+            officialDomains: company.domainKnowledgeEvidence
+              ? correctedDomains
+              : [...new Set([...(stored.officialDomains || []), ...correctedDomains])],
+            primaryOfficialDomain: company.domainKnowledgeEvidence
+              ? company.officialDomain || null
+              : stored.primaryOfficialDomain || company.officialDomain || null,
+            rejectedOfficialDomains: company.rejectedOfficialDomains || [],
+          }
+        : {
+            id: company.id || `company-plan-${inputHash([company]).slice(0, 24)}`,
+            canonicalName: company.company,
+            chineseName: company.chineseName,
+            englishName: company.englishName,
+            aliases: company.aliases || [],
+            officialDomains: correctedDomains,
+            primaryOfficialDomain: company.officialDomain || null,
+            rejectedOfficialDomains: company.rejectedOfficialDomains || [],
+          };
       const discoveryPlan = planCompanyDiscovery({
         company: planningCompany,
         roleKeywords: [role],
@@ -283,8 +316,9 @@ export async function runPersistentBrowserSupervisor({
           heartbeatAt: new Date().toISOString(),
           currentCompanyId: company.id,
         });
-        const discovered = company.queueType === 'LOCAL_OR_DIRECT_VERIFICATION'
-          ? await discoverCompanyLocally({
+        let discovered;
+        if (company.queueType === 'LOCAL_OR_DIRECT_VERIFICATION') {
+          const localDiscovery = await discoverCompanyLocally({
               company,
               plan: company.discoveryPlan,
               fetchPage: directFetcher,
@@ -293,8 +327,50 @@ export async function runPersistentBrowserSupervisor({
                 url,
                 limits.timeoutMs,
               ),
-            })
-          : await discoverCompanyWithBrowser({
+            });
+          if (shouldEscalateLocalDiscovery({
+            plan: company.discoveryPlan,
+            discovery: localDiscovery,
+          })) {
+            const circuit = repository.getProviderCircuitState(selectedSearchEngine);
+            const searchDiscovery = circuit && circuit.state !== 'CLOSED'
+              ? {
+                  company: company.company,
+                  status: 'BLOCKED',
+                  reasonCode: `provider_circuit_${circuit.state.toLowerCase()}`,
+                  officialCandidates: [],
+                  platformCandidates: [],
+                  leads: [],
+                  rejected: [],
+                  observations: [],
+                  failures: [{
+                    stage: 'PUBLIC_SEARCH_FALLBACK',
+                    reasonCode: 'SEARCH_ENGINE_OPEN',
+                    error: `provider circuit is ${circuit.state}`,
+                  }],
+                  queries: [],
+                  queryStatuses: [],
+                  liveSearchExecuted: false,
+                }
+              : await discoverCompanyWithBrowser({
+                  company: company.company,
+                  chineseName: company.chineseName,
+                  englishName: company.englishName,
+                  officialDomain: company.officialDomain,
+                  market: company.market || 'CN',
+                  browser: await ensureBrowser(),
+                  searchEngine: selectedSearchEngine,
+                  beforeSearchQuery: gate,
+                  ...limits,
+                });
+            discovered = mergeLocalAndSearchDiscovery(localDiscovery, searchDiscovery, {
+              searchEngine: selectedSearchEngine,
+            });
+          } else {
+            discovered = localDiscovery;
+          }
+        } else {
+          discovered = await discoverCompanyWithBrowser({
               company: company.company,
               chineseName: company.chineseName,
               englishName: company.englishName,
@@ -305,7 +381,8 @@ export async function runPersistentBrowserSupervisor({
               beforeSearchQuery: gate,
               ...limits,
             });
-        if (isPublicSearchQueueType(company.queueType)) {
+        }
+        if (discovered.liveSearchExecuted === true) {
           const candidates = (discovered.officialCandidates || []).map((item) => item.url);
           const outcome = discovered.status === 'BLOCKED'
             ? 'CHALLENGE'
@@ -348,10 +425,11 @@ export async function runPersistentBrowserSupervisor({
         return {
           ...company,
           ...discovered,
-          discoveryProvider: isPublicSearchQueueType(company.queueType)
-            ? `chrome_${selectedSearchEngine}_visible_search`
-            : discovered.discoveryProvider || 'local_direct_verification',
-          liveSearchExecuted: isPublicSearchQueueType(company.queueType),
+          discoveryProvider: discovered.discoveryProvider
+            || (isPublicSearchQueueType(company.queueType)
+              ? `chrome_${selectedSearchEngine}_visible_search`
+              : 'local_direct_verification'),
+          liveSearchExecuted: discovered.liveSearchExecuted === true,
         };
       },
       ingestCompany: async (options) => {
@@ -403,6 +481,20 @@ export async function runPersistentBrowserSupervisor({
               firstSeenAt: observedAt,
               lastVerifiedAt: observedAt,
               rejectionReason: rejected.reasonCode || 'invalid_recruitment_source',
+            });
+          }
+          for (const domain of options.companyResult.rejectedOfficialDomains || []) {
+            repository.upsertCompanyWebKnowledge({
+              id: `knowledge-${inputHash([stored.id, 'REJECTED_DOMAIN', domain]).slice(0, 24)}`,
+              companyId: stored.id,
+              knowledgeType: 'REJECTED_DOMAIN',
+              value: domain,
+              verificationStatus: 'REJECTED',
+              evidenceSource: options.companyResult.domainKnowledgeEvidence
+                || 'reviewed_company_domain_override',
+              firstSeenAt: observedAt,
+              lastVerifiedAt: observedAt,
+              rejectionReason: 'reviewed_stale_or_erroneous_official_domain',
             });
           }
         }

@@ -14,12 +14,18 @@ function requiresRenderedFallback(page) {
 
 function linksFromHtml(html, baseUrl) {
   const links = [];
-  const pattern = /<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  const pattern = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   let match;
   while ((match = pattern.exec(String(html || ''))) && links.length < 500) {
     try {
+      if (match[1].trim().startsWith('#')) continue;
+      const decodedHref = match[1]
+        .replace(/&amp;/gi, '&')
+        .replace(/&#38;/g, '&');
+      const resolved = new URL(decodedHref, baseUrl);
+      if (!['http:', 'https:'].includes(resolved.protocol)) continue;
       links.push({
-        href: new URL(match[1], baseUrl).href,
+        href: resolved.href,
         text: match[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       });
     } catch {
@@ -29,15 +35,84 @@ function linksFromHtml(html, baseUrl) {
   return links;
 }
 
+function normalizedRecruitmentUrl(value) {
+  try {
+    const url = new URL(value);
+    if (/(^|\.)mokahr\.(?:com|cn)$/i.test(url.hostname)) {
+      if (/\/campus_apply\//i.test(url.pathname)) return null;
+      const directory = url.pathname.match(
+        /^\/(?:campus-recruitment|social-recruitment)\/[^/]+\/[^/]+/i,
+      )?.[0] || url.pathname.match(/^\/apply\/[^/]+/i)?.[0];
+      if (directory) {
+        url.pathname = directory;
+        url.search = '';
+        url.hash = '';
+      }
+    }
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
 function recruitmentLinks(page, baseUrl) {
   const values = linksFromHtml(page?.html, baseUrl)
     .filter((link) => /招聘|职位|岗位|加入我们|careers?|jobs?|positions?|openings?|vacanc|join-us|recruit|apply/i
       .test(`${link.text} ${link.href}`))
-    .map((link) => link.href);
+    .map((link) => normalizedRecruitmentUrl(link.href))
+    .filter(Boolean);
   const sitemapUrls = [...String(page?.html || '').matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi)]
     .map((match) => match[1])
     .filter((url) => /careers?|jobs?|positions?|openings?|vacanc|join-us|recruit|apply/i.test(url));
-  return [...new Set([...values, ...sitemapUrls])];
+  return [...new Set([...values, ...sitemapUrls.map(normalizedRecruitmentUrl).filter(Boolean)])];
+}
+
+function mokaJobFilterProbe(page, baseUrl) {
+  const baseDirectory = normalizedRecruitmentUrl(baseUrl);
+  if (!baseDirectory || !/(^|\.)mokahr\.(?:com|cn)$/i.test(new URL(baseDirectory).hostname)) {
+    return null;
+  }
+  const links = page?.links?.length ? page.links : linksFromHtml(page?.html, baseUrl);
+  for (const link of links) {
+    try {
+      const href = String(link?.href || '')
+        .replace(/&amp;/gi, '&')
+        .replace(/&#38;/g, '&');
+      const resolved = new URL(href, baseUrl);
+      if (!/\/jobs?(?:\/|\?|$)/i.test(`${resolved.pathname}${resolved.hash}`)) continue;
+      if (normalizedRecruitmentUrl(resolved.href) === baseDirectory
+        && resolved.href !== baseDirectory) {
+        return resolved.href;
+      }
+    } catch {
+      // Invalid dynamic navigation cannot become a traversal probe.
+    }
+  }
+  return null;
+}
+
+function hostMatchesOfficialDomain(value, officialDomains = []) {
+  try {
+    const host = new URL(value).hostname.toLowerCase().replace(/^www\./, '');
+    return officialDomains.some((domain) => {
+      const normalized = String(domain || '').toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '')
+        .replace(/\/.*$/, '');
+      return host === normalized || host.endsWith(`.${normalized}`);
+    });
+  } catch {
+    return false;
+  }
+}
+
+function isKnownAtsUrl(value) {
+  try {
+    return /(^|\.)(?:mokahr\.(?:com|cn)|zhiye\.com|hotjob\.cn|jobs\.feishu\.cn|myworkdayjobs\.com)$/i
+      .test(new URL(value).hostname);
+  } catch {
+    return false;
+  }
 }
 
 export async function discoverCompanyLocally({
@@ -46,12 +121,15 @@ export async function discoverCompanyLocally({
   fetchPage,
   observeWithBrowser = null,
   resolveAts = resolvePageProvider,
+  maxBrowserFallbacks = 3,
 } = {}) {
   if (!company || !plan || typeof fetchPage !== 'function') {
     throw new Error('company, plan and fetchPage are required');
   }
   const observations = [];
   const officialCandidates = [];
+  const candidateMetadata = new Map();
+  const traversalOnly = new Set();
   const failures = [];
   let completedObservations = 0;
   const candidateSet = new Set(plan.candidates || []);
@@ -61,14 +139,51 @@ export async function discoverCompanyLocally({
     queue.push(`${root}/robots.txt`, `${root}/sitemap.xml`);
   }
   const visited = new Set();
+  let browserFallbacks = 0;
+
+  const canUseBrowserFallback = (url) => (
+    typeof observeWithBrowser === 'function'
+    && candidateSet.has(url)
+    && browserFallbacks < Math.max(0, Number(maxBrowserFallbacks) || 0)
+  );
+
+  const observeFallback = async (url, method) => {
+    browserFallbacks += 1;
+    const page = await observeWithBrowser(url);
+    return {
+      page,
+      method,
+    };
+  };
 
   while (queue.length && visited.size < 30) {
     const url = queue.shift();
     if (visited.has(url)) continue;
     visited.add(url);
     try {
-      let page = await fetchPage(url);
+      let page;
       let method = 'DIRECT_HTTP';
+      let directError = null;
+      try {
+        page = await fetchPage(url);
+      } catch (error) {
+        directError = error;
+        if (!canUseBrowserFallback(url)) throw error;
+        ({ page, method } = await observeFallback(
+          url,
+          'PLAYWRIGHT_FALLBACK_AFTER_HTTP_ERROR',
+        ));
+      }
+      if (
+        method === 'DIRECT_HTTP'
+        && [401, 403, 429].includes(Number(page?.status))
+        && canUseBrowserFallback(url)
+      ) {
+        ({ page, method } = await observeFallback(
+          page.finalUrl || url,
+          'PLAYWRIGHT_FALLBACK_AFTER_HTTP_STATUS',
+        ));
+      }
       const directFinalUrl = page.finalUrl || url;
       const atsProvider = typeof resolveAts === 'function'
         ? await resolveAts(directFinalUrl)
@@ -86,8 +201,12 @@ export async function discoverCompanyLocally({
         };
         method = 'ATS_ADAPTER';
       } else if (requiresRenderedFallback(page) && typeof observeWithBrowser === 'function') {
-        page = await observeWithBrowser(page.finalUrl || url);
-        method = 'PLAYWRIGHT_FALLBACK';
+        if (canUseBrowserFallback(url)) {
+          ({ page, method } = await observeFallback(
+            page.finalUrl || url,
+            'PLAYWRIGHT_FALLBACK',
+          ));
+        }
       }
       const finalUrl = page.finalUrl || url;
       completedObservations += 1;
@@ -100,14 +219,38 @@ export async function discoverCompanyLocally({
         title: page.title || titleOf(page.html),
         links,
         observationMethod: method,
+        directFetchError: directError ? String(directError?.message || directError) : null,
       });
       for (const recruitmentUrl of recruitmentLinks(page, finalUrl)) {
+        if (
+          hostMatchesOfficialDomain(finalUrl, plan.officialDomains)
+          && isKnownAtsUrl(recruitmentUrl)
+        ) {
+          candidateMetadata.set(recruitmentUrl, {
+            parentOfficialVerified: true,
+            officialAttributionUrl: finalUrl,
+            discoveryReason: 'verified_official_outbound_ats_link',
+          });
+        }
         if (!visited.has(recruitmentUrl)) {
           candidateSet.add(recruitmentUrl);
-          queue.push(recruitmentUrl);
+          queue.unshift(recruitmentUrl);
         }
       }
-      if (candidateSet.has(url) && Number(page.status) >= 200 && Number(page.status) < 400) {
+      if (!(page.jobs || []).length) {
+        const filterProbe = mokaJobFilterProbe(page, finalUrl);
+        if (filterProbe && !visited.has(filterProbe)) {
+          traversalOnly.add(filterProbe);
+          candidateSet.add(filterProbe);
+          queue.unshift(filterProbe);
+        }
+      }
+      if (
+        candidateSet.has(url)
+        && !traversalOnly.has(url)
+        && Number(page.status) >= 200
+        && Number(page.status) < 400
+      ) {
         officialCandidates.push({
           url: finalUrl,
           title: page.title || titleOf(page.html),
@@ -115,6 +258,7 @@ export async function discoverCompanyLocally({
           sourceUrl: url,
           discoveryReason: plan.stages.find((stage) => stage.count > 0)?.source
             || 'local_first_candidate',
+          ...(candidateMetadata.get(normalizedRecruitmentUrl(url) || url) || {}),
         });
       }
     } catch (error) {
@@ -163,6 +307,19 @@ export async function discoverCompanyLocally({
       observationMethod: 'NOT_VISITED',
     });
   }
+  for (const source of observations.filter((item) => (
+    traversalOnly.has(item.requestedUrl) && (item.jobs || []).length
+  ))) {
+    const directory = normalizedRecruitmentUrl(source.requestedUrl);
+    const target = observations.find((item) => (
+      !traversalOnly.has(item.requestedUrl)
+      && normalizedRecruitmentUrl(item.requestedUrl || item.finalUrl) === directory
+    ));
+    if (target) {
+      target.jobs = source.jobs;
+      target.jobExtractionSourceUrl = source.finalUrl || source.requestedUrl;
+    }
+  }
 
   return Object.freeze({
     company: company.company || company.canonicalName,
@@ -177,7 +334,14 @@ export async function discoverCompanyLocally({
     liveSearchExecuted: false,
     status: completedObservations ? 'COMPLETED' : 'FAILED',
     reasonCode: completedObservations ? null : 'local_candidates_unreachable',
-    officialCandidates: Object.freeze(officialCandidates),
+    officialCandidates: Object.freeze(officialCandidates.map((candidate) => ({
+      ...candidate,
+      ...(candidateMetadata.get(
+        normalizedRecruitmentUrl(candidate.sourceUrl || candidate.url)
+          || candidate.sourceUrl
+          || candidate.url,
+      ) || {}),
+    }))),
     platformCandidates: Object.freeze([]),
     leads: Object.freeze([]),
     rejected: Object.freeze([]),
