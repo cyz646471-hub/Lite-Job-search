@@ -233,6 +233,19 @@ test('restores apex and www official homepage candidates deterministically', () 
   assert.equal(sameCanonicalHost('https://global.example.com/', 'example.com'), true);
 });
 
+test('treats a first-party company homepage as navigation evidence, not rejection', () => {
+  assert.deepEqual(classifySearchResult({
+    company: 'Example Tech',
+    officialDomain: 'example.com',
+    title: 'Example Tech',
+    url: 'https://www.example.com/about',
+    kind: 'organic',
+  }), {
+    classification: 'COMPANY_HOME_EVIDENCE',
+    reasonCode: 'first_party_company_homepage',
+  });
+});
+
 test('visits recruitment sibling entries instead of leaving them discovered', async () => {
   const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent('示例公司 招聘')}`;
   const socialUrl = 'https://jobs.example.com/social';
@@ -431,13 +444,13 @@ test('classifies a branded recruitment subdomain as an official candidate', () =
   assert.equal(result.reasonCode, 'first_party_recruitment_url');
 });
 
-test('rejects advertisements, news, and a main business home page', () => {
+test('rejects advertisements and news while retaining a company homepage as evidence', () => {
   const company = '小红书';
   const officialDomain = 'xiaohongshu.com';
 
   assert.equal(classifySearchResult({ company, officialDomain, title: '推广 小红书招聘', url: 'https://job.xiaohongshu.com/', kind: 'advertisement' }).classification, 'REJECTED');
   assert.equal(classifySearchResult({ company, officialDomain, title: '小红书招聘新闻', url: 'https://example.com/news/xiaohongshu', kind: 'news' }).classification, 'REJECTED');
-  assert.equal(classifySearchResult({ company, officialDomain, title: '小红书', url: 'https://www.xiaohongshu.com/', kind: 'organic' }).classification, 'REJECTED');
+  assert.equal(classifySearchResult({ company, officialDomain, title: '小红书', url: 'https://www.xiaohongshu.com/', kind: 'organic' }).classification, 'COMPANY_HOME_EVIDENCE');
 });
 
 test('isolates matching Liepin and BOSS company pages as platform-only candidates', () => {
@@ -644,7 +657,9 @@ test('limits recruitment entry traversal to the configured page budget', async (
     maxDepth: 2,
   });
 
-  assert.equal(result.observations.length, 3);
+  assert.equal(result.observations.filter((item) => (
+    String(item.url || item.finalUrl).startsWith('https://jobs.budget.example/')
+  )).length, 3);
   assert.equal(browser.visits.filter((url) => url.startsWith('https://jobs.budget.example/')).length, 3);
 });
 
@@ -806,7 +821,83 @@ test('falls back to one known official homepage and follows its recruitment link
 
   assert.equal(browser.visits.filter((url) => url === officialHomeUrl).length, 1);
   assert.equal(browser.visits.filter((url) => url === careersUrl).length, 1);
+  assert.equal(browser.visits.includes(searchUrl), false);
   assert.equal(result.officialCandidates.some((item) => item.url === careersUrl), true);
+  assert.equal(result.liveSearchExecuted, false);
+  assert.equal(result.discoveryProvider, 'official_domain_navigation');
+});
+
+test('uses Google only after the known official homepage has no recruitment entry', async () => {
+  const [firstStep] = buildCompanyQueryPlan({
+    company: 'Example Tech',
+    officialDomain: 'example.com',
+    market: 'CN',
+    searchEngine: 'google',
+  });
+  const searchUrl = publicSearchUrl('google', firstStep.text);
+  const officialHomeUrl = 'https://example.com/';
+  const careersUrl = 'https://jobs.example.com/positions';
+  const browser = fakeBrowser({
+    [officialHomeUrl]: {
+      title: 'Example Tech',
+      text: 'Example Tech 企业官网',
+      links: [{ text: '关于我们', href: '/about' }],
+    },
+    [searchUrl]: {
+      text: 'Example Tech 招聘官网',
+      searchRows: [{
+        title: 'Example Tech 招聘官网',
+        href: careersUrl,
+        snippet: '招聘职位',
+        kind: 'organic',
+      }],
+    },
+    [careersUrl]: {
+      title: 'Example Tech 招聘',
+      text: 'Example Tech 招聘 职位列表 Product Manager',
+      links: [],
+    },
+  });
+
+  const result = await discoverCompanyWithBrowser({
+    company: 'Example Tech',
+    officialDomain: 'example.com',
+    market: 'CN',
+    searchEngine: 'google',
+    browser,
+    maxCandidates: 1,
+  });
+
+  assert.equal(browser.visits[0], officialHomeUrl);
+  assert.ok(browser.visits.indexOf(searchUrl) > browser.visits.indexOf(officialHomeUrl));
+  assert.equal(result.liveSearchExecuted, true);
+  assert.equal(result.discoveryProvider, 'chrome_google_visible_search');
+  assert.equal(result.officialCandidates.some((item) => item.url === careersUrl), true);
+});
+
+test('defers Google fallback when its circuit is open after local website inspection', async () => {
+  const officialHomeUrl = 'https://example.com/';
+  const browser = fakeBrowser({
+    [officialHomeUrl]: {
+      title: 'Example Tech',
+      text: 'Example Tech 企业官网',
+      links: [],
+    },
+  });
+
+  const result = await discoverCompanyWithBrowser({
+    company: 'Example Tech',
+    officialDomain: 'example.com',
+    market: 'CN',
+    searchEngine: 'google',
+    browser,
+    publicSearchAllowed: false,
+  });
+
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.reasonCode, 'provider_circuit_open');
+  assert.equal(result.liveSearchExecuted, false);
+  assert.deepEqual(browser.visits, [officialHomeUrl]);
 });
 
 test('known official homepage is evidence only and is not itself a recruitment candidate', async () => {

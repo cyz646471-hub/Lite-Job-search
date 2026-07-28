@@ -62,7 +62,12 @@ export async function runBrowserCompanyBatch({
         ? BROWSER_QUEUE_TYPES.LOCAL
         : isPublicSearchQueueType(company.queueType)
           ? company.queueType
-          : BROWSER_QUEUE_TYPES.SEARCH,
+          : company.officialDomain
+            || company.officialDomains?.length
+            || company.reviewedCareerPortals?.length
+            || company.candidates?.length
+            ? BROWSER_QUEUE_TYPES.LOCAL
+            : BROWSER_QUEUE_TYPES.SEARCH,
     });
   });
   const companyResults = [];
@@ -99,7 +104,10 @@ export async function runBrowserCompanyBatch({
         : null
     ),
     runItem: async (company) => {
-      const companyResult = await discoverCompany(company);
+      const companyResult = await discoverCompany(company, {
+        publicSearchAllowed: circuit.state === 'CLOSED',
+        providerCircuit: circuit,
+      });
       companyResults.push(companyResult);
       if (companyResult?.status === 'BLOCKED') {
         if (

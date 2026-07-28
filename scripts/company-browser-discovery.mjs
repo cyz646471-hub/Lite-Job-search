@@ -112,7 +112,12 @@ export function classifySearchResult({ company = '', officialDomain = '', title 
     || RECRUITMENT_PATH.test(parsed.pathname)
     || KNOWN_ATS_HOST.test(host);
   if (firstParty && recruitmentShaped) return { classification: 'OFFICIAL_CANDIDATE', reasonCode: 'first_party_recruitment_url' };
-  if (firstParty) return { classification: 'REJECTED', reasonCode: 'first_party_non_recruitment_page' };
+  if (firstParty) {
+    return {
+      classification: 'COMPANY_HOME_EVIDENCE',
+      reasonCode: 'first_party_company_homepage',
+    };
+  }
   if (recruitmentShaped) {
     return {
       classification: 'VERIFICATION_CANDIDATE',
@@ -511,13 +516,214 @@ async function readCareerPage(page, url, timeoutMs, now = () => new Date().toISO
   }
 }
 
+function candidateFromRecruitmentEntry({
+  company,
+  entry,
+  observedEntry,
+  officialDomain,
+  sourceUrl,
+  searchQuery,
+  searchKind,
+}) {
+  const observedUrl = observedEntry.url || observedEntry.finalUrl || entry.url;
+  return {
+    company,
+    title: entry.text || observedEntry.title || `${company} 招聘`,
+    url: observedUrl,
+    sourceUrl,
+    searchQuery,
+    searchKind,
+    snippet: '',
+    classification: 'OFFICIAL_CANDIDATE',
+    reasonCode: entry.discoveryReason || 'official_homepage_recruitment_link',
+    recruitmentType: entry.recruitmentType,
+    pageStatus: observedEntry.fetchStatus,
+    vacancyStatus: observedEntry.vacancyStatus || null,
+    evidence: observedEntry.evidence || '',
+    officialSiteLinked: normalizedDomain(observedUrl) === normalizedDomain(officialDomain),
+    verifiedTenant: Boolean(
+      entry.discoveryReason === 'verified_official_outbound_ats_link'
+      && entry.parentOfficialVerified === true
+      && isKnownAtsUrl(observedUrl)
+    ),
+    parentOfficialVerified: entry.parentOfficialVerified === true,
+    officialAttributionUrl: entry.officialAttributionUrl || entry.parentUrl || sourceUrl,
+    parentUrl: entry.parentUrl,
+    depth: entry.depth,
+  };
+}
+
+async function inspectRecruitmentNavigation({
+  page,
+  company,
+  officialDomain,
+  rootPage,
+  rootUrl,
+  sourceUrl = rootUrl,
+  searchQuery = '',
+  searchKind = 'official_domain_navigation',
+  maxCareerEntries = 5,
+  maxDepth = 2,
+  timeoutMs = 10_000,
+  now = () => new Date().toISOString(),
+}) {
+  const officialCandidates = [];
+  const observations = [];
+  const failures = [];
+  const entryBudget = Math.max(1, Number(maxCareerEntries) || 5);
+  const depthBudget = Math.max(0, Number(maxDepth) || 0);
+  const observedRootUrl = rootPage.url || rootPage.finalUrl || rootUrl;
+  const rootOfficialVerified = rootPage.fetchStatus === 'COMPLETED'
+    && sameCanonicalHost(observedRootUrl, officialDomain);
+  const visitedUrls = new Set([observedRootUrl]);
+  const queuedUrls = new Set();
+  const queue = [...discoverRecruitmentEntries({
+    baseUrl: observedRootUrl,
+    links: rootPage.links,
+    trustedRegistrableDomains: [officialDomain],
+    knownAtsRegistrableDomains: KNOWN_ATS_REGISTRABLE_DOMAINS,
+    parentOfficialVerified: rootOfficialVerified,
+    visitedUrls,
+    parentUrl: observedRootUrl,
+    depth: 1,
+    maxDepth: depthBudget,
+    maxEntries: Math.max(0, entryBudget - visitedUrls.size),
+  })];
+  for (const entry of queue) queuedUrls.add(entry.url);
+
+  while (queue.length && visitedUrls.size < entryBudget) {
+    const entry = queue.shift();
+    queuedUrls.delete(entry.url);
+    if (visitedUrls.has(entry.url)) continue;
+    visitedUrls.add(entry.url);
+    const observedEntry = await readCareerPage(page, entry.url, timeoutMs, now);
+    observations.push(observedEntry);
+    const observedUrl = observedEntry.url || observedEntry.finalUrl || entry.url;
+    visitedUrls.add(observedUrl);
+    officialCandidates.push(candidateFromRecruitmentEntry({
+      company,
+      entry,
+      observedEntry,
+      officialDomain,
+      sourceUrl,
+      searchQuery,
+      searchKind,
+    }));
+    if (observedEntry.fetchStatus !== 'COMPLETED') {
+      failures.push({
+        stage: 'inspect_official_home_entry',
+        url: entry.url,
+        reasonCode: observedEntry.reasonCode || 'career_entry_failed',
+        error: observedEntry.error || '',
+      });
+      continue;
+    }
+
+    const remaining = Math.max(0, entryBudget - visitedUrls.size - queuedUrls.size);
+    const children = discoverRecruitmentEntries({
+      baseUrl: observedUrl,
+      links: observedEntry.links,
+      trustedRegistrableDomains: [officialDomain],
+      knownAtsRegistrableDomains: KNOWN_ATS_REGISTRABLE_DOMAINS,
+      parentOfficialVerified: sameCanonicalHost(observedUrl, officialDomain),
+      visitedUrls: [...visitedUrls, ...queuedUrls],
+      parentUrl: observedUrl,
+      depth: entry.depth + 1,
+      maxDepth: depthBudget,
+      maxEntries: remaining,
+    });
+    for (const child of children) {
+      if (queuedUrls.has(child.url) || visitedUrls.has(child.url)) continue;
+      queue.push(child);
+      queuedUrls.add(child.url);
+    }
+  }
+
+  return { officialCandidates, observations, failures };
+}
+
+async function discoverFromOfficialDomain({
+  company,
+  officialDomain,
+  browser,
+  maxCareerEntries = 5,
+  maxDepth = 2,
+  timeoutMs = 10_000,
+  now = () => new Date().toISOString(),
+}) {
+  if (!officialDomain) {
+    return {
+      officialCandidates: [],
+      observations: [],
+      failures: [],
+      homepageVisited: false,
+    };
+  }
+  const page = await browser.newPage();
+  const observations = [];
+  const failures = [];
+  try {
+    let officialHomeUrl = officialHomepageCandidates(officialDomain)[0];
+    let officialHome = null;
+    for (const homepageUrl of officialHomepageCandidates(officialDomain)) {
+      const observed = await readCareerPage(page, homepageUrl, timeoutMs, now);
+      observations.push(observed);
+      officialHomeUrl = homepageUrl;
+      officialHome = observed;
+      if (
+        observed.fetchStatus === 'COMPLETED'
+        && sameCanonicalHost(
+          observed.url || observed.finalUrl || homepageUrl,
+          officialDomain,
+        )
+      ) {
+        break;
+      }
+    }
+    if (!officialHome || officialHome.fetchStatus !== 'COMPLETED') {
+      failures.push({
+        stage: 'inspect_official_home',
+        url: officialHomeUrl,
+        reasonCode: officialHome?.reasonCode || 'official_home_navigation_failed',
+        error: officialHome?.error || '',
+      });
+      return {
+        officialCandidates: [],
+        observations,
+        failures,
+        homepageVisited: true,
+      };
+    }
+    const observedHomeUrl = officialHome.url || officialHome.finalUrl || officialHomeUrl;
+    const navigation = await inspectRecruitmentNavigation({
+      page,
+      company,
+      officialDomain,
+      rootPage: officialHome,
+      rootUrl: observedHomeUrl,
+      sourceUrl: observedHomeUrl,
+      maxCareerEntries,
+      maxDepth,
+      timeoutMs,
+      now,
+    });
+    return {
+      officialCandidates: navigation.officialCandidates,
+      observations: [...observations, ...navigation.observations],
+      failures: [...failures, ...navigation.failures],
+      homepageVisited: true,
+    };
+  } finally {
+    await page.close();
+  }
+}
+
 async function discoverCompanyWithBrowserQuery({
   company,
   officialDomain = '',
   browser,
   query,
   searchEngine = 'baidu',
-  enableOfficialDomainFallback = true,
   candidateNavigationState = null,
   maxResults = 10,
   maxCandidates = 3,
@@ -571,7 +777,7 @@ async function discoverCompanyWithBrowserQuery({
     const rows = await readSearchRows(page, maxResults, publicSearchEngine);
     const unreadableSearchResults = !rows.length
       && !isExplicitPublicSearchNoResults(bodyText, publicSearchEngine);
-    if (unreadableSearchResults && !(enableOfficialDomainFallback && officialDomain)) {
+    if (unreadableSearchResults) {
       return {
         company,
         officialDomain,
@@ -590,14 +796,6 @@ async function discoverCompanyWithBrowserQuery({
           error: `${publicSearchEngine} result page contained no readable result rows`,
         }],
       };
-    }
-    if (unreadableSearchResults) {
-      failures.push({
-        stage: 'search',
-        url: searchFinalUrl,
-        reasonCode: 'search_results_unreadable',
-        error: `${publicSearchEngine} result page contained no readable result rows; official-domain fallback continued`,
-      });
     }
     const navigationState = candidateNavigationState || {
       opened: 0,
@@ -628,8 +826,22 @@ async function discoverCompanyWithBrowserQuery({
         continue;
       }
       if (navigationState.visited.has(row.href)) continue;
-      if (navigationState.opened >= Math.max(1, Number(maxCandidates) || 3)) break;
-      navigationState.opened++;
+      const preliminaryClassification = classifySearchResult({
+        company,
+        officialDomain,
+        title: row.title,
+        url: row.href,
+        kind: row.kind,
+      });
+      const companyHomepageEvidence = preliminaryClassification.classification
+        === 'COMPANY_HOME_EVIDENCE';
+      if (companyHomepageEvidence) {
+        if (navigationState.homepagesOpened >= 2) continue;
+        navigationState.homepagesOpened++;
+      } else {
+        if (navigationState.opened >= Math.max(1, Number(maxCandidates) || 3)) break;
+        navigationState.opened++;
+      }
       navigationState.visited.add(row.href);
       let finalUrl = row.href;
       let response;
@@ -644,7 +856,47 @@ async function discoverCompanyWithBrowserQuery({
       }
       const classification = classifySearchResult({ company, officialDomain, title: row.title, url: finalUrl, kind: row.kind });
       const base = { company, title: row.title, url: finalUrl, sourceUrl: row.href, searchQuery, searchKind: row.kind, snippet: row.snippet, ...classification };
-      if (classification.classification === 'PLATFORM_CANDIDATE') {
+      if (classification.classification === 'COMPANY_HOME_EVIDENCE') {
+        const officialHome = await observeCareerPage(page, {
+          requestedUrl: row.href,
+          response,
+          observedAt: now(),
+        });
+        observations.push(officialHome);
+        if (
+          officialHome.fetchStatus === 'COMPLETED'
+          && sameCanonicalHost(
+            officialHome.url || officialHome.finalUrl || finalUrl,
+            officialDomain,
+          )
+        ) {
+          const navigation = await inspectRecruitmentNavigation({
+            page,
+            company,
+            officialDomain,
+            rootPage: officialHome,
+            rootUrl: officialHome.url || officialHome.finalUrl || finalUrl,
+            sourceUrl: row.href,
+            searchQuery,
+            searchKind: row.kind,
+            maxCareerEntries,
+            maxDepth,
+            timeoutMs,
+            now,
+          });
+          officialCandidates.push(...navigation.officialCandidates);
+          observations.push(...navigation.observations);
+          failures.push(...navigation.failures);
+        } else {
+          failures.push({
+            stage: 'inspect_company_home',
+            url: finalUrl,
+            reasonCode: officialHome.reasonCode || 'company_home_navigation_failed',
+            error: officialHome.error || '',
+          });
+        }
+      }
+      else if (classification.classification === 'PLATFORM_CANDIDATE') {
         const platformPage = await observeCareerPage(page, {
           requestedUrl: row.href,
           response,
@@ -800,86 +1052,6 @@ async function discoverCompanyWithBrowserQuery({
         } else failures.push({ stage: 'inspect_career_page', url: finalUrl, reasonCode: careerPage.reasonCode || 'career_page_failed', error: careerPage.error || '' });
       }
     }
-    if (enableOfficialDomainFallback && !officialCandidates.length && officialDomain) {
-      let officialHomeUrl = officialHomepageCandidates(officialDomain)[0];
-      let officialHome = null;
-      for (const homepageUrl of officialHomepageCandidates(officialDomain)) {
-        const observed = await readCareerPage(page, homepageUrl, timeoutMs, now);
-        observations.push(observed);
-        officialHomeUrl = homepageUrl;
-        officialHome = observed;
-        if (
-          observed.fetchStatus === 'COMPLETED'
-          && sameCanonicalHost(observed.url || homepageUrl, officialDomain)
-        ) {
-          break;
-        }
-      }
-      if (officialHome.fetchStatus === 'COMPLETED') {
-        const observedHomeUrl = officialHome.url || officialHomeUrl;
-        const officialHomeVerified = normalizedDomain(observedHomeUrl)
-          === normalizedDomain(officialDomain);
-        const entries = discoverRecruitmentEntries({
-          baseUrl: observedHomeUrl,
-          links: officialHome.links,
-          trustedRegistrableDomains: [officialDomain],
-          knownAtsRegistrableDomains: KNOWN_ATS_REGISTRABLE_DOMAINS,
-          parentOfficialVerified: officialHomeVerified,
-          visitedUrls: [observedHomeUrl],
-          parentUrl: observedHomeUrl,
-          depth: 1,
-          maxDepth: Math.max(0, Number(maxDepth) || 0),
-          maxEntries: Math.max(0, (Number(maxCareerEntries) || 5) - 1),
-        });
-        for (const entry of entries) {
-          const observedEntry = await readCareerPage(page, entry.url, timeoutMs, now);
-          observations.push(observedEntry);
-          if (observedEntry.fetchStatus !== 'COMPLETED') {
-            failures.push({
-              stage: 'inspect_official_home_entry',
-              url: entry.url,
-              reasonCode: observedEntry.reasonCode || 'career_entry_failed',
-              error: observedEntry.error || '',
-            });
-            continue;
-          }
-          const observedEntryUrl = observedEntry.url || entry.url;
-          officialCandidates.push({
-            company,
-            title: entry.text || observedEntry.title || `${company} 招聘`,
-            url: observedEntryUrl,
-            sourceUrl: officialHomeUrl,
-            searchQuery,
-            searchKind: 'official_domain_fallback',
-            snippet: '',
-            classification: 'OFFICIAL_CANDIDATE',
-            reasonCode: entry.discoveryReason || 'official_homepage_recruitment_link',
-            recruitmentType: entry.recruitmentType,
-            pageStatus: observedEntry.fetchStatus,
-            vacancyStatus: observedEntry.vacancyStatus || null,
-            evidence: observedEntry.evidence || '',
-            officialSiteLinked: normalizedDomain(observedEntryUrl)
-              === normalizedDomain(officialDomain),
-            verifiedTenant: Boolean(
-              entry.discoveryReason === 'verified_official_outbound_ats_link'
-              && entry.parentOfficialVerified === true
-              && isKnownAtsUrl(observedEntryUrl),
-            ),
-            parentOfficialVerified: entry.parentOfficialVerified === true,
-            officialAttributionUrl: entry.officialAttributionUrl || observedHomeUrl,
-            parentUrl: entry.parentUrl,
-            depth: entry.depth,
-          });
-        }
-      } else {
-        failures.push({
-          stage: 'inspect_official_home',
-          url: officialHomeUrl,
-          reasonCode: officialHome.reasonCode || 'official_home_navigation_failed',
-          error: officialHome.error || '',
-        });
-      }
-    }
     const unique = (items) => [...new Map(items.map((item) => [item.url, item])).values()];
     return { company, officialDomain, query: searchQuery, status: 'COMPLETED', officialCandidates: unique(officialCandidates), platformCandidates: unique(platformCandidates), leads: unique(leads), rejected: unique(rejected), failures, observations: unique(observations.map((item) => ({ ...item, url: item.finalUrl || item.url }))) };
   } catch (error) {
@@ -897,9 +1069,68 @@ export async function discoverCompanyWithBrowser({
   market = 'CN',
   browser,
   searchEngine = 'baidu',
+  publicSearchAllowed = true,
   beforeSearchQuery = null,
   ...limits
 }) {
+  const officialDomainResult = await discoverFromOfficialDomain({
+    company,
+    officialDomain,
+    browser,
+    ...limits,
+  });
+  const officialDomainCandidates = officialDomainResult.officialCandidates || [];
+  const officialDomainEntryFound = officialDomainCandidates.some((candidate) => (
+    candidate.pageStatus === 'COMPLETED'
+    && candidate.vacancyStatus !== 'NOT_A_LIST'
+  ));
+  if (officialDomainEntryFound) {
+    return {
+      company,
+      officialDomain,
+      query: null,
+      queries: Object.freeze([]),
+      queryPlan: Object.freeze([]),
+      status: 'COMPLETED',
+      reasonCode: null,
+      officialCandidates: Object.freeze(officialDomainCandidates),
+      platformCandidates: Object.freeze([]),
+      leads: Object.freeze([]),
+      rejected: Object.freeze([]),
+      observations: Object.freeze(officialDomainResult.observations || []),
+      failures: Object.freeze(officialDomainResult.failures || []),
+      queryStatuses: Object.freeze([]),
+      discoveryProvider: 'official_domain_navigation',
+      liveSearchExecuted: false,
+    };
+  }
+  if (publicSearchAllowed === false) {
+    return {
+      company,
+      officialDomain,
+      query: null,
+      queries: Object.freeze([]),
+      queryPlan: Object.freeze([]),
+      status: 'BLOCKED',
+      reasonCode: 'provider_circuit_open',
+      officialCandidates: Object.freeze(officialDomainCandidates),
+      platformCandidates: Object.freeze([]),
+      leads: Object.freeze([]),
+      rejected: Object.freeze([]),
+      observations: Object.freeze(officialDomainResult.observations || []),
+      failures: Object.freeze([
+        ...(officialDomainResult.failures || []),
+        {
+          stage: 'search',
+          reasonCode: 'provider_circuit_open',
+          error: 'official website contained no completed recruitment entry; public search is unavailable',
+        },
+      ]),
+      queryStatuses: Object.freeze([]),
+      discoveryProvider: 'official_domain_navigation',
+      liveSearchExecuted: false,
+    };
+  }
   const queryPlan = buildCompanyQueryPlan({
     company: chineseName || company,
     englishName,
@@ -910,6 +1141,7 @@ export async function discoverCompanyWithBrowser({
   const results = [];
   const candidateNavigationState = {
     opened: 0,
+    homepagesOpened: 0,
     visited: new Set(),
   };
   for (let index = 0; index < queryPlan.length; index++) {
@@ -929,7 +1161,6 @@ export async function discoverCompanyWithBrowser({
       browser,
       query: queryPlan[index].text,
       searchEngine,
-      enableOfficialDomainFallback: index === queryPlan.length - 1,
       candidateNavigationState,
       ...limits,
     });
@@ -966,12 +1197,21 @@ export async function discoverCompanyWithBrowser({
     status: blocked ? 'BLOCKED' : completed ? 'COMPLETED' : 'FAILED',
     reasonCode: blocked?.reasonCode
       || (!completed ? results.find((result) => result.reasonCode)?.reasonCode : null),
-    officialCandidates: uniqueByUrl(results.flatMap((result) => result.officialCandidates || [])),
+    officialCandidates: uniqueByUrl([
+      ...officialDomainCandidates,
+      ...results.flatMap((result) => result.officialCandidates || []),
+    ]),
     platformCandidates: uniqueByUrl(results.flatMap((result) => result.platformCandidates || [])),
     leads: uniqueByUrl(results.flatMap((result) => result.leads || [])),
     rejected: uniqueByUrl(results.flatMap((result) => result.rejected || [])),
-    observations: uniqueByUrl(results.flatMap((result) => result.observations || [])),
-    failures: results.flatMap((result) => result.failures || []),
+    observations: uniqueByUrl([
+      ...(officialDomainResult.observations || []),
+      ...results.flatMap((result) => result.observations || []),
+    ]),
+    failures: [
+      ...(officialDomainResult.failures || []),
+      ...results.flatMap((result) => result.failures || []),
+    ],
     queryStatuses: Object.freeze(statuses),
     discoveryProvider: `chrome_${normalizePublicSearchEngine(searchEngine)}_visible_search`,
     liveSearchExecuted: true,
@@ -1214,7 +1454,7 @@ async function runCli() {
       },
     }, {
       repository,
-      discoverCompany: async (company) => {
+      discoverCompany: async (company, discoveryContext = {}) => {
         return {
           ...company,
           ...await discoverCompanyWithBrowser({
@@ -1224,6 +1464,7 @@ async function runCli() {
             officialDomain: company.officialDomain,
             market: company.market || 'CN',
             browser,
+            publicSearchAllowed: discoveryContext.publicSearchAllowed,
             beforeSearchQuery: waitForSearchSlot,
             ...limits,
           }),

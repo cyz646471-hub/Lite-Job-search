@@ -4,6 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import {
+  createClosedCircuit,
+  transitionCircuit,
+} from '../src/application/browser-search-circuit-breaker.mjs';
 import { runBrowserCompanyBatch } from '../src/application/run-browser-company-batch.mjs';
 import { openSqliteMarketDiscoveryRepository } from '../src/storage/sqlite-job-repository.mjs';
 
@@ -170,4 +174,45 @@ test('browser batch defers remaining Baidu companies after the first challenge',
   assert.equal(result.items[0].status, 'DEFERRED');
   assert.equal(result.items[1].status, 'DEFERRED');
   assert.equal(repository.getProviderCircuitState('baidu').state, 'OPEN');
+});
+
+test('an official-domain company still receives local navigation while public search is open', async (t) => {
+  const repository = await createRepository(t);
+  repository.saveProviderCircuitState(transitionCircuit(
+    createClosedCircuit('google', '2026-07-29T00:00:00.000Z'),
+    { type: 'BLOCKED', reasonCode: 'search_challenge_or_access_blocked' },
+    '2026-07-29T00:00:01.000Z',
+  ));
+  const contexts = [];
+
+  const result = await runBrowserCompanyBatch({
+    batchId: 'browser-local-before-google',
+    provider: 'google',
+    companies: [{
+      company: '官网已知公司',
+      officialDomain: 'example.com',
+    }],
+  }, {
+    repository,
+    discoverCompany: async (company, context) => {
+      contexts.push({ company, context });
+      return {
+        company: company.company,
+        status: 'COMPLETED',
+        liveSearchExecuted: false,
+        officialCandidates: [{
+          url: 'https://example.com/careers',
+          pageStatus: 'COMPLETED',
+        }],
+        observations: [],
+      };
+    },
+    ingestCompany: async () => ({ status: 'COMPLETE' }),
+  });
+
+  assert.equal(contexts.length, 1);
+  assert.equal(contexts[0].company.queueType, 'LOCAL_OR_DIRECT_VERIFICATION');
+  assert.equal(contexts[0].context.publicSearchAllowed, false);
+  assert.equal(result.succeeded, 1);
+  assert.equal(result.deferred, 0);
 });
