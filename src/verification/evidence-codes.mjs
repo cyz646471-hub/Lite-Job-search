@@ -23,11 +23,19 @@ export const EVIDENCE_RULES = Object.freeze({
     direction: 'POSITIVE',
     weight: 15,
     identityAnchor: false,
+    recruitmentAnchor: true,
+  }),
+  career_page_identity: Object.freeze({
+    direction: 'POSITIVE',
+    weight: 15,
+    identityAnchor: false,
+    recruitmentAnchor: true,
   }),
   apply_action: Object.freeze({
     direction: 'POSITIVE',
     weight: 15,
     identityAnchor: false,
+    recruitmentAnchor: true,
   }),
   official_site_backlink: Object.freeze({
     direction: 'POSITIVE',
@@ -43,6 +51,22 @@ export const EVIDENCE_RULES = Object.freeze({
     direction: 'POSITIVE',
     weight: 35,
     identityAnchor: true,
+  }),
+  wechat_verified_subject_match: Object.freeze({
+    direction: 'POSITIVE',
+    weight: 35,
+    identityAnchor: true,
+  }),
+  official_site_confirms_wechat_account: Object.freeze({
+    direction: 'POSITIVE',
+    weight: 45,
+    identityAnchor: true,
+  }),
+  official_recruitment_announcement: Object.freeze({
+    direction: 'POSITIVE',
+    weight: 20,
+    identityAnchor: false,
+    recruitmentAnchor: true,
   }),
   ats_fingerprint_only: Object.freeze({
     direction: 'NEUTRAL',

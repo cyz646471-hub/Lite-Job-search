@@ -123,3 +123,51 @@ test('local web control plane reads real SQLite state and confirms writes', asyn
   );
   assert.equal((await fetch(`${base}/api/export`)).status, 404);
 });
+
+test('control plane builds current student and company exports on download', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'ljs-web-export-'));
+  const repository = openSqliteMarketDiscoveryRepository({
+    file: path.join(directory, 'jobs.sqlite'),
+  });
+  repository.migrate();
+  const record = path.join(directory, 'record.md');
+  const student = path.join(directory, 'student-current.xlsx');
+  const companies = path.join(directory, 'companies-current.xlsx');
+  await Promise.all([
+    writeFile(record, '# Development Record\n'),
+    writeFile(student, 'student-current'),
+    writeFile(companies, 'companies-current'),
+  ]);
+  let studentBuilds = 0;
+  let companyBuilds = 0;
+  const server = createControlPlaneServer({
+    repository,
+    developmentRecordPath: record,
+    buildStudentWorkbook: async () => {
+      studentBuilds += 1;
+      return { outputFile: student, rowCount: 7 };
+    },
+    buildCompanyWorkbook: async () => {
+      companyBuilds += 1;
+      return { outputFile: companies, rowCount: 123 };
+    },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    repository.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const studentResponse = await fetch(`${base}/api/export`);
+  const companyResponse = await fetch(`${base}/api/export/companies`);
+
+  assert.equal(studentResponse.status, 200);
+  assert.equal(studentResponse.headers.get('x-ljs-row-count'), '7');
+  assert.equal(await studentResponse.text(), 'student-current');
+  assert.equal(companyResponse.status, 200);
+  assert.equal(companyResponse.headers.get('x-ljs-row-count'), '123');
+  assert.equal(await companyResponse.text(), 'companies-current');
+  assert.equal(studentBuilds, 1);
+  assert.equal(companyBuilds, 1);
+});

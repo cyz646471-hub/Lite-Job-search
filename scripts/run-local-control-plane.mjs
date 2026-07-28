@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { createControlPlaneExportService } from '../src/application/generate-control-plane-exports.mjs';
 import { openSqliteMarketDiscoveryRepository } from '../src/storage/sqlite-job-repository.mjs';
 import { createControlPlaneServer } from '../src/web/control-plane-server.mjs';
 
@@ -25,10 +26,16 @@ const host = String(args.host || '127.0.0.1');
 const port = Math.max(1, Math.min(65_535, Number(args.port) || 4317));
 const repository = openSqliteMarketDiscoveryRepository({ file: database });
 repository.migrate();
+const exportService = createControlPlaneExportService({
+  repository,
+  outputDirectory: path.resolve(args['export-dir'] || 'test-output/control-plane-exports'),
+});
 const server = createControlPlaneServer({
   repository,
   developmentRecordPath: path.resolve('docs/LJS_DEVELOPMENT_RECORD.md'),
   xlsxPath: args.xlsx ? path.resolve(args.xlsx) : '',
+  buildStudentWorkbook: exportService.buildStudentWorkbook,
+  buildCompanyWorkbook: exportService.buildCompanyWorkbook,
 });
 server.listen(port, host, () => {
   process.stdout.write(`${JSON.stringify({

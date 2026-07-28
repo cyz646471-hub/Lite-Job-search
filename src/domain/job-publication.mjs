@@ -42,7 +42,7 @@ export function evaluateJobPublication({
     });
   }
 
-  if (!['OFFICIAL_SITE', 'OFFICIAL_ATS'].includes(sourceTier)) {
+  if (!['OFFICIAL_SITE', 'OFFICIAL_ATS', 'OFFICIAL_SOCIAL'].includes(sourceTier)) {
     reasons.push('SOURCE_NOT_TRUSTED');
   }
   if (portal.verificationStatus !== 'VERIFIED'
@@ -56,7 +56,7 @@ export function evaluateJobPublication({
   if (!hasLocation(opening, event)) reasons.push('LOCATION_MISSING');
   if (!portal.lastVerifiedAt) reasons.push('VERIFICATION_TIMESTAMP_MISSING');
 
-  const trustedSource = ['OFFICIAL_SITE', 'OFFICIAL_ATS'].includes(sourceTier)
+  const trustedSource = ['OFFICIAL_SITE', 'OFFICIAL_ATS', 'OFFICIAL_SOCIAL'].includes(sourceTier)
     && portal.verificationStatus === 'VERIFIED'
     && portal.officialIdentityConfirmed === true;
   const publishable = trustedSource && reasons.length === 0;

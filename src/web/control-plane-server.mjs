@@ -89,6 +89,8 @@ export function createControlPlaneServer({
   repository,
   developmentRecordPath,
   xlsxPath = '',
+  buildStudentWorkbook = null,
+  buildCompanyWorkbook = null,
   actor = 'local-web-user',
 } = {}) {
   const service = createControlPlaneService({ repository, actor });
@@ -195,14 +197,37 @@ export function createControlPlaneServer({
         return;
       }
       if (request.method === 'GET' && url.pathname === '/api/export') {
-        if (!xlsxPath || !(await stat(xlsxPath).catch(() => null))) {
+        const generated = typeof buildStudentWorkbook === 'function'
+          ? await buildStudentWorkbook()
+          : null;
+        const exportPath = generated?.outputFile || xlsxPath;
+        if (!exportPath || !(await stat(exportPath).catch(() => null))) {
           json(response, 404, { status: 'NOT_CONFIGURED', reason: 'xlsx export file is not configured' });
           return;
         }
-        const data = await readFile(xlsxPath);
+        const data = await readFile(exportPath);
         response.writeHead(200, {
           'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'content-disposition': `attachment; filename="${path.basename(xlsxPath)}"`,
+          'content-disposition': `attachment; filename="${path.basename(exportPath)}"`,
+          'x-ljs-row-count': String(generated?.rowCount ?? ''),
+        });
+        response.end(data);
+        return;
+      }
+      if (request.method === 'GET' && url.pathname === '/api/export/companies') {
+        if (typeof buildCompanyWorkbook !== 'function') {
+          json(response, 404, {
+            status: 'NOT_CONFIGURED',
+            reason: 'company collection xlsx export is not configured',
+          });
+          return;
+        }
+        const generated = await buildCompanyWorkbook();
+        const data = await readFile(generated.outputFile);
+        response.writeHead(200, {
+          'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'content-disposition': `attachment; filename="${path.basename(generated.outputFile)}"`,
+          'x-ljs-row-count': String(generated.rowCount),
         });
         response.end(data);
         return;

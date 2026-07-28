@@ -594,8 +594,16 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         pageType: decision.pageType,
         verificationStatus: decision.verificationStatus,
         confidenceScore: decision.confidenceScore,
-        sourceTier: inspected.atsType ? 'OFFICIAL_ATS' : 'OFFICIAL_SITE',
-        officialIdentityConfirmed: decision.verificationStatus === 'VERIFIED',
+        sourceTier: inspected.channelType === 'WECHAT_OFFICIAL_ACCOUNT'
+          ? 'OFFICIAL_SOCIAL'
+          : inspected.atsType
+            ? 'OFFICIAL_ATS'
+            : 'OFFICIAL_SITE',
+        channelType: inspected.channelType,
+        officialAccountName: inspected.officialAccountName,
+        officialAccountId: inspected.officialAccountId,
+        verifiedSubject: inspected.verifiedSubject,
+        officialIdentityConfirmed: decision.identityAnchor === true,
         hiringAvailability: inspected.vacancyStatus === 'NO_OPENINGS'
           ? 'NO_OPENINGS'
           : 'UNKNOWN',

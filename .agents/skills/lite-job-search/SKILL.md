@@ -277,6 +277,17 @@ circuit. One worker must atomically acquire the
 `CLOSED`. Never refresh, retry, switch engines, or run a second probe while the
 lease is held.
 
+The dashboard exposes two different live SQLite projections:
+
+- the formal student XLSX contains only publication-eligible verified openings;
+- the company collection XLSX contains the current task's company queue and its
+  latest portal, channel, verification, hiring, and coverage state.
+
+Generate both files when the user clicks the download buttons. Do not serve a
+stale startup artifact. A low formal-row count is not evidence that company
+collection is missing; it means most records have not passed the publication
+gate.
+
 ## Export
 
 ```powershell
@@ -294,6 +305,19 @@ Student-facing XLSX is a downstream compatibility projection of verified `JobOpe
 When `batch` or `verify` receives a non-XLSX `--output`, keep the requested primary JSON/JSONL/CSV output and automatically write the sibling `<basename>.student.xlsx`. A direct XLSX output is not duplicated.
 
 Use the deepest verified official role in this order: direct application, job detail, job list, campaign landing, career home. For persisted report records, `recruitmentEntryUrl` may be used only when `entryType` is an `official_*` value, `官方招聘站或受委托 ATS`, or `企业官方招聘公告（公众号）`; never use a discovery-evidence URL as the student entry. Only active verified openings belong in the final student list. Leave missing links blank rather than substituting discovery evidence.
+
+Company identity and recruitment-page identity are independent gates. A
+corporate home page can confirm the company domain but can never become a
+verified career portal by itself. `VERIFIED` requires both a deterministic
+company-identity anchor and a recruitment anchor such as a career-page
+identity, job structure, campaign structure, or apply action.
+
+Treat an official WeChat account as `OFFICIAL_SOCIAL`, not as a company-owned
+web domain. Preserve the account name, account identifier, verified subject,
+article URL, and attribution evidence. The shared `mp.weixin.qq.com` domain
+never proves company ownership. A WeChat recruitment announcement may become
+actionable only when its subject/account attribution and recruitment content
+both pass deterministic verification.
 
 Company type is a model advisory, not official-site evidence. Display its label only when the recorded confidence is at least `0.8`; otherwise use `待确认`. Preserve classification evidence outside the student sheet. Use `未披露` for missing dates and `招满即止` only when that deadline semantics is explicit.
 

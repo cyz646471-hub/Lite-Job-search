@@ -92,7 +92,7 @@ export function planCompanyDiscovery({
   );
   const verifiedPortals = portals.filter((portal) => (
     portal.verificationStatus === 'VERIFIED'
-    && ['OFFICIAL_SITE', 'OFFICIAL_ATS'].includes(portal.sourceTier)
+    && ['OFFICIAL_SITE', 'OFFICIAL_ATS', 'OFFICIAL_SOCIAL'].includes(portal.sourceTier)
     && portal.officialIdentityConfirmed === true
     && !isRejectedValue(portal.canonicalUrl)
   ));

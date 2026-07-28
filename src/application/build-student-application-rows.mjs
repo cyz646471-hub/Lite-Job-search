@@ -24,7 +24,8 @@ function eventLabel(event = {}) {
 function sourcePriority(sourceTier) {
   if (sourceTier === 'OFFICIAL_SITE') return 0;
   if (sourceTier === 'OFFICIAL_ATS') return 1;
-  return 2;
+  if (sourceTier === 'OFFICIAL_SOCIAL') return 2;
+  return 3;
 }
 
 export function buildStudentApplicationRows({
@@ -39,7 +40,7 @@ export function buildStudentApplicationRows({
   for (const job of jobs) {
     if (!job.recruitmentEventId || job.status !== 'ACTIVE') continue;
     if (job.qualityGrade !== 'A' || job.publicationStatus !== 'PUBLISHED') continue;
-    if (!['OFFICIAL_SITE', 'OFFICIAL_ATS'].includes(job.sourceTier)) continue;
+    if (!['OFFICIAL_SITE', 'OFFICIAL_ATS', 'OFFICIAL_SOCIAL'].includes(job.sourceTier)) continue;
     if (!jobsByEventId.has(job.recruitmentEventId)) jobsByEventId.set(job.recruitmentEventId, []);
     jobsByEventId.get(job.recruitmentEventId).push(job);
   }
@@ -49,8 +50,8 @@ export function buildStudentApplicationRows({
     const company = companyById.get(event.companyId);
     const portal = portalById.get(event.careerPortalId);
     if (!company || !portal) continue;
-    if (!['OFFICIAL_SITE', 'OFFICIAL_ATS'].includes(event.sourceTier)) continue;
-    if (!['OFFICIAL_SITE', 'OFFICIAL_ATS'].includes(portal.sourceTier)) continue;
+    if (!['OFFICIAL_SITE', 'OFFICIAL_ATS', 'OFFICIAL_SOCIAL'].includes(event.sourceTier)) continue;
+    if (!['OFFICIAL_SITE', 'OFFICIAL_ATS', 'OFFICIAL_SOCIAL'].includes(portal.sourceTier)) continue;
     if (portal.verificationStatus !== 'VERIFIED'
       || portal.officialIdentityConfirmed !== true) continue;
     if (event.status !== 'OPEN') continue;

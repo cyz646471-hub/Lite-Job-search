@@ -150,6 +150,48 @@ test('repository persists an official recruitment event snapshot atomically', as
   assert.equal(opening.publicationStatus, 'PUBLISHED');
 });
 
+test('repository persists official WeChat recruitment channel metadata and formal records', async (t) => {
+  const repository = await createRepository('lite-job-social-');
+  t.after(() => repository.close());
+  repository.upsertCompany(createCompany());
+  const portal = createPortal({
+    id: 'portal-social',
+    canonicalUrl: 'https://mp.weixin.qq.com/s/example',
+    url: 'https://mp.weixin.qq.com/s/example',
+    registrableDomain: 'weixin.qq.com',
+    pageType: 'CAMPAIGN',
+    sourceTier: 'OFFICIAL_SOCIAL',
+    channelType: 'WECHAT_OFFICIAL_ACCOUNT',
+    officialIdentityConfirmed: true,
+    officialAccountName: '示例科技招聘',
+    officialAccountId: 'example-careers',
+    verifiedSubject: '示例科技有限公司',
+  });
+  repository.upsertCareerPortal(portal);
+  const event = createEvent({
+    id: 'event-social',
+    careerPortalId: portal.id,
+    sourceTier: 'OFFICIAL_SOCIAL',
+    directoryUrl: portal.canonicalUrl,
+  });
+  repository.upsertRecruitmentEvent(event);
+  repository.upsertJobOpening(createOpening({
+    id: 'job-social',
+    careerPortalId: portal.id,
+    recruitmentEventId: event.id,
+    sourceTier: 'OFFICIAL_SOCIAL',
+    sourceUrl: portal.canonicalUrl,
+    jobDetailUrl: portal.canonicalUrl,
+  }));
+
+  const stored = repository.listCareerPortals()[0];
+  assert.equal(stored.channelType, 'WECHAT_OFFICIAL_ACCOUNT');
+  assert.equal(stored.officialAccountId, 'example-careers');
+  assert.equal(stored.verifiedSubject, '示例科技有限公司');
+  assert.equal(repository.listRecruitmentEvents()[0].sourceTier, 'OFFICIAL_SOCIAL');
+  assert.equal(repository.listJobOpenings()[0].sourceTier, 'OFFICIAL_SOCIAL');
+});
+
 test('repository isolates platform-only events and openings', async (t) => {
   const repository = await createRepository('lite-job-market-platform-');
   t.after(() => repository.close());

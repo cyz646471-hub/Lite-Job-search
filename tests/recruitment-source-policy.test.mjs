@@ -69,6 +69,18 @@ test('platform job details and identity mismatches are not platform company cand
   }).decision, 'DISCOVERY_LOG_ONLY');
 });
 
+test('WeChat recruitment articles are isolated as official-social verification candidates', () => {
+  const result = classifyRecruitmentSource({
+    url: 'https://mp.weixin.qq.com/s/example-article',
+    title: '示例科技 2027 届校园招聘',
+    company: '示例科技',
+  });
+
+  assert.equal(result.decision, 'VERIFY_OFFICIAL_SOCIAL_CANDIDATE');
+  assert.equal(result.sourceTier, 'OFFICIAL_SOCIAL');
+  assert.equal(result.channelType, 'WECHAT_OFFICIAL_ACCOUNT');
+});
+
 test('platform source is hidden when an active official event exists', () => {
   const decision = decidePlatformFallback({
     officialPortals: [{

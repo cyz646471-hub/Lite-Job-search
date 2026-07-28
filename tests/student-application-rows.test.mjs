@@ -117,3 +117,35 @@ test('student rows exclude B-grade official openings pending review', () => {
 
   assert.equal(rows.length, 0);
 });
+
+test('student rows can publish a verified official WeChat recruitment event', () => {
+  const socialPortal = {
+    ...portal,
+    id: 'portal-wechat',
+    sourceTier: 'OFFICIAL_SOCIAL',
+    channelType: 'WECHAT_OFFICIAL_ACCOUNT',
+  };
+  const socialEvent = {
+    ...event,
+    id: 'event-wechat',
+    careerPortalId: socialPortal.id,
+    sourceTier: 'OFFICIAL_SOCIAL',
+    directoryUrl: 'https://mp.weixin.qq.com/s/example',
+  };
+  const rows = buildStudentApplicationRows({
+    companies: [company],
+    portals: [socialPortal],
+    events: [socialEvent],
+    jobs: [{
+      ...job,
+      id: 'job-wechat',
+      careerPortalId: socialPortal.id,
+      recruitmentEventId: socialEvent.id,
+      sourceTier: 'OFFICIAL_SOCIAL',
+    }],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].来源等级, 'OFFICIAL_SOCIAL');
+  assert.equal(rows[0].投递链接, socialEvent.directoryUrl);
+});

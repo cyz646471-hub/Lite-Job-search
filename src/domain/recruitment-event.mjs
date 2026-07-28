@@ -17,6 +17,7 @@ export const RECRUITMENT_EVENT_STATUSES = Object.freeze([
 export const SOURCE_TIERS = Object.freeze([
   'OFFICIAL_SITE',
   'OFFICIAL_ATS',
+  'OFFICIAL_SOCIAL',
   'PLATFORM_ONLY',
 ]);
 

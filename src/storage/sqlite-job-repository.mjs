@@ -72,6 +72,10 @@ function mapPortal(row, evidence = []) {
     verificationStatus: row.verification_status,
     confidenceScore: row.confidence_score,
     sourceTier: row.source_tier || (row.ats_type ? 'OFFICIAL_ATS' : 'OFFICIAL_SITE'),
+    channelType: row.channel_type || (row.ats_type ? 'ATS' : 'WEB_PORTAL'),
+    officialAccountName: row.official_account_name || null,
+    officialAccountId: row.official_account_id || null,
+    verifiedSubject: row.verified_subject || null,
     officialIdentityConfirmed: row.official_identity_confirmed === 1,
     platformIdentityConfirmed: row.platform_identity_confirmed === 1,
     hiringAvailability: row.hiring_availability || 'UNKNOWN',
@@ -366,12 +370,14 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           page_type, verification_status, confidence_score, recruitment_types_json,
           source_tier, official_identity_confirmed, platform_identity_confirmed,
           hiring_availability, fallback_reason, search_coverage,
+          channel_type, official_account_name, official_account_id, verified_subject,
           superseded_by_portal_id, first_seen_at, last_verified_at, last_checked_at
         ) VALUES (
           @id, @companyId, @url, @canonicalUrl, @registrableDomain, @atsType,
           @pageType, @verificationStatus, @confidenceScore, @recruitmentTypesJson,
           @sourceTier, @officialIdentityConfirmed, @platformIdentityConfirmed,
           @hiringAvailability, @fallbackReason, @searchCoverage,
+          @channelType, @officialAccountName, @officialAccountId, @verifiedSubject,
           @supersededByPortalId, @firstSeenAt, @lastVerifiedAt, @lastCheckedAt
         )
         ON CONFLICT(id) DO UPDATE SET
@@ -390,6 +396,10 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           hiring_availability = excluded.hiring_availability,
           fallback_reason = excluded.fallback_reason,
           search_coverage = excluded.search_coverage,
+          channel_type = excluded.channel_type,
+          official_account_name = excluded.official_account_name,
+          official_account_id = excluded.official_account_id,
+          verified_subject = excluded.verified_subject,
           superseded_by_portal_id = excluded.superseded_by_portal_id,
           last_verified_at = excluded.last_verified_at,
           last_checked_at = excluded.last_checked_at
@@ -925,8 +935,21 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         0,
         Math.min(100, Number(portal.confidenceScore) || 0),
       );
-      if (!['OFFICIAL_SITE', 'OFFICIAL_ATS', 'PLATFORM_ONLY'].includes(sourceTier)) {
+      if (!['OFFICIAL_SITE', 'OFFICIAL_ATS', 'OFFICIAL_SOCIAL', 'PLATFORM_ONLY'].includes(sourceTier)) {
         throw new Error('unsupported CareerPortal sourceTier');
+      }
+      const channelType = portal.channelType || (
+        sourceTier === 'OFFICIAL_SOCIAL'
+          ? 'WECHAT_OFFICIAL_ACCOUNT'
+          : portal.atsType
+            ? 'ATS'
+            : 'WEB_PORTAL'
+      );
+      if (!['WEB_PORTAL', 'ATS', 'WECHAT_OFFICIAL_ACCOUNT'].includes(channelType)) {
+        throw new Error('unsupported CareerPortal channelType');
+      }
+      if (sourceTier === 'OFFICIAL_SOCIAL' && channelType !== 'WECHAT_OFFICIAL_ACCOUNT') {
+        throw new Error('OFFICIAL_SOCIAL CareerPortal requires WECHAT_OFFICIAL_ACCOUNT');
       }
       if (sourceTier === 'PLATFORM_ONLY') {
         if (portal.verificationStatus === 'VERIFIED') {
@@ -957,6 +980,10 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         atsType: portal.atsType || '',
         confidenceScore,
         sourceTier,
+        channelType,
+        officialAccountName: portal.officialAccountName ?? null,
+        officialAccountId: portal.officialAccountId ?? null,
+        verifiedSubject: portal.verifiedSubject ?? null,
         officialIdentityConfirmed: officialIdentityConfirmed ? 1 : 0,
         platformIdentityConfirmed: platformIdentityConfirmed ? 1 : 0,
         hiringAvailability,
@@ -1453,7 +1480,7 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       FROM job_openings AS jobs
       INNER JOIN career_portals AS portals ON portals.id = jobs.career_portal_id
       WHERE (
-        jobs.source_tier IN ('OFFICIAL_SITE', 'OFFICIAL_ATS')
+        jobs.source_tier IN ('OFFICIAL_SITE', 'OFFICIAL_ATS', 'OFFICIAL_SOCIAL')
         AND portals.verification_status = 'VERIFIED'
       ) OR (
         jobs.source_tier = 'PLATFORM_ONLY'

@@ -29,13 +29,18 @@ export function applyVerificationPolicy({
   const identityAnchor = normalized.some(
     (item) => item.direction === 'POSITIVE' && item.identityAnchor === true,
   );
+  const recruitmentAnchor = normalized.some(
+    (item) => item.direction === 'POSITIVE' && item.recruitmentAnchor === true,
+  );
+  const eligiblePageType = ['CAREER_HOME', 'CAMPAIGN', 'JOB_LIST', 'JOB_DETAIL', 'APPLY']
+    .includes(pageType);
   const rawScore = normalized.reduce((sum, item) => sum + item.weight, 0);
   const confidenceScore = Math.max(0, Math.min(100, rawScore));
 
   let verificationStatus = 'REVIEW';
   if (hardRejectReasons.length) verificationStatus = 'REJECTED';
   else if (blocked) verificationStatus = 'BLOCKED';
-  else if (confidenceScore >= 50 && identityAnchor && pageType !== 'UNKNOWN') {
+  else if (confidenceScore >= 50 && identityAnchor && recruitmentAnchor && eligiblePageType) {
     verificationStatus = 'VERIFIED';
   } else if (confidenceScore < 45) {
     verificationStatus = 'REJECTED';
@@ -45,6 +50,7 @@ export function applyVerificationPolicy({
     verificationStatus,
     confidenceScore,
     identityAnchor,
+    recruitmentAnchor,
     hardRejectReasons: Object.freeze(hardRejectReasons),
     evidence: Object.freeze(normalized),
   });

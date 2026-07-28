@@ -211,6 +211,43 @@ test('candidate domain without prior company evidence does not self-verify', asy
   assert.equal(result.confirmedOfficialDomain, null);
 });
 
+test('official WeChat article uses verified subject evidence without bootstrapping the shared domain', async () => {
+  const adapter = createOfficialVerificationAdapter({
+    detectAts: () => ({ ats: '', confidence: 0 }),
+    classifyPage: () => ({
+      pageRole: 'CAMPAIGN',
+      vacancyStatus: 'ACTIVE',
+      links: [],
+    }),
+    evaluateIdentity: () => ({ strongEvidence: [], riskSignals: [] }),
+  });
+  const result = await adapter.inspect({
+    company: {
+      canonicalName: '示例科技',
+      aliases: [],
+      officialDomains: ['example.com'],
+    },
+    candidate: {
+      url: 'https://mp.weixin.qq.com/s/example',
+      verifiedSubject: '示例科技有限公司',
+      officialAccountName: '示例科技招聘',
+      officialAccountId: 'example-careers',
+    },
+    page: {
+      status: 200,
+      finalUrl: 'https://mp.weixin.qq.com/s/example',
+      html: '<h1>示例科技 2027 届校园招聘</h1>',
+    },
+  });
+
+  assert.equal(result.channelType, 'WECHAT_OFFICIAL_ACCOUNT');
+  assert.equal(result.confirmedOfficialDomain, null);
+  assert.equal(result.officialAccountId, 'example-careers');
+  assert.ok(result.evidence.some((item) => item.code === 'wechat_verified_subject_match'));
+  assert.ok(result.evidence.some((item) => item.code === 'official_recruitment_announcement'));
+  assert.ok(!result.evidence.some((item) => item.code === 'official_domain_match'));
+});
+
 test('aggregator hard rejection is emitted before ATS evidence', async () => {
   const adapter = createVerificationAdapter();
   const result = await adapter.inspect({
@@ -282,7 +319,7 @@ test('news navigation on a first-party recruitment page is not a news reprint', 
   });
 
   assert.ok(!result.evidence.some((item) => item.code === 'news_reprint'));
-  assert.ok(result.evidence.some((item) => item.code === 'recruitment_structure'));
+  assert.ok(result.evidence.some((item) => item.code === 'career_page_identity'));
 });
 
 test('employee courses on a first-party career page are not a training provider', async () => {

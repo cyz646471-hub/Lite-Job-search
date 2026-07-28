@@ -61,7 +61,7 @@ export function buildFixedCompanyMonitorPlan({
   for (const portal of portals) {
     if (portal.verificationStatus !== 'VERIFIED'
       || portal.officialIdentityConfirmed !== true
-      || !['OFFICIAL_SITE', 'OFFICIAL_ATS'].includes(portal.sourceTier)) continue;
+      || !['OFFICIAL_SITE', 'OFFICIAL_ATS', 'OFFICIAL_SOCIAL'].includes(portal.sourceTier)) continue;
     if (!portalGroups.has(portal.companyId)) portalGroups.set(portal.companyId, []);
     portalGroups.get(portal.companyId).push(portal);
   }

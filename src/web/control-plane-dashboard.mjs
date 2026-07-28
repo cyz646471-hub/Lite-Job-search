@@ -32,7 +32,7 @@ export function dashboardHtml() {
 </div></header>
 <main class="shell">
   <div id="error" class="error"></div>
-  <div class="toolbar"><div><h2>全量补齐看板</h2><p id="updated">等待第一次刷新</p></div><div><button id="refresh">立即刷新</button> <a class="button" href="/api/export">下载最终 XLSX</a></div></div>
+  <div class="toolbar"><div><h2>全量补齐看板</h2><p id="updated">等待第一次刷新</p></div><div><button id="refresh">立即刷新</button> <a class="button" href="/api/export">下载正式投递 XLSX</a> <a class="button" href="/api/export/companies">下载企业采集状态 XLSX</a></div></div>
   <section class="hero">
     <div class="hero-head"><div><div class="eyebrow">CURRENT BATCH</div><h3 id="batch-name">尚未选择批次</h3><div id="batch-meta" class="meta">—</div></div><div id="percent" class="percent">0%</div></div>
     <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
