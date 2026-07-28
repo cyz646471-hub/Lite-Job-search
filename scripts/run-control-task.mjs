@@ -169,6 +169,7 @@ export async function runControlTask(args = {}) {
           / (24 * 60 * 60 * 1000)),
       ),
       maxCompaniesPerRun: maxPerRun,
+      retryFailed: args['retry-failed'] === true,
       allowBaiduFallback: task.allowBaiduFallback,
       searchEngine: args['search-engine'] || 'baidu',
       xlsxOutput: args.xlsx || path.join(outputDir, 'student-applications.xlsx'),
