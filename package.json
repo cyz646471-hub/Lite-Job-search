@@ -43,6 +43,8 @@
     "prepare:full-recheck": "node ./scripts/prepare-full-database-maintenance.mjs",
     "monitor:fixed-pool:prepare": "node ./scripts/prepare-fixed-company-monitor.mjs",
     "monitor:fixed-pool": "node ./scripts/run-fixed-company-monitor.mjs",
+    "watch:new-companies:prepare": "node ./scripts/prepare-new-company-watch.mjs",
+    "watch:new-companies": "node ./scripts/run-new-company-watch.mjs",
     "report:product-closure": "node ./scripts/report-product-closure.mjs",
     "maintenance:series": "node ./scripts/run-full-maintenance-series.mjs"
   },
