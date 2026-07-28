@@ -88,6 +88,9 @@ test('local web control plane reads real SQLite state and confirms writes', asyn
   assert.match(dashboard, /全量补齐看板/);
   assert.match(dashboard, /尚未装载/);
   assert.match(dashboard, /招聘岗位数据/);
+  assert.match(dashboard, /数据库岗位记录/);
+  assert.match(dashboard, /A 级正式可投/);
+  assert.match(dashboard, /按岗位逐条查看/);
   assert.match(dashboard, /企业采集状态/);
 
   const reviewResponse = await fetch(`${base}/api/reviews`, {

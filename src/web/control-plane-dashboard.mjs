@@ -43,18 +43,19 @@ export function dashboardHtml() {
     <article class="card"><div class="label">流水线成功</div><div id="succeeded" class="value green">0</div><div class="sub">已完成验证与写入流程</div></article>
     <article class="card"><div class="label">明确失败</div><div id="failed" class="value red">0</div><div class="sub">保留原因，可断点重试</div></article>
     <article class="card"><div class="label">剩余公司</div><div id="remaining" class="value amber">0</div><div id="remaining-sub" class="sub">含尚未装载的公司</div></article>
-    <article class="card"><div class="label">正式岗位记录</div><div id="jobs" class="value">0</div><div id="quality-sub" class="sub">0 个 VERIFIED 门户</div></article>
+    <article class="card"><div class="label">数据库岗位记录</div><div id="jobs" class="value">0</div><div id="quality-sub" class="sub">采集总量，正式可投数量见下方门禁统计</div></article>
   </section>
   <section class="panel" aria-labelledby="jobs-heading">
-    <div class="list-head"><div><h3 id="jobs-heading">招聘岗位数据 <span id="job-total" class="badge">0</span></h3><div class="sub">直接读取 SQLite；每 10 秒刷新。仅 VERIFIED 官方来源提供“打开投递”入口。</div></div><div class="auto-refresh"><span class="dot"></span><span id="job-updated">等待数据</span></div></div>
+    <div class="list-head"><div><h3 id="jobs-heading">招聘岗位数据 <span id="job-total" class="badge">0</span></h3><div class="sub">数字为 SQLite 已采集岗位总量；A 级才能正式投递，B/C 级仍可查看证据与待补信息。</div></div><div class="auto-refresh"><span class="dot"></span><span id="job-updated">等待数据</span></div></div>
     <div class="list-controls" role="search" aria-label="筛选招聘岗位">
       <input id="job-search" aria-label="搜索岗位" placeholder="搜索公司、岗位、地区或届次">
       <select id="job-source" aria-label="来源等级"><option value="ALL">全部来源</option><option value="OFFICIAL_SITE">官方招聘站</option><option value="OFFICIAL_ATS">官方 ATS</option><option value="OFFICIAL_SOCIAL">官方公众号</option><option value="PLATFORM_ONLY">第三方候选</option></select>
       <select id="job-publication" aria-label="发布状态"><option value="ALL">全部发布状态</option><option value="PUBLISHED">已发布</option><option value="REVIEW_REQUIRED">待复核</option><option value="CANDIDATE">候选</option><option value="REJECTED">已拒绝</option></select>
       <select id="job-status" aria-label="岗位状态"><option value="ALL">全部岗位状态</option><option value="ACTIVE">招聘中</option><option value="CLOSED">已关闭</option><option value="UNKNOWN">未知</option></select>
       <select id="job-quality" aria-label="岗位质量"><option value="ALL">全部质量等级</option><option value="A">A 级正式发布</option><option value="B">B 级待复核</option><option value="C">全部 C 级</option><option value="C_POSITIVE">C 级正分候选</option></select>
+      <select id="job-view" aria-label="岗位显示方式"><option value="COMPANY">按公司折叠</option><option value="JOB">按岗位逐条查看</option></select>
     </div>
-    <div class="table-summary"><span id="job-actionable" class="badge good">可投递 0</span><span id="job-published" class="badge">已发布 0</span><span id="job-review" class="badge warn">待复核 0</span><span id="job-platform" class="badge">第三方 0</span></div>
+    <div class="table-summary"><span id="job-collected" class="badge">全部采集 0</span><span id="job-actionable" class="badge good">A 级正式可投 0</span><span id="job-review" class="badge warn">待复核 0</span><span id="job-platform" class="badge">第三方候选 0</span></div>
     <div id="job-table" class="table-wrap" aria-live="polite"><div class="empty">正在读取招聘岗位…</div></div>
     <div class="pager"><span id="job-page">第 1 页</span><button id="job-prev">上一页</button><button id="job-next">下一页</button></div>
   </section>
@@ -122,10 +123,10 @@ async function loadJobList(){
   const data=await api('/api/progress/jobs?'+params);
   if(jobOffset>=data.total&&jobOffset>0){jobOffset=Math.max(0,Math.floor(Math.max(0,data.total-1)/jobLimit)*jobLimit);return loadJobList()}
   el('job-total').textContent=fmt(data.total);
-  el('job-actionable').textContent='可投递 '+fmt(data.counts?.actionable);
-  el('job-published').textContent='已发布 '+fmt(data.counts?.published);
+  el('job-collected').textContent='全部采集 '+fmt(data.jobTotal);
+  el('job-actionable').textContent='A 级正式可投 '+fmt(data.counts?.actionable);
   el('job-review').textContent='待复核 '+fmt(data.counts?.reviewRequired);
-  el('job-platform').textContent='第三方 '+fmt(data.counts?.platformOnly);
+  el('job-platform').textContent='第三方候选 '+fmt(data.counts?.platformOnly);
   el('job-updated').textContent='更新于 '+dt(data.generatedAt);
   el('job-page').textContent='第 '+fmt(Math.floor(jobOffset/jobLimit)+1)+' 页 · '+fmt(jobOffset+1)+'–'+fmt(Math.min(jobOffset+jobLimit,data.total))+' / '+fmt(data.total);
   el('job-prev').disabled=jobOffset===0;el('job-next').disabled=jobOffset+jobLimit>=data.total;
@@ -161,10 +162,10 @@ async function loadGroupedJobList(){
   const data=await api('/api/progress/jobs?'+params);
   if(jobOffset>=data.total&&jobOffset>0){jobOffset=Math.max(0,Math.floor(Math.max(0,data.total-1)/jobLimit)*jobLimit);return loadGroupedJobList()}
   el('job-total').textContent=fmt(data.jobTotal);
-  el('job-actionable').textContent='可投递 '+fmt(data.counts?.actionable);
-  el('job-published').textContent='已发布 '+fmt(data.counts?.published);
+  el('job-collected').textContent='全部采集 '+fmt(data.jobTotal);
+  el('job-actionable').textContent='A 级正式可投 '+fmt(data.counts?.actionable);
   el('job-review').textContent='待复核 '+fmt(data.counts?.reviewRequired);
-  el('job-platform').textContent='第三方 '+fmt(data.counts?.platformOnly);
+  el('job-platform').textContent='第三方候选 '+fmt(data.counts?.platformOnly);
   el('job-updated').textContent='更新于 '+dt(data.generatedAt);
   el('job-page').textContent='第 '+fmt(Math.floor(jobOffset/jobLimit)+1)+' 页 · '+fmt(jobOffset+1)+'–'+fmt(Math.min(jobOffset+jobLimit,data.total))+' / '+fmt(data.total)+' 家公司';
   el('job-prev').disabled=jobOffset===0;el('job-next').disabled=jobOffset+jobLimit>=data.total;
@@ -173,6 +174,7 @@ async function loadGroupedJobList(){
     return '<tr><td><strong>'+escapeHtml(x.company)+'</strong><span class="cell-sub">'+fmt(x.jobCount)+' 个岗位</span></td><td class="job-title"><details class="job-group"><summary>'+fmt(x.jobCount)+' 个岗位 · 展开查看</summary><div class="job-stack">'+x.jobs.map(groupedJobEntry).join('')+'</div></details></td><td class="aggregate-list">'+compactList([...(x.cohorts||[]),...(x.campaignNames||[]),...(x.recruitmentTypes||[])])+'</td><td class="aggregate-list">'+compactList(x.locations,4)+'</td><td class="nowrap">'+dateRange(x.publishedFrom,x.publishedTo)+'</td><td class="nowrap">'+dateRange(x.closesFrom,x.closesTo)+'</td><td>'+grades.map((item)=>badge(item.grade+' '+fmt(item.count),item.grade==='A'?'good':item.grade==='B'?'warn':'bad')).join(' ')+'<span class="cell-sub">'+compactList((x.sourceTiers||[]).map((tier)=>sourceLabels[tier]||tier))+'</span></td><td>'+badge('可投递 '+fmt(x.actionableCount),x.actionableCount?'good':'')+(x.reviewRequiredCount?'<span class="cell-sub">待复核 '+fmt(x.reviewRequiredCount)+'</span>':'')+(x.platformOnlyCount?'<span class="cell-sub">第三方 '+fmt(x.platformOnlyCount)+'</span>':'')+'</td></tr>';
   }).join('')+'</tbody></table>':'<div class="empty">当前筛选条件下没有招聘岗位。</div>';
 }
+function loadJobData(){return el('job-view').value==='JOB'?loadJobList():loadGroupedJobList()}
 function render(data){
   const p=data.progress||{};const worker=data.worker;const health=worker?.health;
   currentBatchId=data.batch?.id||'';currentBatchStatus=data.batch?.status||'';
@@ -194,7 +196,7 @@ function render(data){
   el('updated').textContent='数据更新时间 '+dt(data.updatedAt)+' · 页面刷新 '+dt(data.generatedAt);el('raw').textContent=JSON.stringify(data,null,2);
   const healthy=health==='HEALTHY';el('live-dot').className='dot '+(healthy?'':health==='STALE'?'bad':'warn');el('live-text').textContent=healthy?'Worker 正常运行':health==='STALE'?'Worker 心跳已过期':'Worker 当前未运行';
 }
-async function refresh(){try{el('error').style.display='none';render(await api('/api/progress'));await Promise.all([loadCompanyList(),loadGroupedJobList()])}catch(error){el('error').textContent='读取进度失败：'+error.message;el('error').style.display='block';el('live-dot').className='dot bad';el('live-text').textContent='状态读取失败'}}
+async function refresh(){try{el('error').style.display='none';render(await api('/api/progress'));await Promise.all([loadCompanyList(),loadJobData()])}catch(error){el('error').textContent='读取进度失败：'+error.message;el('error').style.display='block';el('live-dot').className='dot bad';el('live-text').textContent='状态读取失败'}}
 el('refresh').onclick=refresh;
 el('pause-worker').onclick=async()=>{if(!currentBatchId||!confirm('暂停当前 Worker？当前公司完成后会安全停止并保存断点。'))return;await api('/api/batches/'+encodeURIComponent(currentBatchId)+'/stop',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:'{}'});await refresh()};
 el('resume-worker').onclick=async()=>{if(!currentBatchId||!confirm('开始或继续当前 Worker？'))return;await api('/api/batches/'+encodeURIComponent(currentBatchId)+'/resume',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:'{}'});await refresh()};
@@ -203,10 +205,10 @@ el('company-next').onclick=()=>{companyOffset+=companyLimit;loadCompanyList()};
 el('company-scope').onchange=()=>{companyOffset=0;loadCompanyList()};
 ['company-recruitment','company-confidence'].forEach((id)=>{el(id).onchange=()=>{companyOffset=0;loadCompanyList()}});
 el('company-search').oninput=()=>{clearTimeout(companySearchTimer);companySearchTimer=setTimeout(()=>{companyOffset=0;loadCompanyList()},250)};
-el('job-prev').onclick=()=>{jobOffset=Math.max(0,jobOffset-jobLimit);loadGroupedJobList()};
-el('job-next').onclick=()=>{jobOffset+=jobLimit;loadGroupedJobList()};
-['job-source','job-publication','job-status','job-quality'].forEach((id)=>{el(id).onchange=()=>{jobOffset=0;loadGroupedJobList()}});
-el('job-search').oninput=()=>{clearTimeout(jobSearchTimer);jobSearchTimer=setTimeout(()=>{jobOffset=0;loadGroupedJobList()},250)};
+el('job-prev').onclick=()=>{jobOffset=Math.max(0,jobOffset-jobLimit);loadJobData()};
+el('job-next').onclick=()=>{jobOffset+=jobLimit;loadJobData()};
+['job-source','job-publication','job-status','job-quality','job-view'].forEach((id)=>{el(id).onchange=()=>{jobOffset=0;loadJobData()}});
+el('job-search').oninput=()=>{clearTimeout(jobSearchTimer);jobSearchTimer=setTimeout(()=>{jobOffset=0;loadJobData()},250)};
 el('task').onsubmit=async(event)=>{event.preventDefault();const form=new FormData(event.target);const body=Object.fromEntries(form);body.role_keywords=body.role_keywords.split(',');body.target_count=Number(body.target_count);body.allow_baidu_fallback=form.has('allow_baidu_fallback');await api('/api/tasks',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:JSON.stringify(body)});await refresh()};
 async function acknowledge(provider){if(!confirm('确认已人工完成 '+provider+' 安全验证？'))return;await api('/api/providers/'+provider+'/manual-ack',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:'{}'});await refresh()}
 el('ack-google').onclick=()=>acknowledge('google');el('ack-baidu').onclick=()=>acknowledge('baidu');refresh();setInterval(refresh,10000);
