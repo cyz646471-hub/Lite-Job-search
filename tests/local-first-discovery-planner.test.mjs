@@ -61,6 +61,46 @@ test('known official domain produces deterministic common paths before Baidu', (
   assert.equal(plan.searchFallbackAllowed, true);
 });
 
+test('reviewed career portal is planned before generic domain paths', () => {
+  const reviewedUrl = 'https://www.hstong.com/hk/about/recruit';
+  const plan = planCompanyDiscovery({
+    company: {
+      ...COMPANY,
+      officialDomains: ['hstong.com'],
+      reviewedCareerPortals: [reviewedUrl],
+    },
+    allowBaiduFallback: true,
+  }, { repository: repository() });
+
+  assert.equal(plan.candidates[0], reviewedUrl);
+  assert.equal(
+    plan.stages.find((stage) => stage.source === 'REVIEWED_CAREER_PORTAL').count,
+    1,
+  );
+});
+
+test('reviewed career portal overrides an older automated rejection', () => {
+  const reviewedUrl = 'https://www.hstong.com/hk/about/recruit';
+  const plan = planCompanyDiscovery({
+    company: {
+      ...COMPANY,
+      officialDomains: ['hstong.com'],
+      reviewedCareerPortals: [reviewedUrl],
+    },
+  }, {
+    repository: repository({
+      knowledge: [{
+        companyId: COMPANY.id,
+        knowledgeType: 'REJECTED_PORTAL',
+        value: reviewedUrl,
+        verificationStatus: 'REJECTED',
+      }],
+    }),
+  });
+
+  assert.equal(plan.candidates[0], reviewedUrl);
+});
+
 test('reviewed rejected domains override stale verified repository knowledge', () => {
   const plan = planCompanyDiscovery({
     company: {

@@ -97,6 +97,24 @@ test('reviewed domain knowledge replaces the stale 360 Finance domain', () => {
   assert.match(company.domainKnowledgeEvidence, /Qifu Technology/);
 });
 
+test('reviewed company knowledge preserves unusual first-party recruitment paths', () => {
+  const [huasheng] = normalizeBrowserCompanyInput([{
+    company: '华盛证券',
+    officialDomains: ['hstong.com'],
+  }]);
+  const [bosch] = normalizeBrowserCompanyInput([{
+    company: '博世',
+    officialDomains: ['bosch.com'],
+  }]);
+
+  assert.deepEqual(huasheng.reviewedCareerPortals, [
+    'https://www.hstong.com/hk/about/recruit',
+  ]);
+  assert.ok(bosch.reviewedCareerPortals.includes(
+    'https://jobs.bosch.com/en/?country=cn',
+  ));
+});
+
 test('builds market-aware deterministic query ladders', () => {
   assert.deepEqual(buildCompanyQueryLadder({
     company: '示例公司',

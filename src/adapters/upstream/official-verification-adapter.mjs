@@ -32,13 +32,16 @@ function headingOf(html, level = 'h1') {
 
 function hardNegativeCode(url, page = {}) {
   const host = hostOf(url);
-  const pathname = (() => {
+  const parsedUrl = (() => {
     try {
-      return new URL(url).pathname.toLowerCase();
+      return new URL(url);
     } catch {
-      return '';
+      return null;
     }
   })();
+  const pathname = parsedUrl?.pathname.toLowerCase() || '';
+  const routeValue = `${pathname} ${parsedUrl?.search || ''} ${parsedUrl?.hash || ''}`
+    .toLowerCase();
   const html = page.html || page.body || '';
   const title = String(page.title || titleOf(html));
   const h1 = String(page.h1 || headingOf(html));
@@ -56,6 +59,15 @@ function hardNegativeCode(url, page = {}) {
     || /^callback\./i.test(host)
   ) {
     return 'access_challenge_url';
+  }
+  if (
+    /^(?:ibank|ebank|ebanks|pbank|mobilebank)\./i.test(host)
+    && (
+      /\/(?:eib|pweb)(?:\/|$)/i.test(pathname)
+      || /(?:onlineapply|creditapply|loanapply|accountapply)/i.test(routeValue)
+    )
+  ) {
+    return 'banking_business_application';
   }
   if (
     hostMatches(host, '36kr.com')
@@ -83,10 +95,12 @@ function hardNegativeCode(url, page = {}) {
 function recruitmentRouteRole(url, atsType = '') {
   let host = '';
   let pathname = '';
+  let searchParams;
   try {
     const parsed = new URL(url);
     host = parsed.hostname.toLowerCase();
     pathname = parsed.pathname.toLowerCase();
+    searchParams = parsed.searchParams;
   } catch {
     return 'UNKNOWN';
   }
@@ -94,6 +108,13 @@ function recruitmentRouteRole(url, atsType = '') {
   if (/\/(?:job|position)s?(?:\/|$)/i.test(pathname)) return 'JOB_LIST';
   if (/\/(?:campus-recruitment|campus_apply|social-recruitment|campus)(?:\/|$)/i
     .test(pathname)) return 'CAMPAIGN';
+  if (/^jobs?\./i.test(host) && searchParams.has('country')) return 'JOB_LIST';
+  if (
+    /^(?:career|careers|job|jobs|hr|recruit|campus)\./i.test(host)
+    || /\/(?:career|careers|join-us|recruit|recruitment)(?:\/|$)/i.test(pathname)
+  ) {
+    return 'CAREER_HOME';
+  }
   if (
     atsType
     && (
@@ -166,7 +187,7 @@ function careerPageIdentityConfirmed({ url, page = {} } = {}) {
   }
   const title = String(page.title || titleOf(pageText(page)));
   const h1 = String(page.h1 || headingOf(pageText(page)));
-  const headingSignal = /招聘|人才|加入我们|校招|社招|实习|careers?|jobs?|join us|hiring/i
+  const headingSignal = /招聘|人才|加入|职位|岗位|校招|社招|实习|careers?|jobs?|join us|hiring/i
     .test(`${title} ${h1}`);
   const routeSignal = /^(?:career|careers|job|jobs|hr|recruit|campus)\./i.test(host)
     || /\/(?:career|careers|job|jobs|join-us|recruit|recruitment|hr|campus)(?:\/|$)/i
@@ -223,7 +244,8 @@ export function createOfficialVerificationAdapter({
         cookies: page.cookies || [],
         requests: page.requests || [],
       }) || { ats: '', confidence: 0 };
-      const hardNegative = hardNegativeCode(finalUrl, { ...page, html });
+      const hardNegative = hardNegativeCode(finalUrl, { ...page, html })
+        || hardNegativeCode(candidate.url, { ...page, html });
       const routeRole = recruitmentRouteRole(finalUrl, ats.ats);
       const resolvedPageRole = hardNegative
         ? 'UNKNOWN'
@@ -372,12 +394,27 @@ export function createOfficialVerificationAdapter({
       if (resolvedPageRole === 'CORPORATE_HOME') {
         push('corporate_home_only');
       }
+      const observedRecruitmentRole = [
+        'CAMPAIGN',
+        'JOB_LIST',
+        'JOB_DETAIL',
+        'APPLY',
+      ].includes(classified.pageRole)
+        ? classified.pageRole
+        : [
+            'CAMPAIGN',
+            'JOB_LIST',
+            'JOB_DETAIL',
+            'APPLY',
+          ].includes(routeRole)
+          ? routeRole
+          : null;
       if (
         !hardNegative
         && resolvedPageRole !== 'CORPORATE_HOME'
-        && ['CAMPAIGN', 'JOB_LIST', 'JOB_DETAIL', 'APPLY'].includes(classified.pageRole)
+        && observedRecruitmentRole
       ) {
-        push('recruitment_structure', classified.pageRole);
+        push('recruitment_structure', observedRecruitmentRole);
       } else if (
         resolvedPageRole === 'CAREER_HOME'
         && careerPageIdentityConfirmed({ url: finalUrl, page: { ...page, html } })

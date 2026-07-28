@@ -40,6 +40,30 @@
       "officialDomains": ["qifu.tech", "360shuke.com"],
       "rejectedOfficialDomains": ["360shuoke.com"],
       "evidence": "2026-07-28 official 360shuke.com states the brand became Qifu Technology and links to qifu.tech; replaces erroneous 360shuoke.com"
+    },
+    {
+      "company": "博世",
+      "aliases": ["Bosch", "Robert Bosch"],
+      "officialDomains": ["bosch.com", "bosch.com.cn"],
+      "careerPortals": [
+        "https://www.bosch.com.cn/careers/",
+        "https://jobs.bosch.com/en/?country=cn"
+      ],
+      "evidence": "2026-07-29 reviewed official China careers page at bosch.com.cn/careers links to the China-filtered job list at jobs.bosch.com/en/?country=cn"
+    },
+    {
+      "company": "华帝",
+      "aliases": ["Vatti", "华帝股份"],
+      "officialDomains": ["vatti.com.cn"],
+      "careerPortals": ["https://vatti.com.cn/join_info"],
+      "evidence": "2026-07-29 reviewed first-party recruitment page exposes campus and social job-list navigation"
+    },
+    {
+      "company": "华盛证券",
+      "aliases": ["Huasheng Securities", "华盛通"],
+      "officialDomains": ["hstong.com"],
+      "careerPortals": ["https://www.hstong.com/hk/about/recruit"],
+      "evidence": "2026-07-29 reviewed first-party Join Huasheng page; user review records doctoral and social recruitment but no active campus hiring, so a static campus tab must not be treated as an active campus event"
     }
   ]
 }

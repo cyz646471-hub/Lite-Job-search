@@ -49,12 +49,18 @@ function isNonCandidateNavigation(url, text = '') {
 
 export function recruitmentTypeForEntry(text, url) {
   const value = `${String(text || '')} ${String(url || '')}`.toLowerCase();
+  if (/回到招聘首页|返回招聘首页|招聘首页|back to (?:the )?(?:career|recruitment) home/i.test(value)) {
+    return 'general';
+  }
   if (/实习|internship|(?:^|[^a-z])intern(?:[^a-z]|$)/i.test(value)) return 'internship';
   if (/校(?:园)?招|校园|应届|毕业生|graduate|campus/i.test(value)) return 'campus';
   if (/社会招聘|社招|有经验|experienced|professional hires?/i.test(value)) {
     return 'experienced';
   }
-  if (/职位|岗位|招聘岗位|全部工作|positions?|job openings?|open jobs?|careers?/i.test(value)) {
+  if (
+    /申请岗位|查看岗位|搜索岗位|职位|岗位|招聘岗位|全部工作|positions?|job openings?|open jobs?|find jobs?|search jobs?|careers?|apply(?: for)? jobs?/i
+      .test(value)
+  ) {
     return 'general';
   }
   return null;

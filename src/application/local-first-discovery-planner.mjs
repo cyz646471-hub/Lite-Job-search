@@ -80,8 +80,13 @@ export function planCompanyDiscovery({
   const knowledge = typeof repository.listCompanyWebKnowledge === 'function'
     ? repository.listCompanyWebKnowledge(company.id)
     : [];
+  const reviewedPortalSet = new Set(company.reviewedCareerPortals || []);
   const rejectedValues = new Set(knowledge
     .filter((item) => ['REJECTED_DOMAIN', 'REJECTED_PORTAL'].includes(item.knowledgeType))
+    .filter((item) => !(
+      item.knowledgeType === 'REJECTED_PORTAL'
+      && reviewedPortalSet.has(item.value)
+    ))
     .map((item) => item.value));
   const rejectedHosts = new Set([
     ...(company.rejectedOfficialDomains || []),
@@ -109,6 +114,8 @@ export function planCompanyDiscovery({
     && item.verificationStatus === 'VERIFIED'
     && !isRejectedValue(item.value)
   )).map((item) => item.value);
+  const reviewedPortals = (company.reviewedCareerPortals || [])
+    .filter((value) => !isRejectedValue(value));
   const atsTenants = knowledge.filter((item) => (
     item.knowledgeType === 'ATS_TENANT'
     && item.verificationStatus === 'VERIFIED'
@@ -144,6 +151,7 @@ export function planCompanyDiscovery({
     ? verifiedPortals.map((portal) => portal.canonicalUrl)
     : [
       ...verifiedPortals.map((portal) => portal.canonicalUrl),
+      ...reviewedPortals,
       ...historicalPortals,
       ...atsTenants,
       ...cachedCandidates,
@@ -183,17 +191,18 @@ export function planCompanyDiscovery({
     stages: Object.freeze([
       { priority: 1, source: 'VERIFIED_CAREER_PORTAL', count: verifiedPortals.length },
       { priority: 2, source: 'KNOWN_OFFICIAL_DOMAIN', count: confirmedPortalsOnly ? 0 : officialDomains.length },
-      { priority: 3, source: 'HISTORICAL_CAREER_PORTAL', count: confirmedPortalsOnly ? 0 : historicalPortals.length },
-      { priority: 4, source: 'ATS_TENANT_OWNERSHIP', count: confirmedPortalsOnly ? 0 : atsTenants.length },
-      { priority: 5, source: 'SEARCH_CACHE', count: confirmedPortalsOnly ? 0 : cachedCandidates.length },
-      { priority: 6, source: 'PUBLIC_LEAD_OFFICIAL_LINK', count: confirmedPortalsOnly ? 0 : leadCandidates.length },
-      { priority: 7, source: 'COMMON_RECRUITMENT_PATH', count: confirmedPortalsOnly ? 0 : commonPaths.length },
+      { priority: 3, source: 'REVIEWED_CAREER_PORTAL', count: confirmedPortalsOnly ? 0 : reviewedPortals.length },
+      { priority: 4, source: 'HISTORICAL_CAREER_PORTAL', count: confirmedPortalsOnly ? 0 : historicalPortals.length },
+      { priority: 5, source: 'ATS_TENANT_OWNERSHIP', count: confirmedPortalsOnly ? 0 : atsTenants.length },
+      { priority: 6, source: 'SEARCH_CACHE', count: confirmedPortalsOnly ? 0 : cachedCandidates.length },
+      { priority: 7, source: 'PUBLIC_LEAD_OFFICIAL_LINK', count: confirmedPortalsOnly ? 0 : leadCandidates.length },
+      { priority: 8, source: 'COMMON_RECRUITMENT_PATH', count: confirmedPortalsOnly ? 0 : commonPaths.length },
       {
-        priority: 8,
+        priority: 9,
         source: `${selectedSearchEngine.toUpperCase()}_BROWSER`,
         enabled: terminalAction === `${selectedSearchEngine.toUpperCase()}_DISCOVERY`,
       },
-      { priority: 9, source: 'MANUAL_DISCOVERY', enabled: terminalAction === 'MANUAL_OFFICIAL_DISCOVERY' },
+      { priority: 10, source: 'MANUAL_DISCOVERY', enabled: terminalAction === 'MANUAL_OFFICIAL_DISCOVERY' },
     ]),
   });
 }

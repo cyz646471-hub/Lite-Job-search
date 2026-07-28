@@ -163,4 +163,10 @@ export const EVIDENCE_RULES = Object.freeze({
     identityAnchor: false,
     hardReject: true,
   }),
+  banking_business_application: Object.freeze({
+    direction: 'NEGATIVE',
+    weight: -100,
+    identityAnchor: false,
+    hardReject: true,
+  }),
 });

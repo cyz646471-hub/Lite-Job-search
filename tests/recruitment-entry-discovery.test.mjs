@@ -98,6 +98,36 @@ test('verified official page may enqueue a known ATS tenant link', () => {
   assert.equal(entry.officialAttributionUrl, 'https://example.com/careers');
 });
 
+test('official careers page may enqueue a first-party apply-jobs link and preserve filters', () => {
+  const [entry] = discoverRecruitmentEntries({
+    baseUrl: 'https://www.bosch.com.cn/careers/',
+    links: [{
+      text: '申请岗位',
+      href: 'https://jobs.bosch.com/en/?country=cn',
+    }],
+    trustedRegistrableDomains: ['bosch.com', 'bosch.com.cn'],
+    parentOfficialVerified: true,
+  });
+
+  assert.equal(entry.url, 'https://jobs.bosch.com/en/?country=cn');
+  assert.equal(entry.recruitmentType, 'general');
+  assert.equal(entry.discoveryReason, 'career_navigation_link');
+});
+
+test('ATS login page may return to a trusted recruitment homepage', () => {
+  const [entry] = discoverRecruitmentEntries({
+    baseUrl: 'https://ainnovation.zhiye.com/Portal/Account/Login',
+    links: [{
+      text: '回到招聘首页',
+      href: 'https://ainnovation.zhiye.com/Campus',
+    }],
+    trustedRegistrableDomains: ['zhiye.com'],
+  });
+
+  assert.equal(entry.url, 'https://ainnovation.zhiye.com/Campus');
+  assert.equal(entry.recruitmentType, 'general');
+});
+
 test('unverified page cannot authorize a cross-domain ATS link', () => {
   const entries = discoverRecruitmentEntries({
     baseUrl: 'https://example.net/list',

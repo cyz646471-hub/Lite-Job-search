@@ -22,6 +22,7 @@ export function loadCompanyDomainOverrides() {
       aliases: Object.freeze(record.aliases || []),
       officialDomains: Object.freeze(record.officialDomains || []),
       rejectedOfficialDomains: Object.freeze(record.rejectedOfficialDomains || []),
+      careerPortals: Object.freeze(record.careerPortals || []),
     })));
   }
   return cachedRecords;
@@ -53,6 +54,7 @@ export function applyCompanyDomainKnowledge(company = {}) {
     ]),
     officialDomains: Object.freeze(officialDomains),
     rejectedOfficialDomains: Object.freeze(override?.rejectedOfficialDomains || []),
+    reviewedCareerPortals: Object.freeze(override?.careerPortals || []),
     officialDomain: officialDomains[0] || company.officialDomain || '',
     domainKnowledgeEvidence: override?.evidence || null,
   });

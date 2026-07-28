@@ -269,6 +269,7 @@ export async function runPersistentBrowserSupervisor({
               ? company.officialDomain || null
               : stored.primaryOfficialDomain || company.officialDomain || null,
             rejectedOfficialDomains: company.rejectedOfficialDomains || [],
+            reviewedCareerPortals: company.reviewedCareerPortals || [],
           }
         : {
             id: company.id || `company-plan-${inputHash([company]).slice(0, 24)}`,
@@ -279,6 +280,7 @@ export async function runPersistentBrowserSupervisor({
             officialDomains: correctedDomains,
             primaryOfficialDomain: company.officialDomain || null,
             rejectedOfficialDomains: company.rejectedOfficialDomains || [],
+            reviewedCareerPortals: company.reviewedCareerPortals || [],
           };
       const discoveryPlan = planCompanyDiscovery({
         company: planningCompany,

@@ -50,6 +50,15 @@
       ],
       "officialDomains": ["360shuke.com"],
       "provenance": "2026-07-28 verified campus tenant and official-site attribution in the LJS canary database"
+    },
+    {
+      "company": "创新奇智",
+      "aliases": ["AInnovation", "创新奇智科技"],
+      "ats": "ZHIYE",
+      "tenantKey": "ainnovation",
+      "urlPrefixes": ["https://ainnovation.zhiye.com/"],
+      "officialDomains": ["ainnovation.com"],
+      "provenance": "2026-07-29 reviewed tenant identity, company footer and backlink to ainnovation.com on the public Campus portal"
     }
   ]
 }
