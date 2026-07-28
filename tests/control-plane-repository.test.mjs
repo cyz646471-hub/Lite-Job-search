@@ -150,3 +150,41 @@ test('control service acknowledges a Google challenge without switching engines'
   assert.equal(result.manualAcknowledgedAt, '2026-07-27T00:01:00.000Z');
   assert.equal(repository.getProviderCircuitState('baidu'), null);
 });
+
+test('control service explicitly requeues provider-blocked deferred items', async (t) => {
+  const repository = await repositoryFor(t);
+  repository.beginBatch({
+    id: 'batch-google-retry',
+    inputHash: 'hash-google-retry',
+    startedAt: NOW,
+  });
+  repository.ensureBatchItem({
+    batchId: 'batch-google-retry',
+    itemKey: 'company-1',
+    position: 0,
+    input: { company: '示例公司', market: 'CN' },
+    createdAt: NOW,
+  });
+  repository.startBatchItem({
+    batchId: 'batch-google-retry',
+    itemKey: 'company-1',
+    startedAt: NOW,
+  });
+  repository.deferBatchItem({
+    batchId: 'batch-google-retry',
+    itemKey: 'company-1',
+    retryClass: 'PROVIDER_BLOCKED',
+    deferReason: 'provider_circuit_open',
+    completedAt: NOW,
+  });
+  const service = createControlPlaneService({
+    repository,
+    now: () => '2026-07-27T00:02:00.000Z',
+  });
+
+  const result = service.requeueDeferredBatchItems('batch-google-retry');
+
+  assert.equal(result.requeued, 1);
+  assert.equal(repository.listBatchItems('batch-google-retry')[0].status, 'PENDING');
+  assert.equal(repository.listAuditLogs()[0].action, 'BATCH_DEFERRED_ITEMS_REQUEUED');
+});

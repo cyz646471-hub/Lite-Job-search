@@ -138,6 +138,17 @@ export function createControlPlaneService({
       audit('BATCH_RESUMED', 'BATCH', batchId);
       return batch;
     },
+    requeueDeferredBatchItems(batchId, input = {}) {
+      if (typeof repository.requeueDeferredBatchItems !== 'function') {
+        throw new Error('deferred batch requeue is not configured');
+      }
+      const result = repository.requeueDeferredBatchItems({
+        batchId,
+        retryClass: input.retryClass || 'PROVIDER_BLOCKED',
+      });
+      audit('BATCH_DEFERRED_ITEMS_REQUEUED', 'BATCH', batchId, result);
+      return result;
+    },
     acknowledgeSearchProvider,
     acknowledgeBaidu() {
       return acknowledgeSearchProvider('baidu');

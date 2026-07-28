@@ -19,6 +19,7 @@ export function dashboardHtml() {
     .grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(300px,.65fr);gap:18px}.panel{margin-bottom:18px}.panel h3{font-size:15px;margin:0 0 14px}.status-row{display:grid;grid-template-columns:minmax(0,130px) minmax(0,1fr);gap:8px;padding:7px 0;border-bottom:1px solid #eef1f4}.status-row>*{min-width:0;overflow-wrap:anywhere}.status-row:last-child{border-bottom:0}.status-row span:first-child{color:var(--muted)}
     .badge{display:inline-flex;padding:3px 8px;border-radius:99px;font-size:11px;font-weight:650;background:#e8eefc;color:var(--blue)}.badge.good{background:#e4f4ed;color:var(--green)}.badge.warn{background:#fff1dc;color:var(--amber)}.badge.bad{background:#fdeaea;color:var(--red)}
     table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;min-width:0}th{text-align:left;color:var(--muted);font-weight:600;border-bottom:1px solid var(--line);padding:10px 9px;background:#f8fafc;position:sticky;top:0;z-index:1;white-space:nowrap}td{border-bottom:1px solid #eef1f4;padding:10px 9px;vertical-align:top}tbody tr:hover{background:#fbfcfe}.empty{color:var(--muted);padding:20px 0}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px;max-height:620px}.table-wrap table{min-width:920px}.list-head,.list-controls,.pager{display:flex;align-items:center;justify-content:space-between;gap:12px}.list-head{margin-bottom:12px}.list-head h3{margin:0}.list-controls{flex-wrap:wrap;justify-content:flex-end}.list-controls input{min-width:220px;margin:0}.list-controls select{width:auto;min-width:135px;margin:0}.pager{justify-content:flex-end;margin-top:12px;color:var(--muted)}button:disabled{opacity:.45;cursor:not-allowed}.data-link{display:inline-flex;align-items:center;gap:5px;color:var(--blue);font-weight:600;text-decoration:none;white-space:nowrap}.data-link:hover{text-decoration:underline}.muted-link{color:var(--muted);font-weight:500}.cell-sub{display:block;color:var(--muted);font-size:11px;margin-top:3px}.nowrap{white-space:nowrap}.job-title{min-width:200px}.table-summary{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}.auto-refresh{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:12px}.auto-refresh .dot{width:6px;height:6px;box-shadow:none}
+    details.job-group{border:0;border-radius:0;padding:0;margin:0;background:transparent}.job-group summary{display:inline-flex;align-items:center;gap:7px;color:var(--blue);font-weight:650;min-height:32px}.job-stack{display:grid;gap:8px;margin-top:9px;min-width:390px}.job-entry{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:9px 10px;background:#f8fafc;border:1px solid var(--line);border-radius:8px}.job-entry-main{min-width:0}.job-entry-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end}.aggregate-list{max-width:220px;overflow-wrap:anywhere}.company-job-table td{vertical-align:middle}
     details{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin-top:18px}summary{cursor:pointer;font-weight:650}.advanced{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px}.advanced label{display:block;margin:9px 0;color:var(--muted)}input,select{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;margin-top:4px}pre{white-space:pre-wrap;max-height:280px;overflow:auto;background:#111d2d;color:#dce6f2;padding:14px;border-radius:10px}
     .error{display:none;background:#fdeaea;color:#8f2424;border:1px solid #f2bcbc;padding:12px 14px;border-radius:10px;margin-bottom:16px}
     @media(max-width:850px){.cards{grid-template-columns:repeat(2,1fr)}.grid,.advanced{grid-template-columns:1fr}.topbar,.toolbar,.hero-head,.list-head{align-items:flex-start;flex-direction:column}.topbar{padding:16px 0}.list-controls{justify-content:flex-start;width:100%}.list-controls input,.list-controls select{width:100%;min-width:0}}
@@ -127,6 +128,47 @@ async function loadJobList(){
   el('job-prev').disabled=jobOffset===0;el('job-next').disabled=jobOffset+jobLimit>=data.total;
   el('job-table').innerHTML=data.items?.length?'<table><thead><tr><th>公司</th><th>岗位</th><th>招聘批次</th><th>地区</th><th>发布日期</th><th>截止日期</th><th>质量</th><th>来源与核验</th><th>链接</th></tr></thead><tbody>'+data.items.map((x)=>'<tr><td><strong>'+escapeHtml(x.company)+'</strong></td><td class="job-title"><strong>'+escapeHtml(x.title)+'</strong><span class="cell-sub">'+escapeHtml(x.employmentType||x.roleFamily||'—')+'</span></td><td>'+escapeHtml([x.cohort,x.campaignName||x.recruitmentType].filter(Boolean).join(' · ')||'—')+'</td><td>'+escapeHtml((x.locations||[]).join('、')||'—')+'</td><td class="nowrap">'+dateOnly(x.publishedAt)+'</td><td class="nowrap">'+dateOnly(x.closesAt)+'</td><td>'+badge(x.qualityGrade||'C',x.qualityGrade==='A'?'good':x.qualityGrade==='B'?'warn':'bad')+'<span class="cell-sub">'+escapeHtml(publicationLabels[x.publicationStatus]||x.publicationStatus||'—')+'</span></td><td>'+escapeHtml(sourceLabels[x.sourceTier]||x.sourceTier||'—')+'<span class="cell-sub">'+escapeHtml(x.portalStatus||'未核验')+(x.confidenceScore==null?'':' · '+fmt(x.confidenceScore)+' 分')+'</span></td><td>'+(x.actionUrl?externalLink(x.actionUrl,'打开投递'):externalLink(x.sourceUrl,x.sourceTier==='PLATFORM_ONLY'?'查看候选来源':'查看官方来源',true))+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">当前筛选条件下没有招聘岗位。</div>';
 }
+function compactList(values,limit=3){
+  const list=(values||[]).filter(Boolean);
+  const visible=list.slice(0,limit).map(escapeHtml).join('、');
+  return visible+(list.length>limit?' ＋'+fmt(list.length-limit):'')||'—';
+}
+function dateRange(from,to){
+  if(!from&&!to)return '—';
+  if(from===to||!to)return dateOnly(from||to);
+  return dateOnly(from)+' 至 '+dateOnly(to);
+}
+function groupedJobEntry(job){
+  const link=job.actionUrl
+    ?externalLink(job.actionUrl,'打开投递')
+    :externalLink(job.sourceUrl,job.sourceTier==='PLATFORM_ONLY'?'查看候选来源':'查看官方来源',true);
+  return '<div class="job-entry"><div class="job-entry-main"><strong>'+escapeHtml(job.title)+'</strong><span class="cell-sub">'+escapeHtml([job.employmentType||job.roleFamily,(job.locations||[]).join('、'),job.cohort].filter(Boolean).join(' · ')||'信息待补齐')+'</span></div><div class="job-entry-actions">'+badge(job.qualityGrade||'C',job.qualityGrade==='A'?'good':job.qualityGrade==='B'?'warn':'bad')+link+'</div></div>';
+}
+async function loadGroupedJobList(){
+  const params=new URLSearchParams({
+    query:el('job-search').value.trim(),
+    source_tier:el('job-source').value,
+    publication_status:el('job-publication').value,
+    job_status:el('job-status').value,
+    group_by:'COMPANY',
+    offset:String(jobOffset),
+    limit:String(jobLimit),
+  });
+  const data=await api('/api/progress/jobs?'+params);
+  if(jobOffset>=data.total&&jobOffset>0){jobOffset=Math.max(0,Math.floor(Math.max(0,data.total-1)/jobLimit)*jobLimit);return loadGroupedJobList()}
+  el('job-total').textContent=fmt(data.jobTotal);
+  el('job-actionable').textContent='可投递 '+fmt(data.counts?.actionable);
+  el('job-published').textContent='已发布 '+fmt(data.counts?.published);
+  el('job-review').textContent='待复核 '+fmt(data.counts?.reviewRequired);
+  el('job-platform').textContent='第三方 '+fmt(data.counts?.platformOnly);
+  el('job-updated').textContent='更新于 '+dt(data.generatedAt);
+  el('job-page').textContent='第 '+fmt(Math.floor(jobOffset/jobLimit)+1)+' 页 · '+fmt(jobOffset+1)+'–'+fmt(Math.min(jobOffset+jobLimit,data.total))+' / '+fmt(data.total)+' 家公司';
+  el('job-prev').disabled=jobOffset===0;el('job-next').disabled=jobOffset+jobLimit>=data.total;
+  el('job-table').innerHTML=data.items?.length?'<table class="company-job-table"><thead><tr><th>公司</th><th>开放岗位（合并）</th><th>招聘批次</th><th>地区</th><th>发布日期</th><th>截止日期</th><th>质量与来源</th><th>状态</th></tr></thead><tbody>'+data.items.map((x)=>{
+    const grades=['A','B','C'].map((grade)=>({grade,count:x.jobs.filter((job)=>job.qualityGrade===grade).length})).filter((item)=>item.count);
+    return '<tr><td><strong>'+escapeHtml(x.company)+'</strong><span class="cell-sub">'+fmt(x.jobCount)+' 个岗位</span></td><td class="job-title"><details class="job-group"><summary>'+fmt(x.jobCount)+' 个岗位 · 展开查看</summary><div class="job-stack">'+x.jobs.map(groupedJobEntry).join('')+'</div></details></td><td class="aggregate-list">'+compactList([...(x.cohorts||[]),...(x.campaignNames||[]),...(x.recruitmentTypes||[])])+'</td><td class="aggregate-list">'+compactList(x.locations,4)+'</td><td class="nowrap">'+dateRange(x.publishedFrom,x.publishedTo)+'</td><td class="nowrap">'+dateRange(x.closesFrom,x.closesTo)+'</td><td>'+grades.map((item)=>badge(item.grade+' '+fmt(item.count),item.grade==='A'?'good':item.grade==='B'?'warn':'bad')).join(' ')+'<span class="cell-sub">'+compactList((x.sourceTiers||[]).map((tier)=>sourceLabels[tier]||tier))+'</span></td><td>'+badge('可投递 '+fmt(x.actionableCount),x.actionableCount?'good':'')+(x.reviewRequiredCount?'<span class="cell-sub">待复核 '+fmt(x.reviewRequiredCount)+'</span>':'')+(x.platformOnlyCount?'<span class="cell-sub">第三方 '+fmt(x.platformOnlyCount)+'</span>':'')+'</td></tr>';
+  }).join('')+'</tbody></table>':'<div class="empty">当前筛选条件下没有招聘岗位。</div>';
+}
 function render(data){
   const p=data.progress||{};const worker=data.worker;const health=worker?.health;
   currentBatchId=data.batch?.id||'';currentBatchStatus=data.batch?.status||'';
@@ -148,7 +190,7 @@ function render(data){
   el('updated').textContent='数据更新时间 '+dt(data.updatedAt)+' · 页面刷新 '+dt(data.generatedAt);el('raw').textContent=JSON.stringify(data,null,2);
   const healthy=health==='HEALTHY';el('live-dot').className='dot '+(healthy?'':health==='STALE'?'bad':'warn');el('live-text').textContent=healthy?'Worker 正常运行':health==='STALE'?'Worker 心跳已过期':'Worker 当前未运行';
 }
-async function refresh(){try{el('error').style.display='none';render(await api('/api/progress'));await Promise.all([loadCompanyList(),loadJobList()])}catch(error){el('error').textContent='读取进度失败：'+error.message;el('error').style.display='block';el('live-dot').className='dot bad';el('live-text').textContent='状态读取失败'}}
+async function refresh(){try{el('error').style.display='none';render(await api('/api/progress'));await Promise.all([loadCompanyList(),loadGroupedJobList()])}catch(error){el('error').textContent='读取进度失败：'+error.message;el('error').style.display='block';el('live-dot').className='dot bad';el('live-text').textContent='状态读取失败'}}
 el('refresh').onclick=refresh;
 el('pause-worker').onclick=async()=>{if(!currentBatchId||!confirm('暂停当前 Worker？当前公司完成后会安全停止并保存断点。'))return;await api('/api/batches/'+encodeURIComponent(currentBatchId)+'/stop',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:'{}'});await refresh()};
 el('resume-worker').onclick=async()=>{if(!currentBatchId||!confirm('开始或继续当前 Worker？'))return;await api('/api/batches/'+encodeURIComponent(currentBatchId)+'/resume',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:'{}'});await refresh()};
@@ -156,10 +198,10 @@ el('company-prev').onclick=()=>{companyOffset=Math.max(0,companyOffset-companyLi
 el('company-next').onclick=()=>{companyOffset+=companyLimit;loadCompanyList()};
 el('company-scope').onchange=()=>{companyOffset=0;loadCompanyList()};
 el('company-search').oninput=()=>{clearTimeout(companySearchTimer);companySearchTimer=setTimeout(()=>{companyOffset=0;loadCompanyList()},250)};
-el('job-prev').onclick=()=>{jobOffset=Math.max(0,jobOffset-jobLimit);loadJobList()};
-el('job-next').onclick=()=>{jobOffset+=jobLimit;loadJobList()};
-['job-source','job-publication','job-status'].forEach((id)=>{el(id).onchange=()=>{jobOffset=0;loadJobList()}});
-el('job-search').oninput=()=>{clearTimeout(jobSearchTimer);jobSearchTimer=setTimeout(()=>{jobOffset=0;loadJobList()},250)};
+el('job-prev').onclick=()=>{jobOffset=Math.max(0,jobOffset-jobLimit);loadGroupedJobList()};
+el('job-next').onclick=()=>{jobOffset+=jobLimit;loadGroupedJobList()};
+['job-source','job-publication','job-status'].forEach((id)=>{el(id).onchange=()=>{jobOffset=0;loadGroupedJobList()}});
+el('job-search').oninput=()=>{clearTimeout(jobSearchTimer);jobSearchTimer=setTimeout(()=>{jobOffset=0;loadGroupedJobList()},250)};
 el('task').onsubmit=async(event)=>{event.preventDefault();const form=new FormData(event.target);const body=Object.fromEntries(form);body.role_keywords=body.role_keywords.split(',');body.target_count=Number(body.target_count);body.allow_baidu_fallback=form.has('allow_baidu_fallback');await api('/api/tasks',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:JSON.stringify(body)});await refresh()};
 async function acknowledge(provider){if(!confirm('确认已人工完成 '+provider+' 安全验证？'))return;await api('/api/providers/'+provider+'/manual-ack',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:'{}'});await refresh()}
 el('ack-google').onclick=()=>acknowledge('google');el('ack-baidu').onclick=()=>acknowledge('baidu');refresh();setInterval(refresh,10000);

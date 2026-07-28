@@ -844,6 +844,15 @@ test('blocked batch item is deferred and provider circuit state round-trips', as
     version: 0,
     updatedAt: NOW,
   });
+  const requeued = repository.requeueDeferredBatchItems({
+    batchId: 'batch-deferred',
+  });
+  assert.equal(requeued.requeued, 1);
+  const [pending] = repository.listBatchItems('batch-deferred');
+  assert.equal(pending.status, 'PENDING');
+  assert.equal(pending.retryClass, null);
+  assert.equal(pending.deferReason, null);
+  assert.equal(pending.errorMessage, null);
 });
 
 test('batch id cannot be silently reused with different inputs', async (t) => {

@@ -29,6 +29,8 @@ filtering take priority over decorative graphics.
 - Table headers remain visible while scrolling.
 - Search and filters precede the table and update without a full-page reload.
 - SQLite-backed data refreshes every 10 seconds.
+- Recruitment openings are grouped into one company row; the row expands
+  in-place to show every opening and its source or action link.
 - Status is communicated with both text and color.
 - Only active A-grade, published openings under a deterministic `VERIFIED`
   official recruitment portal receive an “打开投递” link.

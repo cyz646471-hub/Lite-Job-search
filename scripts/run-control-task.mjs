@@ -203,7 +203,7 @@ export async function runControlTask(args = {}, dependencies = {}) {
         ),
         maxCompaniesPerRun: maxPerRun,
         timeoutMs: Number(args['timeout-ms']) || 15_000,
-        searchDelayMs: Number(args['search-delay-ms']) || 10_000,
+        searchDelayMs: Number(args['search-delay-ms']) || 4_000,
         searchJitterMs: args['search-jitter-ms'] == null
           ? 4_000
           : Number(args['search-jitter-ms']),

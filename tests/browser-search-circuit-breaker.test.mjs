@@ -48,7 +48,7 @@ test('manual acknowledgement requires one HALF_OPEN probe before closing the cir
   assert.equal(closed.lastHealthyAt, '2026-07-26T00:11:00.000Z');
 });
 
-test('rate controller uses at least ten seconds plus bounded jitter', async () => {
+test('rate controller uses at least four seconds plus bounded jitter', async () => {
   let clock = 0;
   const delays = [];
   const gate = createAdaptiveSearchIntervalGate({
@@ -65,7 +65,7 @@ test('rate controller uses at least ten seconds plus bounded jitter', async () =
   await gate();
   await gate();
 
-  assert.deepEqual(delays, [20_000]);
+  assert.deepEqual(delays, [14_000]);
 });
 
 test('provider resume persists CLOSED only after a healthy probe', async () => {

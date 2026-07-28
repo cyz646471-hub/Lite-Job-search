@@ -22,8 +22,9 @@ export function createControlPlaneWorkerLauncher({
   runnerFile,
   maxCompaniesPerRun = 10,
   timeoutMs = 15_000,
-  searchDelayMs = 10_000,
+  searchDelayMs = 4_000,
   searchJitterMs = 4_000,
+  searchEngine = 'baidu',
   retryFailed = true,
   maxSupervisorRetries = 2,
   supervisorRetryDelayMs = 2_000,
@@ -33,6 +34,10 @@ export function createControlPlaneWorkerLauncher({
     throw new Error('worker launcher requires repository, database, registry, output and profile');
   }
   const resolvedRunner = path.resolve(runnerFile || 'scripts/run-control-task.mjs');
+  const selectedSearchEngine = String(searchEngine || 'baidu').toLowerCase();
+  if (!['baidu', 'google'].includes(selectedSearchEngine)) {
+    throw new Error(`unsupported worker search engine: ${searchEngine}`);
+  }
   const children = new Map();
 
   return Object.freeze({
@@ -73,6 +78,7 @@ export function createControlPlaneWorkerLauncher({
         '--timeout-ms', String(timeoutMs),
         '--search-delay-ms', String(searchDelayMs),
         '--search-jitter-ms', String(searchJitterMs),
+        '--search-engine', selectedSearchEngine,
         '--max-supervisor-retries', String(maxSupervisorRetries),
         '--supervisor-retry-delay-ms', String(supervisorRetryDelayMs),
       ];

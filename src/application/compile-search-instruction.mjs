@@ -137,7 +137,7 @@ export function compileSearchInstruction(instruction, {
     searchSources: Object.freeze([`chrome_${searchEngine}_visible_search`]),
     disabledSearchSources: Object.freeze(['baidu_api', 'apify', 'automatic_engine_fallback']),
     maxCompaniesPerRun: 10,
-    searchDelayMs: 10_000,
+    searchDelayMs: 4_000,
     searchJitterMs: 20_000,
     maxResults: 10,
     maxCandidates: 3,

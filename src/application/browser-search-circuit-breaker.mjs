@@ -100,13 +100,13 @@ export function transitionCircuit(current, event = {}, now = new Date().toISOStr
 }
 
 export function createAdaptiveSearchIntervalGate({
-  minimumIntervalMs = 10_000,
+  minimumIntervalMs = 4_000,
   jitterMs = 20_000,
   random = Math.random,
   nowMs = () => Date.now(),
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
-  const minimum = Math.max(10_000, Number(minimumIntervalMs) || 10_000);
+  const minimum = Math.max(4_000, Number(minimumIntervalMs) || 4_000);
   const jitter = Math.max(0, Number(jitterMs) || 0);
   let lastSearchStartedAt = null;
   return async function waitForSearchSlot() {

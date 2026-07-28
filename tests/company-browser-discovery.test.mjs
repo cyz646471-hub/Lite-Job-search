@@ -1040,17 +1040,23 @@ test('local worker bounds navigation and recursion settings', () => {
   });
 });
 
-test('local worker defaults to a low-frequency 10-company search run', () => {
+test('local worker defaults to a bounded 10-company search run', () => {
   assert.deepEqual(browserDiscoveryLimits({}), {
     maxResults: 10,
     maxCandidates: 3,
     maxCareerEntries: 5,
     maxDepth: 2,
     timeoutMs: 10_000,
-    searchDelayMs: 10_000,
+    searchDelayMs: 4_000,
     searchJitterMs: 20_000,
     maxCompaniesPerRun: 10,
   });
+});
+
+test('local worker clamps an unsafe sub-four-second search delay', () => {
+  assert.equal(browserDiscoveryLimits({
+    'search-delay-ms': '1000',
+  }).searchDelayMs, 4_000);
 });
 
 test('minimum search interval gate delays only subsequent searches', async () => {

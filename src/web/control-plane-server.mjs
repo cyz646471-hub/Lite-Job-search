@@ -137,6 +137,7 @@ export function createControlPlaneServer({
           sourceTier: url.searchParams.get('source_tier') || 'ALL',
           jobStatus: url.searchParams.get('job_status') || 'ALL',
           publicationStatus: url.searchParams.get('publication_status') || 'ALL',
+          groupBy: url.searchParams.get('group_by') || 'JOB',
           offset: url.searchParams.get('offset') || 0,
           limit: url.searchParams.get('limit') || 50,
         }));
@@ -280,6 +281,18 @@ export function createControlPlaneServer({
         const stopMatch = url.pathname.match(/^\/api\/batches\/([^/]+)\/stop$/);
         if (stopMatch) {
           json(response, 200, service.stopBatch(decodeURIComponent(stopMatch[1])));
+          return;
+        }
+        const requeueDeferredMatch = url.pathname.match(
+          /^\/api\/batches\/([^/]+)\/requeue-deferred$/,
+        );
+        if (requeueDeferredMatch) {
+          json(response, 200, service.requeueDeferredBatchItems(
+            decodeURIComponent(requeueDeferredMatch[1]),
+            {
+              retryClass: body.retry_class || 'PROVIDER_BLOCKED',
+            },
+          ));
           return;
         }
         const resumeMatch = url.pathname.match(/^\/api\/batches\/([^/]+)\/resume$/);

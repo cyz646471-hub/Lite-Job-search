@@ -47,8 +47,8 @@ const workerLauncher = args['worker-registry']
       Math.min(30_000, Number(args['worker-timeout-ms']) || 15_000),
     ),
     searchDelayMs: Math.max(
-      10_000,
-      Math.min(60_000, Number(args['worker-search-delay-ms']) || 10_000),
+      4_000,
+      Math.min(60_000, Number(args['worker-search-delay-ms']) || 4_000),
     ),
     searchJitterMs: Math.max(
       0,
@@ -59,6 +59,7 @@ const workerLauncher = args['worker-registry']
           : Number(args['worker-search-jitter-ms']),
       ),
     ),
+    searchEngine: args['worker-search-engine'] || 'baidu',
   })
   : null;
 const server = createControlPlaneServer({

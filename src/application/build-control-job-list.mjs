@@ -55,6 +55,7 @@ export function buildControlJobList({
   sourceTier = 'ALL',
   jobStatus = 'ALL',
   publicationStatus = 'ALL',
+  groupBy = 'JOB',
   offset = 0,
   limit = 50,
 } = {}) {
@@ -83,6 +84,7 @@ export function buildControlJobList({
     const actionUrl = officialActionUrl({ job, event, portal });
     return {
       id: job.id,
+      companyId: company?.id || job.companyId,
       company: company?.canonicalName || job.companyId,
       title: job.title,
       roleFamily: job.roleFamily || null,
@@ -128,7 +130,51 @@ export function buildControlJobList({
     || String(left.title).localeCompare(String(right.title), 'zh-CN')
   ));
 
-  const page = rows.slice(selectedOffset, selectedOffset + selectedLimit);
+  const selectedGroupBy = String(groupBy || 'JOB').toUpperCase() === 'COMPANY'
+    ? 'COMPANY'
+    : 'JOB';
+  const companyGroups = new Map();
+  for (const row of rows) {
+    const current = companyGroups.get(row.companyId) || {
+      id: row.companyId,
+      company: row.company,
+      jobs: [],
+    };
+    current.jobs.push(row);
+    companyGroups.set(row.companyId, current);
+  }
+  const groupedRows = [...companyGroups.values()].map((group) => {
+    const unique = (values) => [...new Set(values.filter(Boolean))];
+    const publishedDates = group.jobs.map((job) => job.publishedAt).filter(Boolean).sort();
+    const closingDates = group.jobs.map((job) => job.closesAt).filter(Boolean).sort();
+    return Object.freeze({
+      id: group.id,
+      company: group.company,
+      jobCount: group.jobs.length,
+      actionableCount: group.jobs.filter((job) => job.actionUrl).length,
+      reviewRequiredCount: group.jobs.filter(
+        (job) => job.publicationStatus === 'REVIEW_REQUIRED',
+      ).length,
+      platformOnlyCount: group.jobs.filter((job) => job.sourceTier === 'PLATFORM_ONLY').length,
+      locations: Object.freeze(unique(group.jobs.flatMap((job) => job.locations))),
+      cohorts: Object.freeze(unique(group.jobs.map((job) => job.cohort))),
+      campaignNames: Object.freeze(unique(group.jobs.map((job) => job.campaignName))),
+      recruitmentTypes: Object.freeze(unique(group.jobs.map((job) => job.recruitmentType))),
+      qualityGrades: Object.freeze(unique(group.jobs.map((job) => job.qualityGrade))),
+      sourceTiers: Object.freeze(unique(group.jobs.map((job) => job.sourceTier))),
+      portalStatuses: Object.freeze(unique(group.jobs.map((job) => job.portalStatus))),
+      publishedFrom: publishedDates.at(0) || null,
+      publishedTo: publishedDates.at(-1) || null,
+      closesFrom: closingDates.at(0) || null,
+      closesTo: closingDates.at(-1) || null,
+      jobs: Object.freeze(group.jobs.map((job) => Object.freeze(job))),
+    });
+  }).sort((left, right) => (
+    right.actionableCount - left.actionableCount
+    || left.company.localeCompare(right.company, 'zh-CN')
+  ));
+  const selectedRows = selectedGroupBy === 'COMPANY' ? groupedRows : rows;
+  const page = selectedRows.slice(selectedOffset, selectedOffset + selectedLimit);
   return Object.freeze({
     status: 'OK',
     generatedAt: new Date().toISOString(),
@@ -136,9 +182,12 @@ export function buildControlJobList({
     sourceTier: selectedSourceTier,
     jobStatus: selectedJobStatus,
     publicationStatus: selectedPublicationStatus,
+    groupBy: selectedGroupBy,
     offset: selectedOffset,
     limit: selectedLimit,
-    total: rows.length,
+    total: selectedRows.length,
+    jobTotal: rows.length,
+    companyTotal: groupedRows.length,
     counts: Object.freeze({
       actionable: rows.filter((row) => row.actionUrl).length,
       published: rows.filter((row) => row.publicationStatus === 'PUBLISHED').length,

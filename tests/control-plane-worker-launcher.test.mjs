@@ -30,6 +30,7 @@ test('control-plane launcher starts one detached task runner and suppresses dupl
     timeoutMs: 12_000,
     searchDelayMs: 10_000,
     searchJitterMs: 0,
+    searchEngine: 'google',
     spawnProcess(command, args, options) {
       calls.push({ command, args, options });
       return launched;
@@ -52,6 +53,7 @@ test('control-plane launcher starts one detached task runner and suppresses dupl
       '--timeout-ms', '12000',
       '--search-delay-ms', '10000',
       '--search-jitter-ms', '0',
+      '--search-engine', 'google',
     ],
   );
 });
@@ -83,4 +85,15 @@ test('control-plane launcher reuses a healthy recorded worker', () => {
   assert.equal(result.status, 'ALREADY_RUNNING');
   assert.equal(result.pid, 9876);
   assert.equal(spawnCalls, 0);
+});
+
+test('control-plane launcher rejects an unknown search engine', () => {
+  assert.throws(() => createControlPlaneWorkerLauncher({
+    repository: {},
+    database: 'data/jobs.sqlite',
+    registry: 'data/companies.json',
+    outputDirectory: 'test-output/worker',
+    profileDirectory: 'data/profile',
+    searchEngine: 'fallback-chain',
+  }), /unsupported worker search engine/);
 });

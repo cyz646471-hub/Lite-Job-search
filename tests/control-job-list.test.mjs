@@ -114,3 +114,33 @@ test('verified portal does not turn a B-grade review job into an application act
   assert.equal(result.items[0].actionUrl, null);
   assert.equal(result.counts.actionable, 0);
 });
+
+test('company grouping folds multiple openings into one paginated row', () => {
+  const source = repository();
+  const original = source.listJobOpenings;
+  source.listJobOpenings = () => [
+    ...original(),
+    {
+      ...original()[0],
+      id: 'job-3',
+      title: '数据产品经理',
+      jobDetailUrl: 'https://jobs.example.com/jobs/3',
+      sourceUrl: 'https://jobs.example.com/jobs/3',
+    },
+  ];
+  const result = buildControlJobList({
+    repository: source,
+    groupBy: 'COMPANY',
+    limit: 1,
+  });
+
+  assert.equal(result.groupBy, 'COMPANY');
+  assert.equal(result.jobTotal, 3);
+  assert.equal(result.companyTotal, 2);
+  assert.equal(result.total, 2);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].company, '示例科技');
+  assert.equal(result.items[0].jobCount, 2);
+  assert.equal(result.items[0].jobs.length, 2);
+  assert.equal(result.items[0].actionableCount, 2);
+});

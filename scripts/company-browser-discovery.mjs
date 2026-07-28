@@ -1020,14 +1020,14 @@ export function browserDiscoveryLimits(args = {}) {
     maxCareerEntries: boundedInteger(args['max-career-entries'], 5, 1, 10),
     maxDepth: boundedInteger(args['max-depth'], 2, 0, 2),
     timeoutMs: boundedInteger(args['timeout-ms'], 10_000, 1_000, 30_000),
-    searchDelayMs: boundedInteger(args['search-delay-ms'], 10_000, 10_000, 60_000),
+    searchDelayMs: boundedInteger(args['search-delay-ms'], 4_000, 4_000, 60_000),
     searchJitterMs: boundedInteger(args['search-jitter-ms'], 20_000, 0, 60_000),
     maxCompaniesPerRun: boundedInteger(args['max-companies-per-run'], 10, 1, 200),
   });
 }
 
 export function createMinimumSearchIntervalGate({
-  minimumIntervalMs = 10_000,
+  minimumIntervalMs = 4_000,
   nowMs = () => Date.now(),
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
@@ -1113,7 +1113,7 @@ async function runCli() {
   const args = parseArgs(runtimeProcess?.argv?.slice(2) || []);
   const healthProbeMode = Boolean(args['resume-provider'] && args['health-probe']);
   if (args.help || (!healthProbeMode && (!args.input || !args['output-dir']))) {
-    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--xlsx-output outputs/student-applications.xlsx] [--browser-mode persistent-chrome] [--profile-dir data/persistent-chrome-worker-profile] [--search-engine baidu|google] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 10000] [--search-jitter-ms 20000] [--max-companies-per-run 10]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu|google --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/persistent-chrome-worker-profile]\n');
+    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--xlsx-output outputs/student-applications.xlsx] [--browser-mode persistent-chrome] [--profile-dir data/persistent-chrome-worker-profile] [--search-engine baidu|google] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 4000] [--search-jitter-ms 20000] [--max-companies-per-run 10]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu|google --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/persistent-chrome-worker-profile]\n');
     return args.help ? 0 : 2;
   }
   let companies = [];

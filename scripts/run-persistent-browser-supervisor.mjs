@@ -118,7 +118,7 @@ export async function runPersistentBrowserSupervisor({
   maxCareerEntries = 5,
   maxDepth = 2,
   timeoutMs = 15_000,
-  searchDelayMs = 10_000,
+  searchDelayMs = 4_000,
   searchJitterMs = 4_000,
   headless = false,
   retryFailed = false,

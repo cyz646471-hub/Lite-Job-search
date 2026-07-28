@@ -643,6 +643,16 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
             completed_at = @completedAt
         WHERE batch_id = @batchId AND item_key = @itemKey
       `),
+      requeueDeferredBatchItems: database.prepare(`
+        UPDATE batch_items
+        SET status = 'PENDING', result_status = NULL,
+            discovery_run_id = NULL, error_message = NULL,
+            started_at = NULL, completed_at = NULL,
+            retry_class = NULL, deferred_until = NULL, defer_reason = NULL
+        WHERE batch_id = @batchId
+          AND status = 'DEFERRED'
+          AND retry_class = @retryClass
+      `),
       completeBatch: database.prepare(`
         UPDATE batch_runs SET status = @status, completed_at = @completedAt
         WHERE id = @id
@@ -1637,6 +1647,23 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     `).all().map(mapBatchItem);
   }
 
+  function requeueDeferredBatchItems({
+    batchId,
+    retryClass = 'PROVIDER_BLOCKED',
+  } = {}) {
+    requireMigration();
+    if (!batchId) throw new Error('batchId is required');
+    const result = statements.requeueDeferredBatchItems.run({
+      batchId,
+      retryClass,
+    });
+    return Object.freeze({
+      batchId,
+      retryClass,
+      requeued: result.changes,
+    });
+  }
+
   function completeBatch(batch) {
     requireMigration();
     statements.completeBatch.run(batch);
@@ -2069,6 +2096,7 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     deferBatchItem,
     listBatchItems,
     listDeferredBatchItems,
+    requeueDeferredBatchItems,
     completeBatch,
     getProviderCircuitState,
     saveProviderCircuitState,
