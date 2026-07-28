@@ -56,6 +56,13 @@ test('local web control plane reads real SQLite state and confirms writes', asyn
   assert.equal(status.tasks[0].id, task.id);
   assert.equal(status.batches[0].status, 'PENDING');
   assert.deepEqual(status.reviewTasks, []);
+  const progress = await (await fetch(`${base}/api/progress`)).json();
+  assert.equal(progress.task.id, task.id);
+  assert.equal(progress.progress.target, 10);
+  assert.equal(progress.progress.notMaterialized, 10);
+  const dashboard = await (await fetch(base)).text();
+  assert.match(dashboard, /全量补齐看板/);
+  assert.match(dashboard, /尚未装载/);
 
   const reviewResponse = await fetch(`${base}/api/reviews`, {
     method: 'POST',

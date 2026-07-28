@@ -2,7 +2,9 @@ import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
+import { buildControlProgress } from '../application/build-control-progress.mjs';
 import { createControlPlaneService } from '../application/control-plane-service.mjs';
+import { dashboardHtml as progressDashboardHtml } from './control-plane-dashboard.mjs';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -94,11 +96,18 @@ export function createControlPlaneServer({
       const url = new URL(request.url, 'http://127.0.0.1');
       if (request.method === 'GET' && url.pathname === '/') {
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        response.end(dashboardHtml());
+        response.end(progressDashboardHtml());
         return;
       }
       if (request.method === 'GET' && url.pathname === '/api/status') {
         json(response, 200, service.status());
+        return;
+      }
+      if (request.method === 'GET' && url.pathname === '/api/progress') {
+        json(response, 200, buildControlProgress({
+          repository,
+          batchId: url.searchParams.get('batch_id'),
+        }));
         return;
       }
       if (request.method === 'GET' && url.pathname === '/api/tasks') {
