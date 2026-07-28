@@ -359,7 +359,11 @@ test('does not classify the word internal as an internship signal', async () => 
 });
 
 test('Playwright wrapper implements the BrowserSession port', async () => {
+  let configuredTimeout = null;
   const rawPage = {
+    setDefaultTimeout: (timeoutMs) => {
+      configuredTimeout = timeoutMs;
+    },
     goto: async () => ({ status: () => 200 }),
     waitForTimeout: async () => {},
     url: () => 'https://jobs.example.com/',
@@ -380,5 +384,6 @@ test('Playwright wrapper implements the BrowserSession port', async () => {
 
   assert.equal(assertBrowserSession(session), session);
   assert.equal(assertBrowserPage(page), page);
+  assert.equal(configuredTimeout, 5_000);
   assert.equal((await page.snapshot()).text, '招聘职位');
 });

@@ -11,6 +11,7 @@ import {
 export function createPlaywrightBrowserSession(context, {
   closeContext = true,
   onClose = null,
+  actionTimeoutMs = 5_000,
 } = {}) {
   if (typeof context?.newPage !== 'function') {
     throw new Error('Playwright context.newPage is required');
@@ -18,6 +19,7 @@ export function createPlaywrightBrowserSession(context, {
   const session = Object.freeze({
     async newPage() {
       const page = await context.newPage();
+      page.setDefaultTimeout?.(Math.max(1_000, Number(actionTimeoutMs) || 5_000));
       const wrapped = Object.freeze({
         goto: (url, options) => page.goto(url, options),
         waitForTimeout: (milliseconds) => page.waitForTimeout(milliseconds),

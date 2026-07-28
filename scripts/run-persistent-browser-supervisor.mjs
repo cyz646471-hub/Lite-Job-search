@@ -90,7 +90,15 @@ async function observeCandidateWithBrowser(browser, url, timeoutMs) {
         throw error;
       }
     } finally {
-      await page.close().catch(() => {});
+      let closeTimer;
+      await Promise.race([
+        page.close().catch(() => {}),
+        new Promise((resolve) => {
+          closeTimer = setTimeout(resolve, 2_000);
+          closeTimer.unref?.();
+        }),
+      ]);
+      clearTimeout(closeTimer);
     }
   }
   throw lastError;
