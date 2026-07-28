@@ -3,6 +3,7 @@ import {
   assertBrowserSession,
 } from '../../ports/browser-session.mjs';
 import { readBaiduRows } from './baidu-search-page-adapter.mjs';
+import { readPublicSearchRows } from './public-search-page-adapter.mjs';
 import {
   captureRenderedSnapshot,
   observeRenderedRecruitmentPage,
@@ -28,6 +29,7 @@ export function createPlaywrightBrowserSession(context, {
         snapshot: () => captureRenderedSnapshot(page),
         readBodyText: () => page.locator('body').innerText().catch(() => ''),
         readSearchRows: (limit) => readBaiduRows(page, limit),
+        readPublicSearchRows: (engine, limit) => readPublicSearchRows(page, engine, limit),
         observeCareerPage: (options) => observeRenderedRecruitmentPage(page, options),
         close: () => page.close(),
       });

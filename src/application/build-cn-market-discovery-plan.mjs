@@ -37,7 +37,7 @@ function makeQueries(cohorts, tier, role, industry) {
     id: `CN_${tier}_${name}`,
     priorityTier: tier,
     cohort: name,
-    query: [...terms, sector, ...keywords, '招聘官网', '-职友集', '-前程无忧', '-牛客网', '-新闻'].filter(Boolean).join(' '),
+    query: ['中国', ...terms, sector, ...keywords, '招聘官网', '-新闻'].filter(Boolean).join(' '),
   }));
 }
 
@@ -70,14 +70,15 @@ export function buildCnMarketDiscoveryPlan({
     industry: clean(industry),
     targetCount: target,
     llmUsage: Object.freeze({ enabled: false, reason: 'deterministic_queries_and_rules_only' }),
-    queryPolicy: Object.freeze({ searchEngine: 'baidu', automaticEngineFallback: false, blockedHandling: 'CHECKPOINT_BLOCKED' }),
+    queryPolicy: Object.freeze({ searchEngine: 'google', locale: 'zh-CN', automaticEngineFallback: false, blockedHandling: 'CHECKPOINT_BLOCKED' }),
     queries: Object.freeze(queries),
     queue: selection.companies,
     dedupe: selection.stats,
   });
 }
 
-const INVALID_TEXT = /职友集|jobui|前程无忧|51job|智联招聘|boss直聘|猎聘|牛客|应届生|高校就业|就业网|新闻|资讯|培训|课程|广告|推广/i;
+const EXCLUDED_TEXT = /高校就业|就业网|新闻|资讯|培训|课程|广告|推广/i;
+const THIRD_PARTY_SOURCE = /职友集|jobui|前程无忧|51job|智联招聘|boss直聘|猎聘|牛客|应届生/i;
 const RECRUITING_TEXT = /招聘官网|校园招聘|社会招聘|实习招聘|加入我们|人才招聘|招聘职位|招聘/i;
 
 function normalizedName(value) {
@@ -102,7 +103,7 @@ export function extractCnMarketCompanyLeads(rows = [], { query = {}, seenNames =
     const text = `${title} ${snippet}`;
     const company = titleCompanyName(title);
     const nameKey = normalizedName(company);
-    if (row?.kind !== 'organic' || !url || INVALID_TEXT.test(`${text} ${url}`) || !RECRUITING_TEXT.test(text) || company.length < 2 || nameKey.length < 2) {
+    if (row?.kind !== 'organic' || !url || EXCLUDED_TEXT.test(`${text} ${url}`) || !RECRUITING_TEXT.test(text) || company.length < 2 || nameKey.length < 2) {
       rejected.push({ title, url, reasonCode: 'LOW_PRECISION_OR_EXCLUDED_SEARCH_RESULT' });
       continue;
     }
@@ -121,6 +122,10 @@ export function extractCnMarketCompanyLeads(rows = [], { query = {}, seenNames =
       discoveryQuery: query.query || null,
       discoveryEvidenceUrl: url,
       discoveryEvidenceTitle: title,
+      discoveryEvidenceClass: THIRD_PARTY_SOURCE.test(`${text} ${url}`)
+        ? 'THIRD_PARTY_COMPANY_LEAD'
+        : 'PUBLIC_SEARCH_COMPANY_LEAD',
+      recruitmentEntryEligible: false,
       priorityTier: query.priorityTier || 3,
       fixedPool: false,
     }));

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 import { buildCnMarketDiscoveryPlan, extractCnMarketCompanyLeads } from '../src/application/build-cn-market-discovery-plan.mjs';
-import { isPublicSearchBlockedSnapshot, publicSearchUrl } from '../src/adapters/browser/public-search-page-adapter.mjs';
+import { isPublicSearchBlockedSnapshot, normalizePublicSearchEngine, publicSearchUrl } from '../src/adapters/browser/public-search-page-adapter.mjs';
 import { createBrowserRuntime } from './chrome-extension-browser-adapter.mjs';
 import { openSqliteMarketDiscoveryRepository } from '../src/storage/sqlite-job-repository.mjs';
 
@@ -16,12 +16,13 @@ async function delay(ms) { await new Promise((resolve) => setTimeout(resolve, ms
 export async function discoverCnMarketCompanies({
   databaseFile = 'data/lite-job-search.sqlite', outputFile = 'output/cn-market-discovery/company-leads.json',
   profileDir = 'data/browser-profiles/career-op-main', role = '产品经理', industry = '', targetCount = 50,
-  searchDelayMs = 4_000, maxResults = 10, headless = false,
+  searchDelayMs = 4_000, maxResults = 10, headless = false, searchEngine = 'google',
 } = {}) {
   const repository = openSqliteMarketDiscoveryRepository({ file: path.resolve(databaseFile) });
   repository.migrate();
   const knownCompanies = repository.listCompanies();
   const base = buildCnMarketDiscoveryPlan({ role, industry, targetCount, knownCompanies });
+  const selectedEngine = normalizePublicSearchEngine(searchEngine);
   let browser;
   const leads = [];
   const searchRuns = [];
@@ -33,13 +34,13 @@ export async function discoverCnMarketCompanies({
       if (leads.length >= base.targetCount) break;
       const page = await browser.newPage();
       try {
-        const response = await page.goto(publicSearchUrl('baidu', query.query), { waitUntil: 'domcontentloaded', timeout: 15_000 });
+        const response = await page.goto(publicSearchUrl(selectedEngine, query.query), { waitUntil: 'domcontentloaded', timeout: 15_000 });
         const text = await page.readBodyText();
-        if (isPublicSearchBlockedSnapshot({ engine: 'baidu', text, status: response?.status?.() || 200, url: page.url() })) {
-          searchRuns.push({ query, status: 'BLOCKED', reasonCode: 'BAIDU_SECURITY_CHALLENGE' });
+        if (isPublicSearchBlockedSnapshot({ engine: selectedEngine, text, status: response?.status?.() || 200, url: page.url() })) {
+          searchRuns.push({ query, status: 'BLOCKED', reasonCode: `${selectedEngine.toUpperCase()}_SECURITY_CHALLENGE` });
           break;
         }
-        const extracted = extractCnMarketCompanyLeads(await page.readSearchRows(maxResults), { query, seenNames });
+        const extracted = extractCnMarketCompanyLeads(await page.readPublicSearchRows(selectedEngine, maxResults), { query, seenNames });
         extracted.leads.forEach((lead) => { seenNames.add(lead.company); leads.push(lead); });
         searchRuns.push({ query, status: 'SUCCESS', candidateRows: extracted.leads.length, rejectedRows: extracted.rejected.length });
       } catch (error) {
@@ -56,5 +57,5 @@ export async function discoverCnMarketCompanies({
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const input = args(process.argv.slice(2));
-  discoverCnMarketCompanies({ databaseFile: input.database, outputFile: input.output, profileDir: input['profile-dir'], role: input.role, industry: input.industry, targetCount: input['target-count'], searchDelayMs: input['search-delay-ms'], maxResults: input['max-results'], headless: input.headless === true }).then((result) => process.stdout.write(`${JSON.stringify({ status: result.status, discoveredLeadCount: result.discoveredLeadCount, queuedCompanyCount: result.queue.length, outputFile: input.output || 'output/cn-market-discovery/company-leads.json' })}\n`)).catch((error) => { process.stderr.write(`${JSON.stringify({ status: 'FAILED', error: String(error?.message || error) })}\n`); process.exitCode = 2; });
+  discoverCnMarketCompanies({ databaseFile: input.database, outputFile: input.output, profileDir: input['profile-dir'], role: input.role, industry: input.industry, targetCount: input['target-count'], searchDelayMs: input['search-delay-ms'], maxResults: input['max-results'], headless: input.headless === true, searchEngine: input['search-engine'] }).then((result) => process.stdout.write(`${JSON.stringify({ status: result.status, discoveredLeadCount: result.discoveredLeadCount, queuedCompanyCount: result.queue.length, outputFile: input.output || 'output/cn-market-discovery/company-leads.json' })}\n`)).catch((error) => { process.stderr.write(`${JSON.stringify({ status: 'FAILED', error: String(error?.message || error) })}\n`); process.exitCode = 2; });
 }
