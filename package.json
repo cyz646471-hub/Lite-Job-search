@@ -45,6 +45,8 @@
     "monitor:fixed-pool": "node ./scripts/run-fixed-company-monitor.mjs",
     "watch:new-companies:prepare": "node ./scripts/prepare-new-company-watch.mjs",
     "watch:new-companies": "node ./scripts/run-new-company-watch.mjs",
+    "discover:cn-market": "node ./scripts/discover-cn-market-companies.mjs",
+    "discover:cn-market:cycle": "node ./scripts/run-cn-market-discovery-cycle.mjs",
     "report:product-closure": "node ./scripts/report-product-closure.mjs",
     "maintenance:series": "node ./scripts/run-full-maintenance-series.mjs"
   },
