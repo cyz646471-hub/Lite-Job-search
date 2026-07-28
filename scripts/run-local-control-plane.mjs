@@ -42,6 +42,23 @@ const workerLauncher = args['worker-registry']
       1,
       Math.min(200, Number(args['worker-max-companies-per-run']) || 10),
     ),
+    timeoutMs: Math.max(
+      1_000,
+      Math.min(30_000, Number(args['worker-timeout-ms']) || 15_000),
+    ),
+    searchDelayMs: Math.max(
+      10_000,
+      Math.min(60_000, Number(args['worker-search-delay-ms']) || 10_000),
+    ),
+    searchJitterMs: Math.max(
+      0,
+      Math.min(
+        60_000,
+        args['worker-search-jitter-ms'] == null
+          ? 4_000
+          : Number(args['worker-search-jitter-ms']),
+      ),
+    ),
   })
   : null;
 const server = createControlPlaneServer({

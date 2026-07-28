@@ -26,6 +26,10 @@ test('control-plane launcher starts one detached task runner and suppresses dupl
     registry: 'data/companies.json',
     outputDirectory: 'test-output/worker',
     profileDirectory: 'data/profile',
+    maxCompaniesPerRun: 20,
+    timeoutMs: 12_000,
+    searchDelayMs: 10_000,
+    searchJitterMs: 0,
     spawnProcess(command, args, options) {
       calls.push({ command, args, options });
       return launched;
@@ -41,6 +45,15 @@ test('control-plane launcher starts one detached task runner and suppresses dupl
   assert.equal(calls[0].options.detached, true);
   assert.equal(calls[0].options.windowsHide, true);
   assert.ok(calls[0].args.includes('task-1'));
+  assert.deepEqual(
+    calls[0].args.slice(calls[0].args.indexOf('--max-companies-per-run'), calls[0].args.indexOf('--max-supervisor-retries')),
+    [
+      '--max-companies-per-run', '20',
+      '--timeout-ms', '12000',
+      '--search-delay-ms', '10000',
+      '--search-jitter-ms', '0',
+    ],
+  );
 });
 
 test('control-plane launcher reuses a healthy recorded worker', () => {
