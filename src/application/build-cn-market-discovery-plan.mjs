@@ -22,7 +22,7 @@ function clean(value) {
 
 function safeCount(value, fallback = 50) {
   const count = Number(value);
-  return Number.isInteger(count) ? Math.max(1, Math.min(1_000, count)) : fallback;
+  return Number.isInteger(count) ? Math.max(1, Math.min(5_000, count)) : fallback;
 }
 
 function roleTerms(role) {
@@ -33,12 +33,13 @@ function roleTerms(role) {
 function makeQueries(cohorts, tier, role, industry) {
   const terms = roleTerms(role);
   const sector = clean(industry);
-  return cohorts.map(([name, ...keywords]) => Object.freeze({
-    id: `CN_${tier}_${name}`,
+  const modes = ['招聘官网', '校园招聘', '社会招聘'];
+  return cohorts.flatMap(([name, ...keywords]) => modes.map((mode) => Object.freeze({
+    id: `CN_${tier}_${name}_${mode}`,
     priorityTier: tier,
     cohort: name,
-    query: ['中国', ...terms, sector, ...keywords, '招聘官网', '-新闻'].filter(Boolean).join(' '),
-  }));
+    query: ['中国', ...terms, sector, ...keywords, mode, '-新闻'].filter(Boolean).join(' '),
+  })));
 }
 
 export function buildCnMarketDiscoveryPlan({

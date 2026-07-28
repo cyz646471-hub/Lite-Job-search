@@ -4,13 +4,15 @@ import test from 'node:test';
 import { buildCnMarketDiscoveryPlan, extractCnMarketCompanyLeads } from '../src/application/build-cn-market-discovery-plan.mjs';
 
 test('CN market plan prioritizes private cohorts and has deterministic no-LLM policy', () => {
-  const plan = buildCnMarketDiscoveryPlan({ role: '产品经理', industry: 'AI', targetCount: 10 });
+  const plan = buildCnMarketDiscoveryPlan({ role: '产品经理', industry: 'AI', targetCount: 2_000 });
   assert.equal(plan.mode, 'CN_MARKET_COMPANY_DISCOVERY');
   assert.equal(plan.queries[0].priorityTier, 1);
   assert.equal(plan.queries.at(-1).priorityTier, 3);
   assert.equal(plan.llmUsage.enabled, false);
   assert.equal(plan.queryPolicy.searchEngine, 'google');
   assert.match(plan.queries[0].query, /中国/);
+  assert.equal(plan.targetCount, 2_000);
+  assert.equal(plan.queries.length, 27);
 });
 
 test('CN market lead extraction rejects aggregators and duplicates before queueing', () => {

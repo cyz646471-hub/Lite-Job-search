@@ -117,8 +117,8 @@ export function selectUnseenCompanies({
 } = {}) {
   const normalizedMarket = String(market).toUpperCase();
   const target = Number(targetCount);
-  if (!Number.isInteger(target) || target < 1 || target > 1000) {
-    throw new Error('targetCount must be an integer between 1 and 1000');
+  if (!Number.isInteger(target) || target < 1 || target > 5000) {
+    throw new Error('targetCount must be an integer between 1 and 5000');
   }
   const knownKeys = new Set();
   for (const company of knownCompanies) {

@@ -35,6 +35,7 @@ npm.cmd run discover:cn-market:cycle -- `
   --role "产品经理" `
   --industry "AI" `
   --target-count 100 `
+  --max-pages-per-query 5 `
   --output-dir output/cn-market-discovery
 ```
 
@@ -43,4 +44,6 @@ npm.cmd run discover:cn-market:cycle -- `
 - 默认完全不调用 LLM；Query、候选名提取、过滤与去重均是确定性规则。
 - 默认使用 Google 的 `zh-CN` 中文结果页，并将“中国”和中文招聘词固化进 Query；可显式传入 `--search-engine baidu`。不使用 API、Apify，也不会因安全验证自动切换引擎。
 - 查询之间最短间隔为 4 秒。Google 或百度出现安全验证时立即写出 `BLOCKED` 结果并保留已发现线索，等待人工完成验证后再运行。
+- 每个 Query 默认最多读取 5 页，可通过 `--max-pages-per-query` 调整到 20 页。每一页完成后都会原子写入同一个输出文件；用同一命令重跑将跳过已成功的 Query 页并继续增量发现。
+- 市场发现使用独立 `cn-market-lead-discovery` 浏览器 Profile，后续公司核验 Worker 使用原有专用 Profile，避免同一 Profile 被两个进程抢占。
 - 搜索发现仅提供 `discoveryEvidenceUrl`，不具有官网真实性或投递资格；只有现有 Verification Engine 标为 `VERIFIED` 的门户才可进入岗位抽取。
