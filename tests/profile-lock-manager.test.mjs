@@ -100,6 +100,27 @@ test('dead owner and unused Chrome profile can be archived and taken over', asyn
   await replacement.release();
 });
 
+test('incomplete owner inspection never archives or takes over the profile', async (t) => {
+  const profilePath = await directory(t);
+  await acquireProfileLock(options(profilePath, {
+    instanceId: 'worker-owner',
+    pid: 100,
+    processStartToken: 'old-token',
+  }));
+  await assert.rejects(acquireProfileLock(options(profilePath, {
+    inspectOwner: async () => ({
+      processExists: false,
+      processStartToken: '',
+      chromeUsingProfile: null,
+      inspectionComplete: false,
+      inspectionError: 'PROCESS_INSPECTION_TIMEOUT',
+    }),
+  })), (error) => (
+    error.code === 'PROFILE_OWNER_UNVERIFIED'
+    && error.causeCode === 'PROCESS_INSPECTION_TIMEOUT'
+  ));
+});
+
 test('old owner cannot delete a replacement lock', async (t) => {
   const profilePath = await directory(t);
   const owner = await acquireProfileLock(options(profilePath));

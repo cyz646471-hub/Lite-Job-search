@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { openSqliteMarketDiscoveryRepository } from '../src/storage/sqlite-job-repository.mjs';
 import { finalizeControlTaskOutput } from '../src/application/finalize-control-task-output.mjs';
+import { runWithWorkerErrorPolicy } from '../src/application/worker-error-policy.mjs';
 import { normalizeBrowserCompanyInput } from './company-browser-discovery.mjs';
 import { runPersistentBrowserSupervisor } from './run-persistent-browser-supervisor.mjs';
 
@@ -108,7 +110,7 @@ export function targetProgress(task, repository) {
     .map((job) => job.companyId)).size;
 }
 
-export async function runControlTask(args = {}) {
+export async function runControlTask(args = {}, dependencies = {}) {
   if (!args.task || !args.registry || !args.database || !args['output-dir']) {
     throw new Error('task, registry, database and output-dir are required');
   }
@@ -141,8 +143,20 @@ export async function runControlTask(args = {}) {
   const selectedFile = path.join(outputDir, 'selected-companies.json');
   await writeFile(selectedFile, `${JSON.stringify(selected, null, 2)}\n`);
   const maxPerRun = Math.max(1, Math.min(200, Number(args['max-companies-per-run']) || 10));
+  const configuredSupervisorRetries = Number(args['max-supervisor-retries']);
+  const maxSupervisorRetries = Math.max(
+    0,
+    Math.min(10, Number.isFinite(configuredSupervisorRetries) ? configuredSupervisorRetries : 2),
+  );
+  const configuredRetryDelayMs = Number(args['supervisor-retry-delay-ms']);
+  const retryDelayMs = Math.max(
+    0,
+    Math.min(30_000, Number.isFinite(configuredRetryDelayMs) ? configuredRetryDelayMs : 2_000),
+  );
+  const runSupervisor = dependencies.runSupervisor || runPersistentBrowserSupervisor;
   let finalRun = null;
   let progress = 0;
+  let pausedByRecovery = null;
   for (let offset = 0; offset < selected.length; offset += maxPerRun) {
     repository = openSqliteMarketDiscoveryRepository({ file: database });
     repository.migrate();
@@ -152,31 +166,81 @@ export async function runControlTask(args = {}) {
     const chunk = selected.slice(offset, offset + maxPerRun);
     const chunkFile = path.join(outputDir, `selected-companies-${String(offset / maxPerRun + 1).padStart(4, '0')}.json`);
     await writeFile(chunkFile, `${JSON.stringify(chunk, null, 2)}\n`);
-    finalRun = await runPersistentBrowserSupervisor({
-      input: chunkFile,
-      outputDir,
-      database,
-      profileDir: args['profile-dir'],
-      batchId: task.batchId,
-      batchInputHash: task.batchId,
-      targetCount: chunk.length,
-      role: task.roleKeywords.join(','),
-      industry: task.industry || '',
-      location: task.location || '',
-      freshnessDays: Math.max(
-        1,
-        Math.ceil((Date.parse(task.absoluteDateTo) - Date.parse(task.absoluteDateFrom))
-          / (24 * 60 * 60 * 1000)),
-      ),
-      maxCompaniesPerRun: maxPerRun,
-      retryFailed: args['retry-failed'] === true,
-      allowBaiduFallback: task.allowBaiduFallback,
-      searchEngine: args['search-engine'] || 'baidu',
-      xlsxOutput: args.xlsx || path.join(outputDir, 'student-applications.xlsx'),
-      writeArtifacts: false,
+    const supervised = await runWithWorkerErrorPolicy(() => runSupervisor({
+        input: chunkFile,
+        outputDir,
+        database,
+        profileDir: args['profile-dir'],
+        batchId: task.batchId,
+        batchInputHash: task.batchId,
+        targetCount: chunk.length,
+        role: task.roleKeywords.join(','),
+        industry: task.industry || '',
+        location: task.location || '',
+        freshnessDays: Math.max(
+          1,
+          Math.ceil((Date.parse(task.absoluteDateTo) - Date.parse(task.absoluteDateFrom))
+            / (24 * 60 * 60 * 1000)),
+        ),
+        maxCompaniesPerRun: maxPerRun,
+        retryFailed: args['retry-failed'] === true,
+        allowBaiduFallback: task.allowBaiduFallback,
+        searchEngine: args['search-engine'] || 'baidu',
+        xlsxOutput: args.xlsx || path.join(outputDir, 'student-applications.xlsx'),
+        writeArtifacts: false,
+      }), {
+      maxRetries: maxSupervisorRetries,
+      retryDelayMs,
+      sleep: dependencies.sleep,
+      onError: async ({
+        attempt,
+        canRetry,
+        classification,
+      }) => {
+        const auditRepository = openSqliteMarketDiscoveryRepository({ file: database });
+        try {
+          auditRepository.migrate();
+          auditRepository.appendAuditLog({
+            id: randomUUID(),
+            action: canRetry ? 'WORKER_ERROR_RETRY_SCHEDULED' : 'WORKER_ERROR_TERMINAL_ACTION',
+            targetType: 'TASK',
+            targetId: task.id,
+            actor: 'control-task-runner',
+            details: {
+              batchId: task.batchId,
+              chunkOffset: offset,
+              attempt,
+              canRetry,
+              code: classification.code,
+              action: classification.action,
+              reason: classification.reason.slice(0, 500),
+            },
+            createdAt: new Date().toISOString(),
+          });
+        } finally {
+          auditRepository.close();
+        }
+      },
     });
+    if (supervised.status === 'PAUSED') {
+      pausedByRecovery = supervised.error;
+      finalRun = {
+        status: 'PAUSED',
+        reasonCode: supervised.error.code,
+        reason: supervised.error.reason,
+      };
+    } else {
+      finalRun = supervised.value;
+    }
     repository = openSqliteMarketDiscoveryRepository({ file: database });
     repository.migrate();
+    if (pausedByRecovery) {
+      repository.completeBatch({
+        id: task.batchId,
+        status: 'PAUSED',
+        completedAt: new Date().toISOString(),
+      });
+    }
     progress = targetProgress(task, repository);
     const pending = repository.listBatchItems(task.batchId)
       .some((item) => ['PENDING', 'RUNNING'].includes(item.status));
@@ -185,6 +249,7 @@ export async function runControlTask(args = {}) {
     const moreChunks = offset + maxPerRun < selected.length;
     if (
       progress >= task.targetCount
+      || pausedByRecovery
       || stopped
       || finalRun?.status === 'STOPPED'
       || (!pending && !moreChunks)
@@ -193,14 +258,18 @@ export async function runControlTask(args = {}) {
 
   repository = openSqliteMarketDiscoveryRepository({ file: database });
   repository.migrate();
-  const finalOutput = await finalizeControlTaskOutput({
-    database,
-    outputDir,
-    taskId: task.id,
-    batchId: task.batchId,
-  });
+  const finalOutput = pausedByRecovery
+    ? null
+    : await finalizeControlTaskOutput({
+        database,
+        outputDir,
+        taskId: task.id,
+        batchId: task.batchId,
+      });
   const state = repository.isBatchStopRequested(task.batchId)
     ? 'STOPPED'
+    : pausedByRecovery
+      ? 'PARTIAL'
     : progress >= task.targetCount
       ? 'COMPLETE'
       : 'PARTIAL';
@@ -218,6 +287,7 @@ export async function runControlTask(args = {}) {
     targetProgress: progress,
     targetCount: task.targetCount,
     lastRunStatus: finalRun?.status || null,
+    recovery: pausedByRecovery,
     finalOutput,
   };
 }

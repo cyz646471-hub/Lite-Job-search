@@ -63,6 +63,13 @@ export async function acquireProfileLock({
     if (owner.processExists && !owner.processStartToken) {
       const error = new Error(`profile owner identity cannot be verified: ${lockFile}`);
       error.code = 'PROFILE_OWNER_UNVERIFIED';
+      error.causeCode = owner.inspectionError || null;
+      throw error;
+    }
+    if (owner.chromeUsingProfile == null || owner.inspectionComplete === false) {
+      const error = new Error(`profile usage cannot be verified: ${lockFile}`);
+      error.code = 'PROFILE_OWNER_UNVERIFIED';
+      error.causeCode = owner.inspectionError || null;
       throw error;
     }
     const archive = `${lockFile}.stale.${Date.now()}.${existing.lockId || 'unknown'}.json`;
