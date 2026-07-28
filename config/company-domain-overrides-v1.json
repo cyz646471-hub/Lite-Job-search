@@ -64,6 +64,16 @@
       "officialDomains": ["hstong.com"],
       "careerPortals": ["https://www.hstong.com/hk/about/recruit"],
       "evidence": "2026-07-29 reviewed first-party Join Huasheng page; user review records doctoral and social recruitment but no active campus hiring, so a static campus tab must not be treated as an active campus event"
+    },
+    {
+      "company": "上海农商银行",
+      "aliases": ["沪农商行", "Shanghai Rural Commercial Bank", "SHRCB"],
+      "officialDomains": ["shrcb.com"],
+      "careerPortals": [
+        "https://www.shrcb.com/shrcb/xxgk/gsjs/ygzp/index.html",
+        "https://shrcb.zhiye.com/campus"
+      ],
+      "evidence": "2026-07-29 reviewed first-party employee recruitment page and official 2026 spring campus recruitment PDF naming shrcb.zhiye.com as the recruitment site; user review confirms the portal is correct but campus recruitment is not currently open"
     }
   ]
 }

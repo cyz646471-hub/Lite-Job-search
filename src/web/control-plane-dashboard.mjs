@@ -52,13 +52,14 @@ export function dashboardHtml() {
       <select id="job-source" aria-label="来源等级"><option value="ALL">全部来源</option><option value="OFFICIAL_SITE">官方招聘站</option><option value="OFFICIAL_ATS">官方 ATS</option><option value="OFFICIAL_SOCIAL">官方公众号</option><option value="PLATFORM_ONLY">第三方候选</option></select>
       <select id="job-publication" aria-label="发布状态"><option value="ALL">全部发布状态</option><option value="PUBLISHED">已发布</option><option value="REVIEW_REQUIRED">待复核</option><option value="CANDIDATE">候选</option><option value="REJECTED">已拒绝</option></select>
       <select id="job-status" aria-label="岗位状态"><option value="ALL">全部岗位状态</option><option value="ACTIVE">招聘中</option><option value="CLOSED">已关闭</option><option value="UNKNOWN">未知</option></select>
+      <select id="job-quality" aria-label="岗位质量"><option value="ALL">全部质量等级</option><option value="A">A 级正式发布</option><option value="B">B 级待复核</option><option value="C">全部 C 级</option><option value="C_POSITIVE">C 级正分候选</option></select>
     </div>
     <div class="table-summary"><span id="job-actionable" class="badge good">可投递 0</span><span id="job-published" class="badge">已发布 0</span><span id="job-review" class="badge warn">待复核 0</span><span id="job-platform" class="badge">第三方 0</span></div>
     <div id="job-table" class="table-wrap" aria-live="polite"><div class="empty">正在读取招聘岗位…</div></div>
     <div class="pager"><span id="job-page">第 1 页</span><button id="job-prev">上一页</button><button id="job-next">下一页</button></div>
   </section>
   <section class="panel">
-    <div class="list-head"><div><h3>企业采集状态 <span id="company-total" class="badge">0</span></h3><div class="sub">查看当前任务队列、招聘入口核验状态、岗位数量和最后检查时间</div></div><div class="list-controls"><input id="company-search" aria-label="搜索企业" placeholder="搜索公司、域名或地区"><select id="company-scope" aria-label="企业处理状态"><option value="REMAINING">全部剩余</option><option value="PENDING">待处理</option><option value="RUNNING">处理中</option><option value="FAILED">失败待重试</option><option value="DEFERRED">延后</option><option value="SUCCEEDED">已完成</option><option value="ALL">全部</option></select></div></div>
+    <div class="list-head"><div><h3>企业采集状态 <span id="company-total" class="badge">0</span></h3><div class="sub">查看当前任务队列、招聘入口核验状态、岗位数量和最后检查时间</div></div><div class="list-controls"><input id="company-search" aria-label="搜索企业" placeholder="搜索公司、域名或地区"><select id="company-scope" aria-label="企业处理状态"><option value="REMAINING">全部剩余</option><option value="PENDING">待处理</option><option value="RUNNING">处理中</option><option value="FAILED">失败待重试</option><option value="DEFERRED">延后</option><option value="SUCCEEDED">已完成</option><option value="ALL">全部</option></select><select id="company-recruitment" aria-label="招聘开放状态"><option value="ALL">全部招聘状态</option><option value="CAMPUS_OPEN">校招已开放</option><option value="CAMPUS_NOT_OPEN">入口正确但未开放校招</option><option value="OPENINGS_FOUND">存在开放招聘事件</option><option value="NO_OPENINGS">当前无开放岗位</option><option value="UNKNOWN">开放状态未知</option></select><select id="company-confidence" aria-label="入口可信度"><option value="ALL">全部入口可信度</option><option value="VERIFIED">已核验入口</option><option value="C_POSITIVE">C 级正分候选（1–49）</option><option value="ZERO_OR_EMPTY">零分或无评分</option></select></div></div>
     <div id="remaining-companies" class="table-wrap"><div class="empty">正在读取公司清单…</div></div>
     <div class="pager"><span id="company-page">第 1 页</span><button id="company-prev">上一页</button><button id="company-next">下一页</button></div>
   </section>
@@ -85,6 +86,7 @@ const itemStatusLabels={PENDING:'待处理',RUNNING:'处理中',FAILED:'失败',
 const sourceLabels={OFFICIAL_SITE:'官方招聘站',OFFICIAL_ATS:'官方 ATS',OFFICIAL_SOCIAL:'官方公众号',PLATFORM_ONLY:'第三方候选'};
 const publicationLabels={PUBLISHED:'已发布',REVIEW_REQUIRED:'待复核',CANDIDATE:'候选',REJECTED:'已拒绝'};
 const jobStatusLabels={ACTIVE:'招聘中',CLOSED:'已关闭',UNKNOWN:'未知'};
+const campusStatusLabels={OPEN:'校招已开放',NOT_OPEN:'入口正确，未开放校招',UNKNOWN:'校招状态未知'};
 let companyOffset=0;const companyLimit=50;let companySearchTimer;
 let jobOffset=0;const jobLimit=50;let jobSearchTimer;
 let currentBatchId='';let currentBatchStatus='';
@@ -99,13 +101,13 @@ function externalLink(url,label,muted=false){return url?'<a class="data-link '+(
 function dateOnly(value){return value?escapeHtml(String(value).slice(0,10)):'—'}
 async function loadCompanyList(){
   const scope=el('company-scope').value;const query=el('company-search').value.trim();
-  const params=new URLSearchParams({scope,query,offset:String(companyOffset),limit:String(companyLimit)});
+  const params=new URLSearchParams({scope,query,recruitment_state:el('company-recruitment').value,confidence_scope:el('company-confidence').value,offset:String(companyOffset),limit:String(companyLimit)});
   const data=await api('/api/progress/companies?'+params);
   if(companyOffset>=data.total&&companyOffset>0){companyOffset=Math.max(0,Math.floor((Math.max(0,data.total-1))/companyLimit)*companyLimit);return loadCompanyList()}
   el('company-total').textContent=fmt(data.total);
   el('company-page').textContent='第 '+fmt(Math.floor(companyOffset/companyLimit)+1)+' 页 · '+fmt(companyOffset+1)+'–'+fmt(Math.min(companyOffset+companyLimit,data.total))+' / '+fmt(data.total);
   el('company-prev').disabled=companyOffset===0;el('company-next').disabled=companyOffset+companyLimit>=data.total;
-  el('remaining-companies').innerHTML=data.items?.length?'<table><thead><tr><th>序号</th><th>公司</th><th>处理状态</th><th>招聘入口</th><th>核验</th><th>招聘状态</th><th>岗位</th><th>最后检查</th><th>原因</th></tr></thead><tbody>'+data.items.map((x)=>'<tr><td>'+fmt(x.position+1)+'</td><td><strong>'+escapeHtml(x.company)+'</strong><span class="cell-sub">'+escapeHtml(x.countryRegion||x.officialDomain||'—')+'</span></td><td>'+itemStatusBadge(x.status)+'<span class="cell-sub">尝试 '+fmt(x.attemptCount)+'</span></td><td>'+externalLink(x.portalUrl,x.portalStatus==='VERIFIED'?'打开招聘入口':'查看候选页面',x.portalStatus!=='VERIFIED')+'<span class="cell-sub">'+escapeHtml(x.portalPageType||'未发现')+'</span></td><td>'+badge(x.portalStatus||'未核验',x.portalStatus==='VERIFIED'?'good':x.portalStatus==='REJECTED'?'bad':'warn')+'<span class="cell-sub">'+(x.confidenceScore==null?'—':fmt(x.confidenceScore)+' 分')+'</span></td><td>'+escapeHtml(x.hiringAvailability||'UNKNOWN')+'</td><td>'+fmt(x.activeJobCount)+'</td><td class="nowrap">'+escapeHtml(dt(x.lastCheckedAt))+'</td><td>'+escapeHtml(x.reason||'—')+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">当前筛选条件下没有公司。</div>';
+  el('remaining-companies').innerHTML=data.items?.length?'<table><thead><tr><th>序号</th><th>公司</th><th>处理状态</th><th>招聘入口</th><th>核验</th><th>招聘状态</th><th>岗位</th><th>最后检查</th><th>原因</th></tr></thead><tbody>'+data.items.map((x)=>'<tr><td>'+fmt(x.position+1)+'</td><td><strong>'+escapeHtml(x.company)+'</strong><span class="cell-sub">'+escapeHtml(x.countryRegion||x.officialDomain||'—')+'</span></td><td>'+itemStatusBadge(x.status)+'<span class="cell-sub">尝试 '+fmt(x.attemptCount)+'</span></td><td>'+externalLink(x.portalUrl,x.portalStatus==='VERIFIED'?'打开招聘入口':'查看候选页面',x.portalStatus!=='VERIFIED')+'<span class="cell-sub">'+escapeHtml(x.portalPageType||'未发现')+'</span></td><td>'+badge(x.portalStatus||'未核验',x.portalStatus==='VERIFIED'?'good':x.portalStatus==='REJECTED'?'bad':'warn')+'<span class="cell-sub">'+(x.confidenceScore==null?'—':fmt(x.confidenceScore)+' 分')+'</span></td><td>'+badge(campusStatusLabels[x.campusHiringStatus]||'校招状态未知',x.campusHiringStatus==='OPEN'?'good':x.campusHiringStatus==='NOT_OPEN'?'warn':'')+'<span class="cell-sub">'+escapeHtml(x.hiringAvailability||'UNKNOWN')+'</span></td><td>'+fmt(x.activeJobCount)+'</td><td class="nowrap">'+escapeHtml(dt(x.lastCheckedAt))+'</td><td>'+escapeHtml(x.reason||'—')+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">当前筛选条件下没有公司。</div>';
 }
 async function loadJobList(){
   const params=new URLSearchParams({
@@ -113,6 +115,7 @@ async function loadJobList(){
     source_tier:el('job-source').value,
     publication_status:el('job-publication').value,
     job_status:el('job-status').value,
+    quality_grade:el('job-quality').value,
     offset:String(jobOffset),
     limit:String(jobLimit),
   });
@@ -150,6 +153,7 @@ async function loadGroupedJobList(){
     source_tier:el('job-source').value,
     publication_status:el('job-publication').value,
     job_status:el('job-status').value,
+    quality_grade:el('job-quality').value,
     group_by:'COMPANY',
     offset:String(jobOffset),
     limit:String(jobLimit),
@@ -197,10 +201,11 @@ el('resume-worker').onclick=async()=>{if(!currentBatchId||!confirm('开始或继
 el('company-prev').onclick=()=>{companyOffset=Math.max(0,companyOffset-companyLimit);loadCompanyList()};
 el('company-next').onclick=()=>{companyOffset+=companyLimit;loadCompanyList()};
 el('company-scope').onchange=()=>{companyOffset=0;loadCompanyList()};
+['company-recruitment','company-confidence'].forEach((id)=>{el(id).onchange=()=>{companyOffset=0;loadCompanyList()}});
 el('company-search').oninput=()=>{clearTimeout(companySearchTimer);companySearchTimer=setTimeout(()=>{companyOffset=0;loadCompanyList()},250)};
 el('job-prev').onclick=()=>{jobOffset=Math.max(0,jobOffset-jobLimit);loadGroupedJobList()};
 el('job-next').onclick=()=>{jobOffset+=jobLimit;loadGroupedJobList()};
-['job-source','job-publication','job-status'].forEach((id)=>{el(id).onchange=()=>{jobOffset=0;loadGroupedJobList()}});
+['job-source','job-publication','job-status','job-quality'].forEach((id)=>{el(id).onchange=()=>{jobOffset=0;loadGroupedJobList()}});
 el('job-search').oninput=()=>{clearTimeout(jobSearchTimer);jobSearchTimer=setTimeout(()=>{jobOffset=0;loadGroupedJobList()},250)};
 el('task').onsubmit=async(event)=>{event.preventDefault();const form=new FormData(event.target);const body=Object.fromEntries(form);body.role_keywords=body.role_keywords.split(',');body.target_count=Number(body.target_count);body.allow_baidu_fallback=form.has('allow_baidu_fallback');await api('/api/tasks',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:JSON.stringify(body)});await refresh()};
 async function acknowledge(provider){if(!confirm('确认已人工完成 '+provider+' 安全验证？'))return;await api('/api/providers/'+provider+'/manual-ack',{method:'POST',headers:{'content-type':'application/json','x-ljs-confirm':'yes'},body:'{}'});await refresh()}

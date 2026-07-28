@@ -6,6 +6,7 @@ import { toLegacyJobResult } from '../src/adapters/legacy/job-result-adapter.mjs
 import { createUpstreamJobExtractionAdapter } from '../src/adapters/upstream/job-extraction-adapter.mjs';
 import { createOfficialVerificationAdapter } from '../src/adapters/upstream/official-verification-adapter.mjs';
 import { applyVerificationPolicy } from '../src/verification/verification-policy.mjs';
+import { resolveAtsTenantOwnership } from '../src/verification/ats-tenant-ownership.mjs';
 
 const NOW = '2026-07-24T00:00:00.000Z';
 
@@ -22,6 +23,21 @@ test('CN ATS fingerprint registry recognizes supported tenant domains', () => {
   assert.equal(detectAtsFingerprint({
     url: 'https://example.zhiye.com/social',
   }).ats, 'Zhiye');
+});
+
+test('reviewed registry attributes Shanghai Rural Commercial Bank Zhiye tenant', () => {
+  const result = resolveAtsTenantOwnership({
+    company: {
+      canonicalName: '上海农商银行',
+      aliases: ['沪农商行'],
+    },
+    url: 'https://shrcb.zhiye.com/campus',
+    atsType: 'Zhiye',
+  });
+
+  assert.equal(result.status, 'VERIFIED');
+  assert.equal(result.record.tenantKey, 'shrcb');
+  assert.equal(result.record.officialDomains[0], 'shrcb.com');
 });
 
 function createVerificationAdapter() {

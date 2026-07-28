@@ -61,3 +61,76 @@ test('remaining company list is searchable, paginated, and excludes succeeded it
   assert.equal(searched.items[0].company, '百度');
   assert.equal(searched.items[0].reason, 'candidate_page_blocked');
 });
+
+test('company list separates verified portals with no open campus hiring', () => {
+  const repository = {
+    listBatchItems: () => [{
+      itemKey: 'shrcb',
+      position: 0,
+      input: { company: '上海农商银行', market: 'CN', countryRegion: '中国大陆' },
+      status: 'SUCCEEDED',
+      attemptCount: 1,
+    }],
+    listCompanies: () => [{
+      id: 'company-shrcb',
+      canonicalName: '上海农商银行',
+      aliases: ['沪农商行'],
+      officialDomains: ['shrcb.com'],
+    }],
+    listCareerPortals: () => [{
+      id: 'portal-shrcb',
+      companyId: 'company-shrcb',
+      canonicalUrl: 'https://shrcb.zhiye.com/campus',
+      verificationStatus: 'VERIFIED',
+      hiringAvailability: 'NO_OPENINGS',
+      confidenceScore: 75,
+    }],
+    listRecruitmentEvents: () => [],
+    listJobOpenings: () => [],
+  };
+
+  const result = buildControlCompanyList({
+    repository,
+    batchId: 'batch-cn',
+    scope: 'ALL',
+    recruitmentState: 'CAMPUS_NOT_OPEN',
+  });
+
+  assert.equal(result.total, 1);
+  assert.equal(result.items[0].company, '上海农商银行');
+  assert.equal(result.items[0].campusHiringStatus, 'NOT_OPEN');
+  assert.equal(result.items[0].openCampusEventCount, 0);
+});
+
+test('company list exposes positive low-confidence candidates without verifying them', () => {
+  const repository = {
+    listBatchItems: () => [{
+      itemKey: 'candidate',
+      position: 0,
+      input: { company: '候选企业' },
+      status: 'SUCCEEDED',
+      attemptCount: 1,
+    }],
+    listCompanies: () => [{ id: 'company-c', canonicalName: '候选企业' }],
+    listCareerPortals: () => [{
+      id: 'portal-c',
+      companyId: 'company-c',
+      canonicalUrl: 'https://candidate.example/jobs',
+      verificationStatus: 'REVIEW',
+      confidenceScore: 15,
+    }],
+    listRecruitmentEvents: () => [],
+    listJobOpenings: () => [],
+  };
+
+  const result = buildControlCompanyList({
+    repository,
+    batchId: 'batch-cn',
+    scope: 'ALL',
+    confidenceScope: 'C_POSITIVE',
+  });
+
+  assert.equal(result.total, 1);
+  assert.equal(result.items[0].portalStatus, 'REVIEW');
+  assert.equal(result.items[0].confidenceScore, 15);
+});

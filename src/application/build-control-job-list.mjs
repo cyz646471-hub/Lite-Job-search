@@ -6,6 +6,7 @@ const ALLOWED_SOURCE_TIERS = new Set([
   'PLATFORM_ONLY',
 ]);
 const ALLOWED_JOB_STATUSES = new Set(['ALL', 'ACTIVE', 'CLOSED', 'UNKNOWN']);
+const ALLOWED_QUALITY_GRADES = new Set(['ALL', 'A', 'B', 'C', 'C_POSITIVE']);
 const ALLOWED_PUBLICATION_STATUSES = new Set([
   'ALL',
   'PUBLISHED',
@@ -55,6 +56,7 @@ export function buildControlJobList({
   sourceTier = 'ALL',
   jobStatus = 'ALL',
   publicationStatus = 'ALL',
+  qualityGrade = 'ALL',
   groupBy = 'JOB',
   offset = 0,
   limit = 50,
@@ -73,6 +75,7 @@ export function buildControlJobList({
     publicationStatus,
     ALLOWED_PUBLICATION_STATUSES,
   );
+  const selectedQualityGrade = selected(qualityGrade, ALLOWED_QUALITY_GRADES);
   const selectedOffset = Math.max(0, Math.trunc(Number(offset) || 0));
   const selectedLimit = Math.max(1, Math.min(200, Math.trunc(Number(limit) || 50)));
   const needle = normalized(query);
@@ -113,6 +116,14 @@ export function buildControlJobList({
     if (
       selectedPublicationStatus !== 'ALL'
       && row.publicationStatus !== selectedPublicationStatus
+    ) return false;
+    if (
+      selectedQualityGrade === 'C_POSITIVE'
+      && !(row.qualityGrade === 'C' && Number(row.confidenceScore) > 0)
+    ) return false;
+    if (
+      !['ALL', 'C_POSITIVE'].includes(selectedQualityGrade)
+      && row.qualityGrade !== selectedQualityGrade
     ) return false;
     if (!needle) return true;
     return [
@@ -182,6 +193,7 @@ export function buildControlJobList({
     sourceTier: selectedSourceTier,
     jobStatus: selectedJobStatus,
     publicationStatus: selectedPublicationStatus,
+    qualityGrade: selectedQualityGrade,
     groupBy: selectedGroupBy,
     offset: selectedOffset,
     limit: selectedLimit,

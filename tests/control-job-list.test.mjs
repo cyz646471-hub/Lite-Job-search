@@ -100,6 +100,19 @@ test('control job list filters by query, source and publication status', () => {
   assert.equal(result.counts.platformOnly, 1);
 });
 
+test('control job list can show positive-score C-grade candidates without action links', () => {
+  const result = buildControlJobList({
+    repository: repository(),
+    qualityGrade: 'C_POSITIVE',
+  });
+
+  assert.equal(result.total, 1);
+  assert.equal(result.qualityGrade, 'C_POSITIVE');
+  assert.equal(result.items[0].qualityGrade, 'C');
+  assert.equal(result.items[0].confidenceScore, 30);
+  assert.equal(result.items[0].actionUrl, null);
+});
+
 test('verified portal does not turn a B-grade review job into an application action', () => {
   const source = repository();
   const original = source.listJobOpenings;

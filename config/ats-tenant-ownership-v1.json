@@ -59,6 +59,15 @@
       "urlPrefixes": ["https://ainnovation.zhiye.com/"],
       "officialDomains": ["ainnovation.com"],
       "provenance": "2026-07-29 reviewed tenant identity, company footer and backlink to ainnovation.com on the public Campus portal"
+    },
+    {
+      "company": "上海农商银行",
+      "aliases": ["沪农商行", "Shanghai Rural Commercial Bank", "SHRCB"],
+      "ats": "ZHIYE",
+      "tenantKey": "shrcb",
+      "urlPrefixes": ["https://shrcb.zhiye.com/"],
+      "officialDomains": ["shrcb.com"],
+      "provenance": "2026-07-29 first-party employee recruitment page and official 2026 spring campus recruitment PDF explicitly identify shrcb.zhiye.com as the recruitment site"
     }
   ]
 }
