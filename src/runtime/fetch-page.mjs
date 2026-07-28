@@ -117,6 +117,17 @@ function pinnedHttpFetch(url, options, address) {
   });
 }
 
+function waitForResolution(resolution, signal) {
+  if (signal.aborted) return Promise.reject(signal.reason || new Error('page fetch timeout'));
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason || new Error('page fetch timeout'));
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve(resolution).then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', abort);
+    });
+  });
+}
+
 export function createPageFetcher({
   fetcher = null,
   timeoutMs = 15_000,
@@ -135,7 +146,7 @@ export function createPageFetcher({
     try {
       for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
         const hostname = normalizeIp(current.hostname);
-        const addresses = await resolver(hostname);
+        const addresses = await waitForResolution(resolver(hostname), controller.signal);
         if (
           !Array.isArray(addresses)
           || addresses.length === 0

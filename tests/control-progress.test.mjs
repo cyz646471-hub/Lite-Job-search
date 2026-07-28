@@ -116,6 +116,42 @@ test('progress snapshot marks a running worker with an expired heartbeat as stal
   assert.equal(progress.worker.heartbeatAgeSeconds, 130);
 });
 
+test('progress timing uses completions since the latest resume instead of stale lifetime counts', () => {
+  const source = repository();
+  const progress = buildControlProgress({
+    repository: {
+      ...source,
+      listBatchRuns: () => [{
+        ...source.listBatchRuns()[0],
+        resumedAt: '2026-07-28T00:08:00.000Z',
+      }],
+      listBatchItems: () => [
+        {
+          batchId: 'batch-1',
+          itemKey: 'company-old',
+          input: { company: '旧完成公司' },
+          status: 'SUCCEEDED',
+          resultStatus: 'PARTIAL',
+          completedAt: '2026-07-28T00:03:00.000Z',
+        },
+        {
+          batchId: 'batch-1',
+          itemKey: 'company-new',
+          input: { company: '新完成公司' },
+          status: 'SUCCEEDED',
+          resultStatus: 'PARTIAL',
+          completedAt: '2026-07-28T00:09:00.000Z',
+        },
+      ],
+    },
+    now: '2026-07-28T00:10:00.000Z',
+  });
+  assert.equal(progress.timing.completedInWindow, 1);
+  assert.equal(progress.timing.windowStartedAt, '2026-07-28T00:08:00.000Z');
+  assert.equal(progress.timing.elapsedSeconds, 120);
+  assert.equal(progress.timing.companiesPerHour, 30);
+});
+
 test('progress snapshot prefers the newest terminal task over an older stop request', () => {
   const source = repository();
   const progress = buildControlProgress({

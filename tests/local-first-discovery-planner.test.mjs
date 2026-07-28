@@ -315,6 +315,41 @@ test('local discovery uses browser fallback for direct access-control HTTP statu
   );
 });
 
+test('local discovery defers remaining candidates after the per-company time budget', async () => {
+  let clock = 0;
+  const visits = [];
+  const result = await discoverCompanyLocally({
+    company: { id: 'company-1', company: 'Slow Company' },
+    plan: {
+      query: 'Slow Company recruitment',
+      candidates: [
+        'https://example.com/careers',
+        'https://example.com/jobs',
+        'https://example.com/join-us',
+      ],
+      officialDomains: [],
+      stages: [],
+    },
+    resolveAts: async () => null,
+    fetchPage: async (url) => {
+      visits.push(url);
+      clock += 31_000;
+      return { status: 404, finalUrl: url, html: '<title>Not Found</title>' };
+    },
+    maxElapsedMs: 60_000,
+    now: () => clock,
+  });
+
+  assert.deepEqual(visits, [
+    'https://example.com/careers',
+    'https://example.com/jobs',
+  ]);
+  assert.equal(
+    result.observations.at(-1).reasonCode,
+    'LOCAL_TRAVERSAL_TIME_BUDGET_EXHAUSTED',
+  );
+});
+
 test('discovered recruitment links are prioritized and non-HTTP links are ignored', async () => {
   const visits = [];
   await discoverCompanyLocally({

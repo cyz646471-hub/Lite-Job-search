@@ -28,20 +28,54 @@ function itemMatchesCompany(item, companyId) {
     || item.itemKey === companyId;
 }
 
-function durationMetrics({ startedAt, processed, remaining, now }) {
+function durationMetrics({
+  startedAt,
+  resumedAt,
+  items,
+  processed,
+  remaining,
+  now,
+  rollingWindowSeconds = 60 * 60,
+}) {
   const startedMs = Date.parse(startedAt || '');
+  const resumedMs = Date.parse(resumedAt || '');
   const nowMs = Date.parse(now);
   if (!Number.isFinite(startedMs) || nowMs <= startedMs || processed < 1) {
-    return { elapsedSeconds: null, companiesPerHour: null, etaSeconds: null };
+    return {
+      elapsedSeconds: null,
+      companiesPerHour: null,
+      etaSeconds: null,
+      completedInWindow: 0,
+      windowStartedAt: null,
+    };
   }
-  const elapsedSeconds = Math.max(1, Math.round((nowMs - startedMs) / 1000));
-  const companiesPerHour = processed / (elapsedSeconds / 3600);
+  const sessionStartedMs = Number.isFinite(resumedMs) && resumedMs > startedMs
+    ? resumedMs
+    : startedMs;
+  const rollingStartedMs = Math.max(
+    sessionStartedMs,
+    nowMs - Math.max(60, rollingWindowSeconds) * 1000,
+  );
+  const completedInWindow = items.filter((item) => {
+    if (!['SUCCEEDED', 'FAILED', 'DEFERRED'].includes(item.status)) return false;
+    const completedMs = Date.parse(item.completedAt || '');
+    return Number.isFinite(completedMs)
+      && completedMs >= rollingStartedMs
+      && completedMs <= nowMs;
+  }).length;
+  const useRollingWindow = rollingStartedMs > startedMs || completedInWindow > 0;
+  const measurementStartedMs = useRollingWindow ? rollingStartedMs : startedMs;
+  const measurementProcessed = useRollingWindow ? completedInWindow : processed;
+  const elapsedSeconds = Math.max(1, Math.round((nowMs - measurementStartedMs) / 1000));
+  const companiesPerHour = measurementProcessed / (elapsedSeconds / 3600);
   return {
     elapsedSeconds,
     companiesPerHour: Number(companiesPerHour.toFixed(2)),
     etaSeconds: companiesPerHour > 0
       ? Math.round((remaining / companiesPerHour) * 3600)
       : null,
+    completedInWindow: useRollingWindow ? completedInWindow : processed,
+    windowStartedAt: new Date(measurementStartedMs).toISOString(),
   };
 }
 
@@ -146,6 +180,8 @@ export function buildControlProgress({
     }));
   const timing = durationMetrics({
     startedAt: batch?.startedAt || task?.createdAt,
+    resumedAt: batch?.resumedAt,
+    items,
     processed,
     remaining,
     now,

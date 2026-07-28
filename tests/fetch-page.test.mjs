@@ -53,3 +53,14 @@ test('page fetcher enforces declared and streamed response size', async () => {
   });
   await assert.rejects(streamed('https://example.com/jobs'), /response too large/);
 });
+
+test('page fetch timeout also bounds DNS resolution', async () => {
+  const fetchPage = createPageFetcher({
+    timeoutMs: 5,
+    resolver: async () => new Promise(() => {}),
+  });
+  await assert.rejects(
+    fetchPage('https://dns-timeout.example/jobs'),
+    /page fetch timeout/,
+  );
+});

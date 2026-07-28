@@ -122,6 +122,8 @@ export async function discoverCompanyLocally({
   observeWithBrowser = null,
   resolveAts = resolvePageProvider,
   maxBrowserFallbacks = 3,
+  maxElapsedMs = 120_000,
+  now = () => Date.now(),
 } = {}) {
   if (!company || !plan || typeof fetchPage !== 'function') {
     throw new Error('company, plan and fetchPage are required');
@@ -140,6 +142,9 @@ export async function discoverCompanyLocally({
   }
   const visited = new Set();
   let browserFallbacks = 0;
+  const startedAtMs = now();
+  const elapsedBudgetMs = Math.max(30_000, Number(maxElapsedMs) || 120_000);
+  const withinElapsedBudget = () => now() - startedAtMs < elapsedBudgetMs;
 
   const canUseBrowserFallback = (url) => (
     typeof observeWithBrowser === 'function'
@@ -156,7 +161,7 @@ export async function discoverCompanyLocally({
     };
   };
 
-  while (queue.length && visited.size < 30) {
+  while (queue.length && visited.size < 30 && withinElapsedBudget()) {
     const url = queue.shift();
     if (visited.has(url)) continue;
     visited.add(url);
@@ -298,7 +303,9 @@ export async function discoverCompanyLocally({
       url,
       status: 0,
       fetchStatus: 'DEFERRED',
-      reasonCode: 'LOCAL_TRAVERSAL_BUDGET_EXHAUSTED',
+      reasonCode: withinElapsedBudget()
+        ? 'LOCAL_TRAVERSAL_BUDGET_EXHAUSTED'
+        : 'LOCAL_TRAVERSAL_TIME_BUDGET_EXHAUSTED',
       title: '',
       html: '',
       text: '',
