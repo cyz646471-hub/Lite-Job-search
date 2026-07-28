@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { buildControlProgress } from '../application/build-control-progress.mjs';
 import { buildControlCompanyList } from '../application/build-control-company-list.mjs';
+import { buildControlJobList } from '../application/build-control-job-list.mjs';
 import { createControlPlaneService } from '../application/control-plane-service.mjs';
 import { dashboardHtml as progressDashboardHtml } from './control-plane-dashboard.mjs';
 
@@ -124,6 +125,18 @@ export function createControlPlaneServer({
           batchId: progress.task?.batchId || progress.batch?.id,
           scope: url.searchParams.get('scope') || 'REMAINING',
           query: url.searchParams.get('query') || '',
+          offset: url.searchParams.get('offset') || 0,
+          limit: url.searchParams.get('limit') || 50,
+        }));
+        return;
+      }
+      if (request.method === 'GET' && url.pathname === '/api/progress/jobs') {
+        json(response, 200, buildControlJobList({
+          repository,
+          query: url.searchParams.get('query') || '',
+          sourceTier: url.searchParams.get('source_tier') || 'ALL',
+          jobStatus: url.searchParams.get('job_status') || 'ALL',
+          publicationStatus: url.searchParams.get('publication_status') || 'ALL',
           offset: url.searchParams.get('offset') || 0,
           limit: url.searchParams.get('limit') || 50,
         }));

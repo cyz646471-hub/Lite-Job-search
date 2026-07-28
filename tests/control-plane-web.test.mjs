@@ -81,9 +81,14 @@ test('local web control plane reads real SQLite state and confirms writes', asyn
   const companies = await (await fetch(`${base}/api/progress/companies`)).json();
   assert.equal(companies.total, 1);
   assert.equal(companies.items[0].company, '国内示例公司');
+  const jobs = await (await fetch(`${base}/api/progress/jobs`)).json();
+  assert.equal(jobs.status, 'OK');
+  assert.equal(jobs.total, 0);
   const dashboard = await (await fetch(base)).text();
   assert.match(dashboard, /全量补齐看板/);
   assert.match(dashboard, /尚未装载/);
+  assert.match(dashboard, /招聘岗位数据/);
+  assert.match(dashboard, /企业采集状态/);
 
   const reviewResponse = await fetch(`${base}/api/reviews`, {
     method: 'POST',
