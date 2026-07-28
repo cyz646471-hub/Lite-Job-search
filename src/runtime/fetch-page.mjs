@@ -98,11 +98,17 @@ function pinnedHttpFetch(url, options, address) {
         }
       },
     }, (response) => {
-      const body = [204, 205, 304].includes(response.statusCode)
+      const statusCode = Number(response.statusCode);
+      if (!Number.isInteger(statusCode) || statusCode < 200 || statusCode > 599) {
+        response.resume();
+        reject(new Error(`invalid upstream HTTP status code: ${String(response.statusCode)}`));
+        return;
+      }
+      const body = [204, 205, 304].includes(statusCode)
         ? null
         : Readable.toWeb(response);
       resolve(new Response(body, {
-        status: response.statusCode,
+        status: statusCode,
         headers: response.headers,
       }));
     });
