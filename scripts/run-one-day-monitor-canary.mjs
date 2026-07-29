@@ -39,6 +39,7 @@ function metrics(repository, startedAt, cohort, cycleReports) {
   const jobs = repository.listJobOpenings()
     .filter((job) => cohortCompanyIds.has(job.companyId));
   const cohortJobIds = new Set(jobs.map((job) => job.id));
+  const jobById = new Map(jobs.map((job) => [job.id, job]));
   const changes = repository.listJobRevisions({ limit: 5000 })
     .filter((item) => item.observedAt >= startedAt
       && cohortJobIds.has(item.jobId)
@@ -46,6 +47,15 @@ function metrics(repository, startedAt, cohort, cycleReports) {
   const browserFallbacks = observations.filter((item) => (
     item.metadata?.transport === 'BROWSER'
   ));
+  const companyByEndpoint = new Map(
+    cohort.companies.map((item) => [item.sourceEndpointId, item.companyId]),
+  );
+  const successfulCompanyIds = new Set(
+    successful.map((item) => companyByEndpoint.get(item.sourceEndpointId)).filter(Boolean),
+  );
+  const changedCompanyIds = new Set(
+    changes.map((item) => jobById.get(item.jobId)?.companyId).filter(Boolean),
+  );
   const actionable = jobs.filter((job) => (
     job.status === 'ACTIVE'
     && job.publicationStatus === 'PUBLISHED'
@@ -58,7 +68,10 @@ function metrics(repository, startedAt, cohort, cycleReports) {
       ? successful.length / observations.length
       : 0,
     changedJobCount: changes.length,
-    jobChangeDiscoveryRate: successful.length ? changes.length / successful.length : 0,
+    changedCompanyCount: changedCompanyIds.size,
+    jobChangeDiscoveryRate: successfulCompanyIds.size
+      ? changedCompanyIds.size / successfulCompanyIds.size
+      : 0,
     browserFallbackCount: browserFallbacks.length,
     browserFallbackRate: observations.length
       ? browserFallbacks.length / observations.length
