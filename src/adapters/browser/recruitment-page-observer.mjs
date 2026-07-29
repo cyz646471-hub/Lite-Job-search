@@ -12,6 +12,10 @@ function sanitizeLinks(links = []) {
   })).filter((link) => link.text && /^https?:\/\//i.test(link.href)));
 }
 
+function sanitizeStructuredJobs(jobs = []) {
+  return Object.freeze((jobs || []).filter((job) => job && typeof job === 'object'));
+}
+
 const GENERIC_RECRUITMENT_LINK_TEXT = /^(?:招聘|职位|岗位|职位列表|岗位列表|查看(?:全部)?职位|更多职位|立即申请|立即投递|申请|投递|社会招聘|校园招聘|实习生招聘|首页|返回|jobs?|careers?|open positions?|apply(?: now)?|more)$/i;
 const JOB_TITLE_TERMS = /产品经理|工程师|开发|算法|设计师|导演|运营|市场|销售|财务|会计|人力|招聘专员|法务|研究员|分析师|管培生|实习生|测试|架构师|顾问|采购|供应链|客服|engineer|manager|designer|developer|scientist|analyst|intern|marketing|sales|operations?|consultant|architect|director/i;
 const NON_OPENING_LINK_TEXT = /^(?:岗位?(?:分类|介绍|说明|指南|百科)|职位?(?:分类|介绍|说明|指南|百科)|筛选|搜索|人才社区|了解更多|job famil(?:y|ies)|category|filter|search)$/i;
@@ -109,6 +113,7 @@ export async function captureRenderedSnapshot(page) {
       title: clean(snapshot?.title),
       h1: clean(snapshot?.h1),
       links: sanitizeLinks(snapshot?.links),
+      structuredJobs: sanitizeStructuredJobs(snapshot?.structuredJobs),
     };
   }
   const text = await page.locator('body').innerText().catch(() => '');
@@ -119,16 +124,26 @@ export async function captureRenderedSnapshot(page) {
     ? await page.title().catch(() => '')
     : '';
   const h1 = await page.locator('h1').innerText().catch(() => '');
-  const links = await page.locator('a[href]').evaluateAll((anchors) => anchors.map((anchor) => ({
+  const anchorLinks = await page.locator('a[href]').evaluateAll((anchors) => anchors.map((anchor) => ({
     text: (anchor.innerText || anchor.textContent || '').trim(),
     href: anchor.href,
   }))).catch(() => []);
+  const iframeLinks = await page.locator('iframe[src]').evaluateAll((frames) => frames.map((frame) => ({
+    text: (
+      frame.title
+      || frame.getAttribute('aria-label')
+      || '招聘职位'
+    ).trim(),
+    href: frame.src,
+  }))).catch(() => []);
+  const links = [...anchorLinks, ...iframeLinks];
   return {
     text,
     html,
     title: clean(title),
     h1: clean(h1),
     links: sanitizeLinks(links),
+    structuredJobs: Object.freeze([]),
   };
 }
 

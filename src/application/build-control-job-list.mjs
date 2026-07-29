@@ -63,7 +63,8 @@ export function buildControlJobList({
 } = {}) {
   if (!repository) throw new Error('repository is required');
   const companies = repository.listCompanies();
-  const portals = repository.listCareerPortals();
+  const portals = repository.listCareerPortals()
+    .filter((portal) => !portal.supersededByPortalId);
   const events = repository.listRecruitmentEvents();
   const jobs = repository.listJobOpenings();
   const companyById = new Map(companies.map((company) => [company.id, company]));

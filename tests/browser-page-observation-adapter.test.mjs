@@ -358,6 +358,39 @@ test('does not classify the word internal as an internship signal', async () => 
   assert.equal(observed.jobs[0].employmentType, 'full_time');
 });
 
+test('extracts JSON-LD jobs from a dynamic recruitment page without anchor links', async () => {
+  const page = {
+    async snapshot() {
+      return {
+        text: '招聘职位',
+        html: `<script type="application/ld+json">${JSON.stringify({
+          '@type': 'JobPosting',
+          title: 'AI 产品经理',
+          identifier: { value: 'pm-42' },
+          url: '/jobs/pm-42',
+          jobLocation: { address: { addressLocality: '上海' } },
+          datePosted: '2026-07-01',
+        })}</script>`,
+        title: '招聘职位',
+        links: [],
+      };
+    },
+    async waitForTimeout() {},
+    async url() {
+      return 'https://jobs.example.com/openings';
+    },
+  };
+  const observed = await observeRenderedRecruitmentPage(page, {
+    requestedUrl: 'https://jobs.example.com/openings',
+    response: { status: () => 200 },
+    renderWaitMs: 0,
+  });
+  assert.equal(observed.jobs[0].title, 'AI 产品经理');
+  assert.equal(observed.jobs[0].sourceJobId, 'pm-42');
+  assert.deepEqual(observed.jobs[0].locations, ['上海']);
+  assert.equal(observed.jobs[0].extractionAdapter, 'JSON_LD_JOB_POSTING');
+});
+
 test('Playwright wrapper implements the BrowserSession port', async () => {
   let configuredTimeout = null;
   const rawPage = {

@@ -121,7 +121,7 @@ export function buildControlCompanyList({
     ? repository.listCompanies()
     : [];
   const portals = typeof repository.listCareerPortals === 'function'
-    ? repository.listCareerPortals()
+    ? repository.listCareerPortals().filter((portal) => !portal.supersededByPortalId)
     : [];
   const jobs = typeof repository.listJobOpenings === 'function'
     ? repository.listJobOpenings()

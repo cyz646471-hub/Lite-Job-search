@@ -60,8 +60,8 @@ test('allows only trusted first-party or official-attributed ATS domains', () =>
   });
 
   assert.deepEqual(entries.map((entry) => entry.url), [
-    'https://campus.example.com/jobs',
     'https://example.mokahr.com/social',
+    'https://campus.example.com/jobs',
   ]);
 });
 
@@ -109,7 +109,7 @@ test('official careers page may enqueue a first-party apply-jobs link and preser
     parentOfficialVerified: true,
   });
 
-  assert.equal(entry.url, 'https://jobs.bosch.com/en/?country=cn');
+  assert.equal(entry.url, 'https://jobs.bosch.com/en?country=cn');
   assert.equal(entry.recruitmentType, 'general');
   assert.equal(entry.discoveryReason, 'career_navigation_link');
 });
@@ -185,4 +185,20 @@ test('preserves parent and depth evidence for child entries', () => {
     discoveryReason: 'career_navigation_link',
   });
   assert.ok(Object.isFrozen(entry));
+});
+
+test('prioritizes job directories before culture pages when the budget is small', () => {
+  const entries = discoverRecruitmentEntries({
+    baseUrl: 'https://jobs.example.com/',
+    trustedRegistrableDomains: ['example.com'],
+    links: [
+      { text: '企业文化', href: '/careers/culture' },
+      { text: '员工福利', href: '/careers/benefits' },
+      { text: '查看全部职位', href: '/careers/open-positions?department=product&utm_source=home' },
+    ],
+    maxEntries: 1,
+  });
+  assert.deepEqual(entries.map((entry) => entry.url), [
+    'https://jobs.example.com/careers/open-positions',
+  ]);
 });

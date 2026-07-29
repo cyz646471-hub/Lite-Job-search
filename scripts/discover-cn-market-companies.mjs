@@ -35,6 +35,17 @@ export async function discoverCnMarketCompanies({
     await atomicJson(outputFile, result);
     return result;
   };
+  const circuit = repository.getProviderCircuitState(selectedEngine);
+  if (circuit && ['OPEN', 'HALF_OPEN'].includes(circuit.state)) {
+    searchRuns.push({
+      key: 'PROVIDER_PREFLIGHT',
+      status: 'BLOCKED',
+      reasonCode: `PROVIDER_CIRCUIT_${circuit.state}`,
+      provider: selectedEngine,
+    });
+    repository.close();
+    return checkpointResult('BLOCKED');
+  }
   let browser;
   try {
     const { chromium } = await import('playwright');

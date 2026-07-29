@@ -57,7 +57,7 @@ function durationMetrics({
     nowMs - Math.max(60, rollingWindowSeconds) * 1000,
   );
   const completedInWindow = items.filter((item) => {
-    if (!['SUCCEEDED', 'FAILED', 'DEFERRED'].includes(item.status)) return false;
+    if (item.status !== 'SUCCEEDED') return false;
     const completedMs = Date.parse(item.completedAt || '');
     return Number.isFinite(completedMs)
       && completedMs >= rollingStartedMs
@@ -110,9 +110,34 @@ export function buildControlProgress({
     .find((item) => item.batchId === selectedBatchId) || null;
   const companies = repository.listCompanies();
   const companiesById = new Map(companies.map((company) => [company.id, company]));
-  const portals = repository.listCareerPortals();
-  const events = repository.listRecruitmentEvents();
-  const jobs = repository.listJobOpenings();
+  const scopedCompanyIds = new Set(items
+    .flatMap((item) => [item?.input?.id, item?.input?.companyId, item?.itemKey])
+    .filter((id) => companiesById.has(id)));
+  const scopeEnabled = scopedCompanyIds.size > 0;
+  const scopedCompanies = scopeEnabled
+    ? companies.filter((company) => scopedCompanyIds.has(company.id))
+    : companies;
+  const portals = repository.listCareerPortals()
+    .filter((portal) => !scopeEnabled || scopedCompanyIds.has(portal.companyId));
+  const events = repository.listRecruitmentEvents()
+    .filter((event) => !scopeEnabled || scopedCompanyIds.has(event.companyId));
+  const jobs = repository.listJobOpenings()
+    .filter((job) => !scopeEnabled || scopedCompanyIds.has(job.companyId));
+  const activePortals = portals.filter((portal) => !portal.supersededByPortalId);
+  const candidatePortalCompanies = new Set(activePortals.map((portal) => portal.companyId).filter(Boolean));
+  const verifiedEntryCompanies = new Set(activePortals
+    .filter((portal) => portal.verificationStatus === 'VERIFIED')
+    .map((portal) => portal.companyId)
+    .filter(Boolean));
+  const openHiringCompanies = new Set(activePortals
+    .filter((portal) => portal.hiringAvailability === 'OPENINGS_FOUND')
+    .map((portal) => portal.companyId)
+    .filter(Boolean));
+  const jobExtractedCompanies = new Set(jobs.map((job) => job.companyId).filter(Boolean));
+  const publishedCompanies = new Set(jobs
+    .filter((job) => job.publicationStatus === 'PUBLISHED')
+    .map((job) => job.companyId)
+    .filter(Boolean));
 
   const itemCounts = countBy(items, (item) => item.status);
   const resultCounts = countBy(
@@ -124,7 +149,8 @@ export function buildControlProgress({
   const deferred = itemCounts.DEFERRED || 0;
   const running = itemCounts.RUNNING || 0;
   const pendingMaterialized = itemCounts.PENDING || 0;
-  const processed = succeeded + failed + deferred;
+  const attempted = succeeded + failed + deferred;
+  const processed = succeeded;
   const target = Math.max(Number(task?.targetCount) || 0, items.length);
   const notMaterialized = Math.max(0, target - items.length);
   const remaining = Math.max(0, target - processed);
@@ -211,6 +237,7 @@ export function buildControlProgress({
       target,
       materialized: items.length,
       processed,
+      attempted,
       succeeded,
       failed,
       deferred,
@@ -237,8 +264,14 @@ export function buildControlProgress({
       lastError: worker.lastError,
     } : null,
     quality: {
-      companies: companies.length,
-      verifiedPortals: portals.filter((portal) => portal.verificationStatus === 'VERIFIED').length,
+      companies: scopedCompanies.length,
+      registeredCompanies: scopedCompanies.length,
+      candidatePortalCompanies: candidatePortalCompanies.size,
+      verifiedEntryCompanies: verifiedEntryCompanies.size,
+      openHiringCompanies: openHiringCompanies.size,
+      jobExtractedCompanies: jobExtractedCompanies.size,
+      publishedCompanies: publishedCompanies.size,
+      verifiedPortals: activePortals.filter((portal) => portal.verificationStatus === 'VERIFIED').length,
       recruitmentEvents: events.length,
       jobOpenings: jobs.length,
     },

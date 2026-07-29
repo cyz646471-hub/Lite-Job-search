@@ -103,6 +103,23 @@ test('targetProgress only counts companies materialized in the current batch', (
   assert.equal(targetProgress(task(), repository), 1);
 });
 
+test('processed-company progress excludes failed and deferred companies', () => {
+  const repository = {
+    listBatchItems: () => [
+      { status: 'SUCCEEDED' },
+      { status: 'FAILED' },
+      { status: 'DEFERRED' },
+    ],
+    listCompanies: () => [],
+    listCareerPortals: () => [],
+    listJobOpenings: () => [],
+  };
+  assert.equal(targetProgress(task({
+    targetUnit: 'COMPANIES_PROCESSED',
+    targetCount: 3,
+  }), repository), 1);
+});
+
 test('matching-job progress applies batch, role, and date boundaries', () => {
   const repository = {
     listBatchItems: () => [

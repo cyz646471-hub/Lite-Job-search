@@ -40,6 +40,10 @@ export function dashboardHtml() {
     <div class="progress-caption"><span id="progress-text">0 / 0 已处理</span><span id="eta">ETA 暂不可用</span></div>
   </section>
   <section class="cards">
+    <article class="card"><div class="label">企业库登记</div><div id="registered-companies" class="value">0</div><div class="sub">企业身份记录，不代表已完成采集</div></article>
+    <article class="card"><div class="label">已核验招聘入口</div><div id="verified-entry-companies" class="value">0</div><div class="sub">按公司去重，不按门户 URL 计数</div></article>
+    <article class="card"><div class="label">确认开放招聘</div><div id="open-hiring-companies" class="value green">0</div><div class="sub">页面存在当前开放岗位证据</div></article>
+    <article class="card"><div class="label">正式发布公司</div><div id="published-companies" class="value green">0</div><div class="sub">至少有一个 A 级正式可投岗位</div></article>
     <article class="card"><div class="label">流水线成功</div><div id="succeeded" class="value green">0</div><div class="sub">已完成验证与写入流程</div></article>
     <article class="card"><div class="label">明确失败</div><div id="failed" class="value red">0</div><div class="sub">保留原因，可断点重试</div></article>
     <article class="card"><div class="label">剩余公司</div><div id="remaining" class="value amber">0</div><div id="remaining-sub" class="sub">含尚未装载的公司</div></article>
@@ -186,6 +190,10 @@ function render(data){
   el('progress-text').textContent=fmt(p.processed)+' / '+fmt(p.target)+' 已处理';
   el('eta').textContent='观测速度 '+(data.timing?.companiesPerHour??'—')+' 家/小时 · ETA '+duration(data.timing?.etaSeconds);
   el('succeeded').textContent=fmt(p.succeeded);el('failed').textContent=fmt(p.failed);el('remaining').textContent=fmt(p.remaining);
+  el('registered-companies').textContent=fmt(data.quality?.registeredCompanies);
+  el('verified-entry-companies').textContent=fmt(data.quality?.verifiedEntryCompanies);
+  el('open-hiring-companies').textContent=fmt(data.quality?.openHiringCompanies);
+  el('published-companies').textContent=fmt(data.quality?.publishedCompanies);
   el('remaining-sub').textContent='运行中 '+fmt(p.running)+' · 已装载待处理 '+fmt(p.pendingMaterialized)+' · 尚未装载 '+fmt(p.notMaterialized);
   el('jobs').textContent=fmt(data.quality?.jobOpenings);el('quality-sub').textContent=fmt(data.quality?.verifiedPortals)+' 个 VERIFIED 门户 · '+fmt(data.quality?.recruitmentEvents)+' 个招聘事件';
   el('worker').innerHTML=worker?row('健康状态',badge(healthLabels[health]||health,health==='HEALTHY'?'good':health==='STALE'||health==='CRASHED'?'bad':'warn'))+row('进程',escapeHtml((healthLabels[worker.state]||worker.state)+' · PID '+worker.pid))+row('当前公司',escapeHtml(worker.currentCompany))+row('上个完成',escapeHtml(worker.lastCompletedCompany))+row('最近心跳',escapeHtml(dt(worker.heartbeatAt)+'（'+fmt(worker.heartbeatAgeSeconds)+' 秒前）'))+(worker.lastError?row('最近错误',escapeHtml(worker.lastError)):''):'<div class="empty">当前没有 Worker 记录。</div>';

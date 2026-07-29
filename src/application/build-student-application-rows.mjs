@@ -35,7 +35,11 @@ export function buildStudentApplicationRows({
   jobs = [],
 } = {}) {
   const companyById = new Map(companies.map((company) => [company.id, company]));
-  const portalById = new Map(portals.map((portal) => [portal.id, portal]));
+  const portalById = new Map(
+    portals
+      .filter((portal) => !portal.supersededByPortalId)
+      .map((portal) => [portal.id, portal]),
+  );
   const jobsByEventId = new Map();
   for (const job of jobs) {
     if (!job.recruitmentEventId || job.status !== 'ACTIVE') continue;

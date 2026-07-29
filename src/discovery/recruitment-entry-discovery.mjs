@@ -1,4 +1,5 @@
 import { getDomain } from 'tldts';
+import { canonicalRecruitmentUrl } from '../core/canonical-recruitment-url.mjs';
 
 export const KNOWN_ATS_REGISTRABLE_DOMAINS = Object.freeze([
   'mokahr.com',
@@ -45,6 +46,15 @@ function isNonCandidateNavigation(url, text = '') {
     || /\/resume(?:[./]|$)/i.test(path)
     || /发布(?:招聘)?职位|企业(?:登录|注册)|employer\s+(?:login|sign in|post)/i
       .test(String(text || ''));
+}
+
+function navigationPriority(text = '', url = '') {
+  const value = `${String(text)} ${String(url)}`.toLowerCase();
+  if (/职位列表|岗位列表|查看.*职位|搜索.*职位|open positions?|job openings?|find jobs?|search jobs?|apply/i.test(value)) return 100;
+  if (/校园招聘|社会招聘|实习|校招|社招|campus|graduate|internship|experienced/i.test(value)) return 80;
+  if (/加入我们|招聘首页|人才招聘|careers?|jobs?/i.test(value)) return 60;
+  if (/文化|福利|生活|故事|团队|culture|benefits?|life at|meet the team/i.test(value)) return 10;
+  return 40;
 }
 
 export function recruitmentTypeForEntry(text, url) {
@@ -99,13 +109,12 @@ export function discoverRecruitmentEntries({
   ]);
   const visited = new Set(
     [base.href, ...(visitedUrls || [])]
-      .map((value) => httpUrl(value)?.href)
+      .map((value) => canonicalRecruitmentUrl(value))
       .filter(Boolean),
   );
   const discovered = [];
 
   for (const link of links) {
-    if (discovered.length >= numericMaxEntries) break;
     const resolved = httpUrl(link?.href, base);
     const recruitmentType = recruitmentTypeForEntry(link?.text, resolved?.href);
     if (!resolved || !recruitmentType || isNonCandidateNavigation(resolved, link?.text)) continue;
@@ -114,10 +123,11 @@ export function discoverRecruitmentEntries({
     const attributedAtsEntry = !firstPartyEntry
       && parentOfficialVerified === true
       && knownAtsDomains.has(domain);
-    if ((!firstPartyEntry && !attributedAtsEntry) || visited.has(resolved.href)) continue;
-    visited.add(resolved.href);
+    const canonicalUrl = canonicalRecruitmentUrl(resolved.href);
+    if ((!firstPartyEntry && !attributedAtsEntry) || !canonicalUrl || visited.has(canonicalUrl)) continue;
+    visited.add(canonicalUrl);
     const entry = {
-      url: resolved.href,
+      url: canonicalUrl,
       text: String(link?.text || '').replace(/\s+/g, ' ').trim(),
       recruitmentType,
       parentUrl: parentUrl || base.href,
@@ -125,6 +135,7 @@ export function discoverRecruitmentEntries({
       discoveryReason: attributedAtsEntry
         ? 'verified_official_outbound_ats_link'
         : 'career_navigation_link',
+      priority: navigationPriority(link?.text, canonicalUrl) + (attributedAtsEntry ? 10 : 0),
     };
     if (attributedAtsEntry) {
       entry.parentOfficialVerified = true;
@@ -133,5 +144,8 @@ export function discoverRecruitmentEntries({
     discovered.push(Object.freeze(entry));
   }
 
-  return Object.freeze(discovered);
+  return Object.freeze(discovered
+    .sort((left, right) => right.priority - left.priority || left.url.localeCompare(right.url))
+    .slice(0, numericMaxEntries)
+    .map(({ priority, ...entry }) => Object.freeze(entry)));
 }

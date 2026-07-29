@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import Database from 'better-sqlite3';
+import { canonicalRecruitmentUrl } from '../core/canonical-recruitment-url.mjs';
 
 import { createJobAssignment } from '../domain/job-assignment.mjs';
 import { createJobOpening } from '../domain/job-opening.mjs';
@@ -933,25 +934,32 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
   function upsertCareerPortal(portal) {
     requireMigration();
     return withTransaction(() => {
-      const sourceTier = portal.sourceTier || (
-        portal.atsType ? 'OFFICIAL_ATS' : 'OFFICIAL_SITE'
+      const normalizedCanonicalUrl = canonicalRecruitmentUrl(portal.canonicalUrl || portal.url)
+        || portal.canonicalUrl;
+      const normalizedPortal = {
+        ...portal,
+        url: normalizedCanonicalUrl,
+        canonicalUrl: normalizedCanonicalUrl,
+      };
+      const sourceTier = normalizedPortal.sourceTier || (
+        normalizedPortal.atsType ? 'OFFICIAL_ATS' : 'OFFICIAL_SITE'
       );
       const officialIdentityConfirmed = (
-        portal.officialIdentityConfirmed ?? portal.verificationStatus === 'VERIFIED'
+        normalizedPortal.officialIdentityConfirmed ?? normalizedPortal.verificationStatus === 'VERIFIED'
       ) === true;
-      const platformIdentityConfirmed = portal.platformIdentityConfirmed === true;
-      const hiringAvailability = portal.hiringAvailability || 'UNKNOWN';
+      const platformIdentityConfirmed = normalizedPortal.platformIdentityConfirmed === true;
+      const hiringAvailability = normalizedPortal.hiringAvailability || 'UNKNOWN';
       const confidenceScore = Math.max(
         0,
-        Math.min(100, Number(portal.confidenceScore) || 0),
+        Math.min(100, Number(normalizedPortal.confidenceScore) || 0),
       );
       if (!['OFFICIAL_SITE', 'OFFICIAL_ATS', 'OFFICIAL_SOCIAL', 'PLATFORM_ONLY'].includes(sourceTier)) {
         throw new Error('unsupported CareerPortal sourceTier');
       }
-      const channelType = portal.channelType || (
+      const channelType = normalizedPortal.channelType || (
         sourceTier === 'OFFICIAL_SOCIAL'
           ? 'WECHAT_OFFICIAL_ACCOUNT'
-          : portal.atsType
+          : normalizedPortal.atsType
             ? 'ATS'
             : 'WEB_PORTAL'
       );
@@ -962,7 +970,7 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         throw new Error('OFFICIAL_SOCIAL CareerPortal requires WECHAT_OFFICIAL_ACCOUNT');
       }
       if (sourceTier === 'PLATFORM_ONLY') {
-        if (portal.verificationStatus === 'VERIFIED') {
+        if (normalizedPortal.verificationStatus === 'VERIFIED') {
           throw new Error('PLATFORM_ONLY CareerPortal cannot be VERIFIED');
         }
         if (confidenceScore > 49) {
@@ -974,43 +982,49 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         if (hiringAvailability === 'OPENINGS_FOUND' && !platformIdentityConfirmed) {
           throw new Error('PLATFORM_ONLY openings require confirmed platform identity');
         }
-      } else if (portal.verificationStatus === 'VERIFIED' && !officialIdentityConfirmed) {
+      } else if (normalizedPortal.verificationStatus === 'VERIFIED' && !officialIdentityConfirmed) {
         throw new Error('VERIFIED CareerPortal requires confirmed official identity');
       }
 
-      const existing = statements.portalIdentity.get(portal.id, portal.canonicalUrl);
-      if (existing && existing.company_id !== portal.companyId) {
+      const semanticExisting = database.prepare(`
+        SELECT * FROM career_portals
+        WHERE company_id = ? AND superseded_by_portal_id IS NULL
+      `).all(normalizedPortal.companyId).find((candidate) => (
+        canonicalRecruitmentUrl(candidate.canonical_url) === normalizedCanonicalUrl
+      ));
+      const existing = statements.portalIdentity.get(normalizedPortal.id, normalizedCanonicalUrl)
+        || semanticExisting;
+      if (existing && existing.company_id !== normalizedPortal.companyId) {
         throw new Error('CareerPortal canonical URL conflicts with another company');
       }
-      if (existing && existing.id !== portal.id) {
-        throw new Error('CareerPortal canonical URL already has a different stable id');
-      }
+      const targetPortalId = existing?.id || normalizedPortal.id;
       statements.upsertPortal.run({
-        ...portal,
-        atsType: portal.atsType || '',
+        ...normalizedPortal,
+        id: targetPortalId,
+        atsType: normalizedPortal.atsType || '',
         confidenceScore,
         sourceTier,
         channelType,
-        officialAccountName: portal.officialAccountName ?? null,
-        officialAccountId: portal.officialAccountId ?? null,
-        verifiedSubject: portal.verifiedSubject ?? null,
+        officialAccountName: normalizedPortal.officialAccountName ?? null,
+        officialAccountId: normalizedPortal.officialAccountId ?? null,
+        verifiedSubject: normalizedPortal.verifiedSubject ?? null,
         officialIdentityConfirmed: officialIdentityConfirmed ? 1 : 0,
         platformIdentityConfirmed: platformIdentityConfirmed ? 1 : 0,
         hiringAvailability,
-        fallbackReason: portal.fallbackReason ?? null,
-        searchCoverage: portal.searchCoverage || 'PARTIAL',
-        supersededByPortalId: portal.supersededByPortalId ?? null,
-        recruitmentTypesJson: encode(portal.recruitmentTypes, []),
-        lastVerifiedAt: portal.lastVerifiedAt ?? null,
-        lastCheckedAt: portal.lastCheckedAt ?? null,
+        fallbackReason: normalizedPortal.fallbackReason ?? null,
+        searchCoverage: normalizedPortal.searchCoverage || 'PARTIAL',
+        supersededByPortalId: normalizedPortal.supersededByPortalId ?? null,
+        recruitmentTypesJson: encode(normalizedPortal.recruitmentTypes, []),
+        lastVerifiedAt: normalizedPortal.lastVerifiedAt ?? null,
+        lastCheckedAt: normalizedPortal.lastCheckedAt ?? null,
       });
       const validPlatformPortal = sourceTier === 'PLATFORM_ONLY'
         && platformIdentityConfirmed
         && hiringAvailability === 'OPENINGS_FOUND';
-      if (portal.verificationStatus !== 'VERIFIED' && !validPlatformPortal) {
-        statements.deletePortalOpenings.run(portal.id);
+      if (normalizedPortal.verificationStatus !== 'VERIFIED' && !validPlatformPortal) {
+        statements.deletePortalOpenings.run(targetPortalId);
       }
-      return portal;
+      return listCareerPortals().find((item) => item.id === targetPortalId);
     });
   }
 
@@ -1489,7 +1503,8 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       SELECT jobs.*
       FROM job_openings AS jobs
       INNER JOIN career_portals AS portals ON portals.id = jobs.career_portal_id
-      WHERE (
+      WHERE portals.superseded_by_portal_id IS NULL
+      AND ((
         jobs.source_tier IN ('OFFICIAL_SITE', 'OFFICIAL_ATS', 'OFFICIAL_SOCIAL')
         AND portals.verification_status = 'VERIFIED'
       ) OR (
@@ -1497,7 +1512,7 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         AND portals.source_tier = 'PLATFORM_ONLY'
         AND portals.platform_identity_confirmed = 1
         AND portals.hiring_availability = 'OPENINGS_FOUND'
-      )
+      ))
       ORDER BY jobs.title, jobs.id
     `).all().map(mapOpening);
   }

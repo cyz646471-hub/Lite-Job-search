@@ -615,7 +615,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       }, { now: observedAt });
 
       repository.withTransaction(() => {
-        repository.upsertCareerPortal(portal);
+        portal = repository.upsertCareerPortal(portal) || portal;
         repository.replaceVerificationEvidence(portal.id, portalEvidence);
       });
 
@@ -907,7 +907,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
           hiringAvailability: 'OPENINGS_FOUND',
           lastCheckedAt: observedAt,
         }, { now: observedAt });
-        repository.upsertCareerPortal(portal);
+        portal = repository.upsertCareerPortal(portal) || portal;
         portalDecisionsById.set(portal.id, Object.freeze({
           ...portalDecisionsById.get(portal.id),
           hiringAvailability: portal.hiringAvailability,

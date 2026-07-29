@@ -77,12 +77,24 @@ function repository() {
       { id: 'company-c', canonicalName: '丙公司' },
       { id: 'company-d', canonicalName: '丁公司' },
     ],
-    listCareerPortals: () => [
-      { verificationStatus: 'VERIFIED' },
-      { verificationStatus: 'PENDING_REVIEW' },
+    listCompanies: () => [
+      { id: 'company-a', canonicalName: 'Company A' },
+      { id: 'company-b', canonicalName: 'Company B' },
+      { id: 'company-c', canonicalName: 'Company C' },
+      { id: 'company-d', canonicalName: 'Company D' },
+      { id: 'company-outside', canonicalName: 'Outside Company' },
     ],
-    listRecruitmentEvents: () => [{ id: 'event-1' }],
-    listJobOpenings: () => [{ id: 'job-1' }, { id: 'job-2' }],
+    listCareerPortals: () => [
+      { companyId: 'company-a', verificationStatus: 'VERIFIED', hiringAvailability: 'OPENINGS_FOUND' },
+      { companyId: 'company-b', verificationStatus: 'PENDING_REVIEW', hiringAvailability: 'UNKNOWN' },
+      { companyId: 'company-outside', verificationStatus: 'VERIFIED', hiringAvailability: 'OPENINGS_FOUND' },
+    ],
+    listRecruitmentEvents: () => [{ id: 'event-1', companyId: 'company-a' }],
+    listJobOpenings: () => [
+      { id: 'job-1', companyId: 'company-a', publicationStatus: 'PUBLISHED' },
+      { id: 'job-2', companyId: 'company-b', publicationStatus: 'REVIEW_REQUIRED' },
+      { id: 'job-outside', companyId: 'company-outside', publicationStatus: 'PUBLISHED' },
+    ],
     listProviderCircuitStates: () => [],
   };
 }
@@ -94,15 +106,20 @@ test('progress snapshot includes unmaterialized companies and live worker contex
   });
   assert.equal(progress.progress.target, 100);
   assert.equal(progress.progress.materialized, 4);
-  assert.equal(progress.progress.processed, 2);
-  assert.equal(progress.progress.remaining, 98);
+  assert.equal(progress.progress.processed, 1);
+  assert.equal(progress.progress.attempted, 2);
+  assert.equal(progress.progress.remaining, 99);
   assert.equal(progress.progress.notMaterialized, 96);
-  assert.equal(progress.progress.percent, 2);
+  assert.equal(progress.progress.percent, 1);
   assert.equal(progress.worker.health, 'HEALTHY');
   assert.equal(progress.worker.currentCompany, '丙公司');
   assert.equal(progress.worker.lastCompletedCompany, '乙公司');
   assert.equal(progress.failureReasons[0].reason, 'candidate_page_blocked');
   assert.equal(progress.quality.verifiedPortals, 1);
+  assert.equal(progress.quality.verifiedEntryCompanies, 1);
+  assert.equal(progress.quality.openHiringCompanies, 1);
+  assert.equal(progress.quality.registeredCompanies, 4);
+  assert.equal(progress.quality.publishedCompanies, 1);
   assert.equal(progress.quality.jobOpenings, 2);
 });
 

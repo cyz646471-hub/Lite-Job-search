@@ -1,3 +1,6 @@
+import { canonicalRecruitmentUrl } from '../../core/canonical-recruitment-url.mjs';
+import { extractExplicitJobLinks } from './recruitment-page-observer.mjs';
+
 const RECRUITMENT_TYPE_MAP = Object.freeze({
   SOCIAL: 'experienced',
   GRADUATE: 'campus',
@@ -10,14 +13,7 @@ const RECRUITMENT_TYPE_MAP = Object.freeze({
 });
 
 function canonicalHttpUrl(value) {
-  try {
-    const url = new URL(String(value || '').trim());
-    if (!['http:', 'https:'].includes(url.protocol)) return '';
-    url.hash = '';
-    return url.href;
-  } catch {
-    return '';
-  }
+  return canonicalRecruitmentUrl(value);
 }
 
 function clean(value) {
@@ -105,4 +101,3 @@ export function createBrowserObservationFetcher(observations = []) {
     return structuredClone(page);
   };
 }
-import { extractExplicitJobLinks } from './recruitment-page-observer.mjs';

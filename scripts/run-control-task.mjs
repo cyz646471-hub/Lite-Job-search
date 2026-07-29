@@ -91,9 +91,7 @@ export function targetProgress(task, repository) {
   const companyIds = batchCompanyIds(task, repository);
   if (task.targetUnit === 'COMPANIES_PROCESSED') {
     const items = repository.listBatchItems(task.batchId);
-    return items.filter((item) => (
-      ['SUCCEEDED', 'FAILED', 'DEFERRED'].includes(item.status)
-    )).length;
+    return items.filter((item) => item.status === 'SUCCEEDED').length;
   }
   if (task.targetUnit === 'COMPANIES_WITH_VERIFIED_PORTAL') {
     return new Set(repository.listCareerPortals()
@@ -294,9 +292,9 @@ export async function runControlTask(args = {}, dependencies = {}) {
     ? 'STOPPED'
     : pausedByRecovery
       ? 'PARTIAL'
-    : progress >= task.targetCount
-      ? 'COMPLETE'
-      : 'PARTIAL';
+      : progress >= task.targetCount
+        ? 'COMPLETE'
+        : 'PARTIAL';
   repository.updateControlTaskState({
     id: task.id,
     state,

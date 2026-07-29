@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { canonicalRecruitmentUrl } from '../core/canonical-recruitment-url.mjs';
 
 import {
   adaptBrowserCompanyResult,
@@ -95,14 +96,7 @@ function createBrowserIds(companyResult) {
 }
 
 function canonicalHttpUrl(value) {
-  try {
-    const url = new URL(String(value || '').trim());
-    if (!['http:', 'https:'].includes(url.protocol)) return null;
-    url.hash = '';
-    return url.href;
-  } catch {
-    return null;
-  }
+  return canonicalRecruitmentUrl(value) || null;
 }
 
 function registrableDomain(value) {
