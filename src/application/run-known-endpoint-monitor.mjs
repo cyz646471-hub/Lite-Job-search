@@ -180,9 +180,38 @@ export async function runKnownEndpointMonitor({
   const endpointFilter = sourceEndpointIds
     ? new Set(sourceEndpointIds.map(String))
     : null;
-  const items = plan.queues.PORTAL_MONITOR.filter((item) => (
-    item.runnable && (!endpointFilter || endpointFilter.has(item.sourceEndpointId))
-  ));
+  const policyByTarget = new Map(
+    repository.listMonitorPolicies().map((policy) => [policy.targetId, policy]),
+  );
+  const items = endpointFilter
+    ? allSourceEndpoints
+      .filter((endpoint) => endpointFilter.has(endpoint.id))
+      .map((endpoint) => {
+        const portal = portalById.get(endpoint.careerPortalId);
+        const company = companyById.get(endpoint.companyId);
+        const policy = policyByTarget.get(endpoint.id);
+        return {
+          queueLane: policy?.queueLane || 'PORTAL_MONITOR',
+          companyId: endpoint.companyId,
+          company: company?.canonicalName || endpoint.companyId,
+          careerPortalId: endpoint.careerPortalId,
+          sourceEndpointId: endpoint.id,
+          url: endpoint.canonicalUrl,
+          transport: endpoint.transport,
+          adapterType: endpoint.adapterType,
+          priority: policy?.priority || 50,
+          browserAllowed: policy?.browserAllowed === true,
+          consecutiveMissingThreshold: policy?.consecutiveMissingThreshold || 3,
+          searchAllowed: false,
+          nextDueAt: endpoint.nextCheckAt || policy?.nextDueAt || null,
+          runnable: portal?.verificationStatus === 'VERIFIED',
+          reason: policy?.queueLane === 'PORTAL_RECOVERY'
+            ? 'verified_endpoint_direct_recovery_probe'
+            : 'verified_endpoint_canary',
+        };
+      })
+      .filter((item) => item.runnable)
+    : plan.queues.PORTAL_MONITOR.filter((item) => item.runnable);
   const results = [];
   async function recordResult(result) {
     results.push(result);
