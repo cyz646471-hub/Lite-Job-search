@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "reviewedAt": "2026-07-28",
+  "records": [
+    {
+      "company": "安谋科技（中国）",
+      "aliases": ["安谋中国", "Arm China"],
+      "ats": "MOKA",
+      "tenantKey": "armchina",
+      "urlPrefixes": ["https://app.mokahr.com/apply/armchina/"],
+      "officialDomains": ["armchina.com"],
+      "provenance": "2026-07-27 visible-browser canary and company identity registry"
+    },
+    {
+      "company": "百融云创",
+      "aliases": ["百融", "Bairong"],
+      "ats": "MOKA",
+      "tenantKey": "100credit",
+      "urlPrefixes": ["https://app.mokahr.com/campus-recruitment/100credit/"],
+      "officialDomains": ["brgroup.com"],
+      "provenance": "2026-07-27 visible-browser canary; rendered ATS legal entity matched 百融云创科技股份有限公司"
+    },
+    {
+      "company": "白云机场",
+      "aliases": ["广州白云国际机场", "白云机场股份"],
+      "ats": "HOTJOB",
+      "tenantKey": "baiyunportjob",
+      "urlPrefixes": ["https://baiyunportjob.hotjob.cn/"],
+      "officialDomains": ["baiyunport.com"],
+      "provenance": "2026-07-27 visible-browser canary and company identity registry"
+    },
+    {
+      "company": "安徽合力",
+      "aliases": ["安徽合力股份有限公司"],
+      "ats": "ZHIYE",
+      "tenantKey": "ahhl",
+      "urlPrefixes": ["https://ahhl.zhiye.com/"],
+      "officialDomains": ["helichina.com"],
+      "provenance": "2026-07-27 visible-browser canary; first-party recruitment page and ATS result"
+    },
+    {
+      "company": "360 数科",
+      "aliases": ["360数科", "奇富科技", "360金融"],
+      "ats": "MOKA",
+      "tenantKey": "360jinrong",
+      "urlPrefixes": [
+        "https://app.mokahr.com/apply/360jinrong",
+        "https://app.mokahr.com/campus-recruitment/360jinrong/",
+        "https://app.mokahr.com/social-recruitment/360jinrong/"
+      ],
+      "officialDomains": ["360shuke.com"],
+      "provenance": "2026-07-28 verified campus tenant and official-site attribution in the LJS canary database"
+    },
+    {
+      "company": "创新奇智",
+      "aliases": ["AInnovation", "创新奇智科技"],
+      "ats": "ZHIYE",
+      "tenantKey": "ainnovation",
+      "urlPrefixes": ["https://ainnovation.zhiye.com/"],
+      "officialDomains": ["ainnovation.com"],
+      "provenance": "2026-07-29 reviewed tenant identity, company footer and backlink to ainnovation.com on the public Campus portal"
+    },
+    {
+      "company": "上海农商银行",
+      "aliases": ["沪农商行", "Shanghai Rural Commercial Bank", "SHRCB"],
+      "ats": "ZHIYE",
+      "tenantKey": "shrcb",
+      "urlPrefixes": ["https://shrcb.zhiye.com/"],
+      "officialDomains": ["shrcb.com"],
+      "provenance": "2026-07-29 first-party employee recruitment page and official 2026 spring campus recruitment PDF explicitly identify shrcb.zhiye.com as the recruitment site"
+    }
+  ]
+}

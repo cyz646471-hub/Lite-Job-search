@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "generatedFrom": "current SQLite verified official portals with extracted jobs",
+  "observedAt": "2026-07-29",
+  "profiles": [
+    {
+      "id": "SELF_HOSTED_XIAOHONGSHU",
+      "domains": ["job.xiaohongshu.com"],
+      "parser": "embedded-json-and-link-fallback",
+      "transport": "HTTP_THEN_BROWSER_RECOVERY",
+      "notes": "Treat only deterministically verified company-owned recruitment pages as official."
+    },
+    {
+      "id": "SELF_HOSTED_IQIYI",
+      "domains": ["zhaopin.iqiyi.com"],
+      "parser": "embedded-json-and-link-fallback",
+      "transport": "HTTP_THEN_BROWSER_RECOVERY",
+      "notes": "Treat only deterministically verified company-owned recruitment pages as official."
+    }
+  ]
+}

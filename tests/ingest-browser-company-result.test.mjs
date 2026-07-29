@@ -95,6 +95,250 @@ test('browser result verifies portal, extracts explicit jobs and writes SQLite',
   );
 });
 
+test('browser result bootstraps and persists an empty-domain first-party career site', async (t) => {
+  const repository = await createRepository(t);
+  const portalUrl = 'https://jobs.mihoyo.com/';
+  const result = await ingestBrowserCompanyResult({
+    companyResult: {
+      company: '米哈游',
+      aliases: [],
+      officialDomain: '',
+      query: '米哈游 招聘',
+      status: 'COMPLETED',
+      officialCandidates: [{
+        classification: 'VERIFICATION_CANDIDATE',
+        title: '米哈游招聘',
+        url: portalUrl,
+        recruitmentType: 'SOCIAL',
+      }],
+      observations: [{
+        requestedUrl: portalUrl,
+        finalUrl: portalUrl,
+        status: 200,
+        title: '米哈游招聘',
+        html: '<main><h1>加入米哈游</h1><p>米哈游招聘职位</p><a href="/jobs/pm">产品经理 立即申请</a></main>',
+        text: '加入米哈游 米哈游招聘职位 产品经理 立即申请',
+        links: [{
+          text: '产品经理 立即申请',
+          href: 'https://jobs.mihoyo.com/jobs/pm',
+        }],
+        parsed: { pageRole: 'CAREER_HOME' },
+        observedAt: NOW,
+        jobs: [{
+          sourceJobId: 'pm',
+          title: '产品经理',
+          employmentType: 'experienced',
+          jobDetailUrl: 'https://jobs.mihoyo.com/jobs/pm',
+          status: 'ACTIVE',
+        }],
+      }],
+      failures: [],
+    },
+    role: '公开招聘岗位',
+  }, {
+    repository,
+    now: () => NOW,
+  });
+
+  assert.equal(result.jobsStored, 1);
+  assert.equal(repository.listCompanies()[0].primaryOfficialDomain, 'mihoyo.com');
+  assert.deepEqual(repository.listCompanies()[0].officialDomains, ['mihoyo.com']);
+  assert.equal(repository.listCareerPortals()[0].verificationStatus, 'VERIFIED');
+  assert.ok(repository.listCareerPortals()[0].evidence.some(
+    (item) => item.code === 'domain_bootstrap_confirmed',
+  ));
+  assert.equal(repository.listJobOpenings().length, 1);
+});
+
+test('verified first-party parent authorizes and persists an explicit ATS tenant', async (t) => {
+  const repository = await createRepository(t);
+  const parentUrl = 'https://www.example.com/careers';
+  const atsUrl = 'https://app.mokahr.com/campus-recruitment/example/123';
+  const result = await ingestBrowserCompanyResult({
+    companyResult: {
+      company: '示例科技',
+      aliases: [],
+      officialDomain: '',
+      query: '示例科技 招聘',
+      status: 'COMPLETED',
+      officialCandidates: [{
+        classification: 'VERIFICATION_CANDIDATE',
+        title: '示例科技招聘',
+        url: parentUrl,
+      }],
+      observations: [{
+        requestedUrl: parentUrl,
+        finalUrl: parentUrl,
+        status: 200,
+        title: '示例科技招聘',
+        html: `<main><h1>加入示例科技</h1><a href="${atsUrl}">查看招聘职位</a></main>`,
+        text: '加入示例科技 查看招聘职位',
+        links: [{
+          text: '查看招聘职位',
+          href: atsUrl,
+        }],
+        parsed: { pageRole: 'CAREER_HOME' },
+        observedAt: NOW,
+        jobs: [],
+      }, {
+        requestedUrl: atsUrl,
+        finalUrl: atsUrl,
+        status: 200,
+        title: '示例科技招聘职位',
+        html: '<main><h1>示例科技招聘职位</h1><a href="/jobs/pm">产品经理 立即申请</a></main>',
+        text: '示例科技招聘职位 产品经理 立即申请',
+        links: [{
+          text: '产品经理 立即申请',
+          href: 'https://app.mokahr.com/jobs/pm',
+        }],
+        parsed: { pageRole: 'JOB_LIST' },
+        observedAt: NOW,
+        jobs: [{
+          sourceJobId: 'ats-pm',
+          title: '产品经理',
+          employmentType: 'experienced',
+          jobDetailUrl: 'https://app.mokahr.com/jobs/pm',
+          status: 'ACTIVE',
+        }],
+      }],
+      failures: [],
+    },
+    role: '公开招聘岗位',
+  }, {
+    repository,
+    now: () => NOW,
+  });
+
+  const atsPortal = repository.listCareerPortals()
+    .find((portal) => portal.atsType === 'MOKA');
+  assert.equal(result.jobsStored, 1);
+  assert.ok(atsPortal);
+  assert.equal(atsPortal.verificationStatus, 'VERIFIED');
+  assert.ok(atsPortal.evidence.some(
+    (item) => item.code === 'official_site_confirms_ats_tenant',
+  ));
+  assert.equal(repository.listJobOpenings()[0].careerPortalId, atsPortal.id);
+});
+
+test('direct ATS result without a verified parent remains unverified', async (t) => {
+  const repository = await createRepository(t);
+  const atsUrl = 'https://app.mokahr.com/campus-recruitment/example/123';
+  const result = await ingestBrowserCompanyResult({
+    companyResult: {
+      company: '示例科技',
+      aliases: [],
+      officialDomain: '',
+      query: '示例科技 招聘',
+      status: 'COMPLETED',
+      officialCandidates: [{
+        classification: 'VERIFICATION_CANDIDATE',
+        title: '示例科技招聘',
+        url: atsUrl,
+      }],
+      observations: [{
+        requestedUrl: atsUrl,
+        finalUrl: atsUrl,
+        status: 200,
+        title: '示例科技招聘',
+        html: '<main><h1>示例科技招聘职位</h1><a href="/jobs/pm">产品经理 立即申请</a></main>',
+        text: '示例科技招聘职位 产品经理 立即申请',
+        links: [],
+        parsed: { pageRole: 'JOB_LIST' },
+        observedAt: NOW,
+        jobs: [{
+          sourceJobId: 'direct-ats-pm',
+          title: '产品经理',
+          jobDetailUrl: 'https://app.mokahr.com/jobs/pm',
+          status: 'ACTIVE',
+        }],
+      }],
+      failures: [],
+    },
+    role: '公开招聘岗位',
+  }, {
+    repository,
+    now: () => NOW,
+  });
+
+  assert.equal(result.jobsStored, 0);
+  assert.equal(repository.listJobOpenings().length, 0);
+  assert.equal(repository.listCareerPortals()[0].verificationStatus, 'REJECTED');
+  assert.ok(repository.listCareerPortals()[0].evidence.some(
+    (item) => item.code === 'ats_fingerprint_only',
+  ));
+  assert.ok(!repository.listCareerPortals()[0].evidence.some(
+    (item) => item.code === 'official_site_confirms_ats_tenant',
+  ));
+});
+
+test('re-evaluates a direct ATS result after a later verified parent attributes it', async (t) => {
+  const repository = await createRepository(t);
+  const parentUrl = 'https://www.example.com/careers';
+  const atsUrl = 'https://app.mokahr.com/campus-recruitment/example/123';
+  const result = await ingestBrowserCompanyResult({
+    companyResult: {
+      company: '示例科技',
+      aliases: [],
+      officialDomain: '',
+      query: '示例科技 招聘',
+      status: 'COMPLETED',
+      officialCandidates: [{
+        classification: 'VERIFICATION_CANDIDATE',
+        title: '示例科技 ATS 招聘',
+        url: atsUrl,
+      }, {
+        classification: 'VERIFICATION_CANDIDATE',
+        title: '示例科技官网招聘',
+        url: parentUrl,
+      }],
+      observations: [{
+        requestedUrl: atsUrl,
+        finalUrl: atsUrl,
+        status: 200,
+        title: '示例科技招聘职位',
+        html: '<main><h1>示例科技招聘职位</h1><a href="/jobs/pm">产品经理 立即申请</a></main>',
+        text: '示例科技招聘职位 产品经理 立即申请',
+        links: [],
+        parsed: { pageRole: 'JOB_LIST' },
+        observedAt: NOW,
+        jobs: [{
+          sourceJobId: 'retry-ats-pm',
+          title: '产品经理',
+          jobDetailUrl: 'https://app.mokahr.com/jobs/pm',
+          status: 'ACTIVE',
+        }],
+      }, {
+        requestedUrl: parentUrl,
+        finalUrl: parentUrl,
+        status: 200,
+        title: '示例科技官网招聘',
+        html: `<main><h1>加入示例科技</h1><a href="${atsUrl}">查看招聘职位</a></main>`,
+        text: '加入示例科技 查看招聘职位',
+        links: [{
+          text: '查看招聘职位',
+          href: atsUrl,
+        }],
+        parsed: { pageRole: 'CAREER_HOME' },
+        observedAt: NOW,
+        jobs: [],
+      }],
+      failures: [],
+    },
+    role: '公开招聘岗位',
+  }, {
+    repository,
+    now: () => NOW,
+  });
+
+  const atsPortal = repository.listCareerPortals()
+    .find((portal) => portal.atsType === 'MOKA');
+  assert.equal(result.jobsStored, 1);
+  assert.equal(atsPortal.verificationStatus, 'VERIFIED');
+  assert.ok(atsPortal.evidence.some(
+    (item) => item.code === 'official_site_confirms_ats_tenant',
+  ));
+});
+
 test('rerunning one browser company does not duplicate event or jobs', async (t) => {
   const repository = await createRepository(t);
   const input = {

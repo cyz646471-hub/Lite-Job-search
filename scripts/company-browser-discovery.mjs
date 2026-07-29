@@ -5,9 +5,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getDomain } from 'tldts';
 import { ingestBrowserCompanyResult } from '../src/application/ingest-browser-company-result.mjs';
 import {
-  isBaiduBlockedSnapshot,
-  readBaiduRows,
-} from '../src/adapters/browser/baidu-search-page-adapter.mjs';
+  isPublicSearchBlockedSnapshot,
+  normalizePublicSearchEngine,
+  publicSearchUrl,
+  readPublicSearchRows,
+} from '../src/adapters/browser/public-search-page-adapter.mjs';
 import { observeRenderedRecruitmentPage } from '../src/adapters/browser/recruitment-page-observer.mjs';
 import { inspectPlatformCompanyPage } from '../src/adapters/platform/company-platform-page-adapter.mjs';
 import {
@@ -20,7 +22,15 @@ import {
   discoverRecruitmentEntries,
   KNOWN_ATS_REGISTRABLE_DOMAINS,
 } from '../src/discovery/recruitment-entry-discovery.mjs';
+import { buildCompanyQueryPlan } from '../src/discovery/company-query-ladder.mjs';
+import { applyCompanyDomainKnowledge } from '../src/discovery/company-domain-knowledge.mjs';
+import {
+  officialHomepageCandidates,
+  sameCanonicalHost,
+} from '../src/discovery/canonical-domain-resolver.mjs';
 import { buildQualityReport } from '../src/quality/quality-report.mjs';
+import { acquireProfileLock } from '../src/runtime/profile-lock-manager.mjs';
+import { currentProcessStartToken } from '../src/runtime/process-identity.mjs';
 import { openSqliteMarketDiscoveryRepository } from '../src/storage/sqlite-job-repository.mjs';
 import { classifyRecruitmentSource } from '../src/verification/recruitment-source-policy.mjs';
 import { createBrowserRuntime } from './chrome-extension-browser-adapter.mjs';
@@ -102,7 +112,12 @@ export function classifySearchResult({ company = '', officialDomain = '', title 
     || RECRUITMENT_PATH.test(parsed.pathname)
     || KNOWN_ATS_HOST.test(host);
   if (firstParty && recruitmentShaped) return { classification: 'OFFICIAL_CANDIDATE', reasonCode: 'first_party_recruitment_url' };
-  if (firstParty) return { classification: 'REJECTED', reasonCode: 'first_party_non_recruitment_page' };
+  if (firstParty) {
+    return {
+      classification: 'COMPANY_HOME_EVIDENCE',
+      reasonCode: 'first_party_company_homepage',
+    };
+  }
   if (recruitmentShaped) {
     return {
       classification: 'VERIFICATION_CANDIDATE',
@@ -295,6 +310,11 @@ export function buildBrowserRunReport({
     return [field, { present: presentCount, missing: jobs.length - presentCount }];
   }));
   const failures = [];
+  const discoveryProviders = [
+    ...new Set(companyResults.map((result) => (
+      result.discoveryProvider || 'chrome_baidu_visible_search'
+    ))),
+  ];
   for (const result of companyResults) {
     if (['BLOCKED', 'FAILED'].includes(result.status)) {
       failures.push({
@@ -328,7 +348,7 @@ export function buildBrowserRunReport({
     }
   }
   if (batch.providerCircuit
-    && ['OPEN', 'PROBE_REQUIRED'].includes(batch.providerCircuit.state)) {
+    && ['OPEN', 'HALF_OPEN'].includes(batch.providerCircuit.state)) {
     failures.push({
       company: null,
       stage: 'circuit_breaker',
@@ -353,10 +373,26 @@ export function buildBrowserRunReport({
       pending: Number(batch.pending) || 0,
     }),
     discovery: Object.freeze({
-      provider: 'chrome_baidu_visible_search',
+      provider: discoveryProviders.length === 1 ? discoveryProviders[0] : 'mixed',
+      providers: Object.freeze(discoveryProviders),
+      liveSearchExecuted: companyResults.some((result) => result.liveSearchExecuted !== false),
       searchQueries: Object.freeze([
-        ...new Set(companyResults.map((result) => result.query).filter(Boolean)),
+        ...new Set(companyResults
+          .filter((result) => result.liveSearchExecuted !== false)
+          .flatMap((result) => result.queries || [result.query])
+          .filter(Boolean)),
       ]),
+      plannedQueries: Object.freeze([
+        ...new Set(companyResults.flatMap(
+          (result) => result.queries?.length ? result.queries : [result.query],
+        ).filter(Boolean)),
+      ]),
+      queryPlan: Object.freeze(companyResults.flatMap((result) => (
+        (result.queryPlan || []).map((step) => ({
+          company: result.company || null,
+          ...step,
+        }))
+      ))),
       searchResultCount: companyResults.reduce((sum, result) => {
         const urls = [
           ...(result.officialCandidates || []),
@@ -396,18 +432,29 @@ export function buildBrowserRunReport({
 export function isSearchBlockedPage(text, {
   status = 200,
   url = '',
+  engine = 'baidu',
 } = {}) {
-  return isBaiduBlockedSnapshot({ text, status, url });
+  return isPublicSearchBlockedSnapshot({ engine, text, status, url });
 }
 
-function isExplicitBaiduNoResults(text) {
+function isExplicitPublicSearchNoResults(text, engine = 'baidu') {
+  const value = String(text || '');
+  if (engine === 'google') {
+    return /找不到和您查询相符的内容|没有任何与这些字词相符的结果|did not match any documents|no results found/i
+      .test(value);
+  }
   return /没有找到.{0,40}(?:相关|匹配)?(?:结果|内容)|未找到.{0,40}(?:相关|匹配)?(?:结果|内容)|no results found/i
-    .test(String(text || ''));
+    .test(value);
 }
 
-async function readSearchRows(page, maxResults) {
-  if (typeof page.readSearchRows === 'function') return page.readSearchRows(maxResults);
-  return readBaiduRows(page, maxResults);
+async function readSearchRows(page, maxResults, engine = 'baidu') {
+  if (engine === 'baidu' && typeof page.readSearchRows === 'function') {
+    return page.readSearchRows(maxResults);
+  }
+  if (typeof page.readPublicSearchRows === 'function') {
+    return page.readPublicSearchRows(engine, maxResults);
+  }
+  return readPublicSearchRows(page, engine, maxResults);
 }
 
 async function observeCareerPage(
@@ -469,10 +516,215 @@ async function readCareerPage(page, url, timeoutMs, now = () => new Date().toISO
   }
 }
 
-export async function discoverCompanyWithBrowser({
+function candidateFromRecruitmentEntry({
+  company,
+  entry,
+  observedEntry,
+  officialDomain,
+  sourceUrl,
+  searchQuery,
+  searchKind,
+}) {
+  const observedUrl = observedEntry.url || observedEntry.finalUrl || entry.url;
+  return {
+    company,
+    title: entry.text || observedEntry.title || `${company} 招聘`,
+    url: observedUrl,
+    sourceUrl,
+    searchQuery,
+    searchKind,
+    snippet: '',
+    classification: 'OFFICIAL_CANDIDATE',
+    reasonCode: entry.discoveryReason || 'official_homepage_recruitment_link',
+    recruitmentType: entry.recruitmentType,
+    pageStatus: observedEntry.fetchStatus,
+    vacancyStatus: observedEntry.vacancyStatus || null,
+    evidence: observedEntry.evidence || '',
+    officialSiteLinked: normalizedDomain(observedUrl) === normalizedDomain(officialDomain),
+    verifiedTenant: Boolean(
+      entry.discoveryReason === 'verified_official_outbound_ats_link'
+      && entry.parentOfficialVerified === true
+      && isKnownAtsUrl(observedUrl)
+    ),
+    parentOfficialVerified: entry.parentOfficialVerified === true,
+    officialAttributionUrl: entry.officialAttributionUrl || entry.parentUrl || sourceUrl,
+    parentUrl: entry.parentUrl,
+    depth: entry.depth,
+  };
+}
+
+async function inspectRecruitmentNavigation({
+  page,
+  company,
+  officialDomain,
+  rootPage,
+  rootUrl,
+  sourceUrl = rootUrl,
+  searchQuery = '',
+  searchKind = 'official_domain_navigation',
+  maxCareerEntries = 5,
+  maxDepth = 2,
+  timeoutMs = 10_000,
+  now = () => new Date().toISOString(),
+}) {
+  const officialCandidates = [];
+  const observations = [];
+  const failures = [];
+  const entryBudget = Math.max(1, Number(maxCareerEntries) || 5);
+  const depthBudget = Math.max(0, Number(maxDepth) || 0);
+  const observedRootUrl = rootPage.url || rootPage.finalUrl || rootUrl;
+  const rootOfficialVerified = rootPage.fetchStatus === 'COMPLETED'
+    && sameCanonicalHost(observedRootUrl, officialDomain);
+  const visitedUrls = new Set([observedRootUrl]);
+  const queuedUrls = new Set();
+  const queue = [...discoverRecruitmentEntries({
+    baseUrl: observedRootUrl,
+    links: rootPage.links,
+    trustedRegistrableDomains: [officialDomain],
+    knownAtsRegistrableDomains: KNOWN_ATS_REGISTRABLE_DOMAINS,
+    parentOfficialVerified: rootOfficialVerified,
+    visitedUrls,
+    parentUrl: observedRootUrl,
+    depth: 1,
+    maxDepth: depthBudget,
+    maxEntries: Math.max(0, entryBudget - visitedUrls.size),
+  })];
+  for (const entry of queue) queuedUrls.add(entry.url);
+
+  while (queue.length && visitedUrls.size < entryBudget) {
+    const entry = queue.shift();
+    queuedUrls.delete(entry.url);
+    if (visitedUrls.has(entry.url)) continue;
+    visitedUrls.add(entry.url);
+    const observedEntry = await readCareerPage(page, entry.url, timeoutMs, now);
+    observations.push(observedEntry);
+    const observedUrl = observedEntry.url || observedEntry.finalUrl || entry.url;
+    visitedUrls.add(observedUrl);
+    officialCandidates.push(candidateFromRecruitmentEntry({
+      company,
+      entry,
+      observedEntry,
+      officialDomain,
+      sourceUrl,
+      searchQuery,
+      searchKind,
+    }));
+    if (observedEntry.fetchStatus !== 'COMPLETED') {
+      failures.push({
+        stage: 'inspect_official_home_entry',
+        url: entry.url,
+        reasonCode: observedEntry.reasonCode || 'career_entry_failed',
+        error: observedEntry.error || '',
+      });
+      continue;
+    }
+
+    const remaining = Math.max(0, entryBudget - visitedUrls.size - queuedUrls.size);
+    const children = discoverRecruitmentEntries({
+      baseUrl: observedUrl,
+      links: observedEntry.links,
+      trustedRegistrableDomains: [officialDomain],
+      knownAtsRegistrableDomains: KNOWN_ATS_REGISTRABLE_DOMAINS,
+      parentOfficialVerified: sameCanonicalHost(observedUrl, officialDomain),
+      visitedUrls: [...visitedUrls, ...queuedUrls],
+      parentUrl: observedUrl,
+      depth: entry.depth + 1,
+      maxDepth: depthBudget,
+      maxEntries: remaining,
+    });
+    for (const child of children) {
+      if (queuedUrls.has(child.url) || visitedUrls.has(child.url)) continue;
+      queue.push(child);
+      queuedUrls.add(child.url);
+    }
+  }
+
+  return { officialCandidates, observations, failures };
+}
+
+async function discoverFromOfficialDomain({
+  company,
+  officialDomain,
+  browser,
+  maxCareerEntries = 5,
+  maxDepth = 2,
+  timeoutMs = 10_000,
+  now = () => new Date().toISOString(),
+}) {
+  if (!officialDomain) {
+    return {
+      officialCandidates: [],
+      observations: [],
+      failures: [],
+      homepageVisited: false,
+    };
+  }
+  const page = await browser.newPage();
+  const observations = [];
+  const failures = [];
+  try {
+    let officialHomeUrl = officialHomepageCandidates(officialDomain)[0];
+    let officialHome = null;
+    for (const homepageUrl of officialHomepageCandidates(officialDomain)) {
+      const observed = await readCareerPage(page, homepageUrl, timeoutMs, now);
+      observations.push(observed);
+      officialHomeUrl = homepageUrl;
+      officialHome = observed;
+      if (
+        observed.fetchStatus === 'COMPLETED'
+        && sameCanonicalHost(
+          observed.url || observed.finalUrl || homepageUrl,
+          officialDomain,
+        )
+      ) {
+        break;
+      }
+    }
+    if (!officialHome || officialHome.fetchStatus !== 'COMPLETED') {
+      failures.push({
+        stage: 'inspect_official_home',
+        url: officialHomeUrl,
+        reasonCode: officialHome?.reasonCode || 'official_home_navigation_failed',
+        error: officialHome?.error || '',
+      });
+      return {
+        officialCandidates: [],
+        observations,
+        failures,
+        homepageVisited: true,
+      };
+    }
+    const observedHomeUrl = officialHome.url || officialHome.finalUrl || officialHomeUrl;
+    const navigation = await inspectRecruitmentNavigation({
+      page,
+      company,
+      officialDomain,
+      rootPage: officialHome,
+      rootUrl: observedHomeUrl,
+      sourceUrl: observedHomeUrl,
+      maxCareerEntries,
+      maxDepth,
+      timeoutMs,
+      now,
+    });
+    return {
+      officialCandidates: navigation.officialCandidates,
+      observations: [...observations, ...navigation.observations],
+      failures: [...failures, ...navigation.failures],
+      homepageVisited: true,
+    };
+  } finally {
+    await page.close();
+  }
+}
+
+async function discoverCompanyWithBrowserQuery({
   company,
   officialDomain = '',
   browser,
+  query,
+  searchEngine = 'baidu',
+  candidateNavigationState = null,
   maxResults = 10,
   maxCandidates = 3,
   maxCareerEntries = 5,
@@ -482,10 +734,11 @@ export async function discoverCompanyWithBrowser({
 }) {
   if (!company || !browser) throw new Error('company and browser are required');
   const page = await browser.newPage();
-  const query = `${company} 招聘`;
+  const searchQuery = String(query || `${company} 招聘`).trim();
   const officialCandidates = [], platformCandidates = [], leads = [], rejected = [], failures = [], observations = [];
   try {
-    const searchResponse = await page.goto(`https://www.baidu.com/s?wd=${encodeURIComponent(query)}`, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    const publicSearchEngine = normalizePublicSearchEngine(searchEngine);
+    const searchResponse = await page.goto(publicSearchUrl(publicSearchEngine, searchQuery), { waitUntil: 'domcontentloaded', timeout: timeoutMs });
     // Baidu can redirect to its challenge page immediately after DOM content loads.
     // Allow that redirect to settle before interpreting a page with no result rows.
     await page.waitForTimeout(400);
@@ -497,14 +750,15 @@ export async function discoverCompanyWithBrowser({
     if (isSearchBlockedPage(bodyText, {
       status: searchStatus,
       url: searchFinalUrl,
+      engine: publicSearchEngine,
     })) {
-      return { company, officialDomain, query, status: 'BLOCKED', reasonCode: 'search_challenge_or_access_blocked', officialCandidates, platformCandidates, leads, rejected, failures, observations };
+      return { company, officialDomain, query: searchQuery, status: 'BLOCKED', reasonCode: 'search_challenge_or_access_blocked', officialCandidates, platformCandidates, leads, rejected, failures, observations };
     }
     if (searchStatus >= 400) {
       return {
         company,
         officialDomain,
-        query,
+        query: searchQuery,
         status: 'FAILED',
         reasonCode: 'search_http_failed',
         officialCandidates,
@@ -520,12 +774,14 @@ export async function discoverCompanyWithBrowser({
         }],
       };
     }
-    const rows = await readSearchRows(page, maxResults);
-    if (!rows.length && !isExplicitBaiduNoResults(bodyText)) {
+    const rows = await readSearchRows(page, maxResults, publicSearchEngine);
+    const unreadableSearchResults = !rows.length
+      && !isExplicitPublicSearchNoResults(bodyText, publicSearchEngine);
+    if (unreadableSearchResults) {
       return {
         company,
         officialDomain,
-        query,
+        query: searchQuery,
         status: 'FAILED',
         reasonCode: 'search_results_unreadable',
         officialCandidates,
@@ -537,31 +793,110 @@ export async function discoverCompanyWithBrowser({
           stage: 'search',
           url: searchFinalUrl,
           reasonCode: 'search_results_unreadable',
-          error: 'Baidu result page contained no readable result rows',
+          error: `${publicSearchEngine} result page contained no readable result rows`,
         }],
       };
     }
-    let openedCandidates = 0;
+    const navigationState = candidateNavigationState || {
+      opened: 0,
+      visited: new Set(),
+    };
     for (const row of rows) {
       if (!shouldOpenSearchResult({ ...row, company })) {
-        rejected.push({ company, title: row.title, url: row.href, sourceUrl: row.href, searchQuery: query, searchKind: row.kind, snippet: row.snippet, classification: 'REJECTED', reasonCode: `search_result_${row.kind}` });
+        const rejectedClassification = classifySearchResult({
+          company,
+          officialDomain,
+          title: row.title,
+          url: row.href,
+          kind: row.kind,
+        });
+        rejected.push({
+          company,
+          title: row.title,
+          url: row.href,
+          sourceUrl: row.href,
+          searchQuery,
+          searchKind: row.kind,
+          snippet: row.snippet,
+          classification: 'REJECTED',
+          reasonCode: rejectedClassification.classification === 'REJECTED'
+            ? rejectedClassification.reasonCode
+            : `search_result_${row.kind}`,
+        });
         continue;
       }
-      if (openedCandidates >= Math.max(1, Number(maxCandidates) || 3)) break;
-      openedCandidates++;
+      if (navigationState.visited.has(row.href)) continue;
+      const preliminaryClassification = classifySearchResult({
+        company,
+        officialDomain,
+        title: row.title,
+        url: row.href,
+        kind: row.kind,
+      });
+      const companyHomepageEvidence = preliminaryClassification.classification
+        === 'COMPANY_HOME_EVIDENCE';
+      if (companyHomepageEvidence) {
+        if (navigationState.homepagesOpened >= 2) continue;
+        navigationState.homepagesOpened++;
+      } else {
+        if (navigationState.opened >= Math.max(1, Number(maxCandidates) || 3)) break;
+        navigationState.opened++;
+      }
+      navigationState.visited.add(row.href);
       let finalUrl = row.href;
       let response;
       try {
         response = await page.goto(row.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
         await page.waitForTimeout(400);
         finalUrl = await page.url();
+        navigationState.visited.add(finalUrl);
       } catch (error) {
         failures.push({ stage: 'open_search_result', url: row.href, reasonCode: 'result_navigation_failed', error: String(error?.message || error) });
         continue;
       }
       const classification = classifySearchResult({ company, officialDomain, title: row.title, url: finalUrl, kind: row.kind });
-      const base = { company, title: row.title, url: finalUrl, sourceUrl: row.href, searchQuery: query, searchKind: row.kind, snippet: row.snippet, ...classification };
-      if (classification.classification === 'PLATFORM_CANDIDATE') {
+      const base = { company, title: row.title, url: finalUrl, sourceUrl: row.href, searchQuery, searchKind: row.kind, snippet: row.snippet, ...classification };
+      if (classification.classification === 'COMPANY_HOME_EVIDENCE') {
+        const officialHome = await observeCareerPage(page, {
+          requestedUrl: row.href,
+          response,
+          observedAt: now(),
+        });
+        observations.push(officialHome);
+        if (
+          officialHome.fetchStatus === 'COMPLETED'
+          && sameCanonicalHost(
+            officialHome.url || officialHome.finalUrl || finalUrl,
+            officialDomain,
+          )
+        ) {
+          const navigation = await inspectRecruitmentNavigation({
+            page,
+            company,
+            officialDomain,
+            rootPage: officialHome,
+            rootUrl: officialHome.url || officialHome.finalUrl || finalUrl,
+            sourceUrl: row.href,
+            searchQuery,
+            searchKind: row.kind,
+            maxCareerEntries,
+            maxDepth,
+            timeoutMs,
+            now,
+          });
+          officialCandidates.push(...navigation.officialCandidates);
+          observations.push(...navigation.observations);
+          failures.push(...navigation.failures);
+        } else {
+          failures.push({
+            stage: 'inspect_company_home',
+            url: finalUrl,
+            reasonCode: officialHome.reasonCode || 'company_home_navigation_failed',
+            error: officialHome.error || '',
+          });
+        }
+      }
+      else if (classification.classification === 'PLATFORM_CANDIDATE') {
         const platformPage = await observeCareerPage(page, {
           requestedUrl: row.href,
           response,
@@ -718,12 +1053,169 @@ export async function discoverCompanyWithBrowser({
       }
     }
     const unique = (items) => [...new Map(items.map((item) => [item.url, item])).values()];
-    return { company, officialDomain, query, status: 'COMPLETED', officialCandidates: unique(officialCandidates), platformCandidates: unique(platformCandidates), leads: unique(leads), rejected: unique(rejected), failures, observations: unique(observations.map((item) => ({ ...item, url: item.finalUrl || item.url }))) };
+    return { company, officialDomain, query: searchQuery, status: 'COMPLETED', officialCandidates: unique(officialCandidates), platformCandidates: unique(platformCandidates), leads: unique(leads), rejected: unique(rejected), failures, observations: unique(observations.map((item) => ({ ...item, url: item.finalUrl || item.url }))) };
   } catch (error) {
-    return { company, officialDomain, query, status: 'FAILED', reasonCode: 'search_navigation_failed', officialCandidates, platformCandidates, leads, rejected, observations, failures: [...failures, { stage: 'search', reasonCode: 'search_navigation_failed', error: String(error?.message || error) }] };
+    return { company, officialDomain, query: searchQuery, status: 'FAILED', reasonCode: 'search_navigation_failed', officialCandidates, platformCandidates, leads, rejected, observations, failures: [...failures, { stage: 'search', reasonCode: 'search_navigation_failed', error: String(error?.message || error) }] };
   } finally {
     await page.close();
   }
+}
+
+export async function discoverCompanyWithBrowser({
+  company,
+  chineseName = '',
+  englishName = '',
+  officialDomain = '',
+  market = 'CN',
+  browser,
+  searchEngine = 'baidu',
+  publicSearchAllowed = true,
+  beforeSearchQuery = null,
+  ...limits
+}) {
+  const officialDomainResult = await discoverFromOfficialDomain({
+    company,
+    officialDomain,
+    browser,
+    ...limits,
+  });
+  const officialDomainCandidates = officialDomainResult.officialCandidates || [];
+  const officialDomainEntryFound = officialDomainCandidates.some((candidate) => (
+    candidate.pageStatus === 'COMPLETED'
+    && candidate.vacancyStatus !== 'NOT_A_LIST'
+  ));
+  if (officialDomainEntryFound) {
+    return {
+      company,
+      officialDomain,
+      query: null,
+      queries: Object.freeze([]),
+      queryPlan: Object.freeze([]),
+      status: 'COMPLETED',
+      reasonCode: null,
+      officialCandidates: Object.freeze(officialDomainCandidates),
+      platformCandidates: Object.freeze([]),
+      leads: Object.freeze([]),
+      rejected: Object.freeze([]),
+      observations: Object.freeze(officialDomainResult.observations || []),
+      failures: Object.freeze(officialDomainResult.failures || []),
+      queryStatuses: Object.freeze([]),
+      discoveryProvider: 'official_domain_navigation',
+      liveSearchExecuted: false,
+    };
+  }
+  if (publicSearchAllowed === false) {
+    return {
+      company,
+      officialDomain,
+      query: null,
+      queries: Object.freeze([]),
+      queryPlan: Object.freeze([]),
+      status: 'BLOCKED',
+      reasonCode: 'provider_circuit_open',
+      officialCandidates: Object.freeze(officialDomainCandidates),
+      platformCandidates: Object.freeze([]),
+      leads: Object.freeze([]),
+      rejected: Object.freeze([]),
+      observations: Object.freeze(officialDomainResult.observations || []),
+      failures: Object.freeze([
+        ...(officialDomainResult.failures || []),
+        {
+          stage: 'search',
+          reasonCode: 'provider_circuit_open',
+          error: 'official website contained no completed recruitment entry; public search is unavailable',
+        },
+      ]),
+      queryStatuses: Object.freeze([]),
+      discoveryProvider: 'official_domain_navigation',
+      liveSearchExecuted: false,
+    };
+  }
+  const queryPlan = buildCompanyQueryPlan({
+    company: chineseName || company,
+    englishName,
+    officialDomain,
+    market,
+    searchEngine,
+  });
+  const results = [];
+  const candidateNavigationState = {
+    opened: 0,
+    homepagesOpened: 0,
+    visited: new Set(),
+  };
+  for (let index = 0; index < queryPlan.length; index++) {
+    if (typeof beforeSearchQuery === 'function') {
+      await beforeSearchQuery({
+        company,
+        query: queryPlan[index].text,
+        tier: queryPlan[index].tier,
+        purpose: queryPlan[index].purpose,
+        index,
+        total: queryPlan.length,
+      });
+    }
+    const result = await discoverCompanyWithBrowserQuery({
+      company,
+      officialDomain,
+      browser,
+      query: queryPlan[index].text,
+      searchEngine,
+      candidateNavigationState,
+      ...limits,
+    });
+    results.push(result);
+    if (result.status === 'BLOCKED') break;
+    if (
+      candidateNavigationState.opened >= Math.max(1, Number(limits.maxCandidates) || 3)
+    ) {
+      break;
+    }
+    const firstPartyRecruitmentFound = result.officialCandidates.some((candidate) => (
+      candidate.classification === 'OFFICIAL_CANDIDATE'
+      && candidate.pageStatus === 'COMPLETED'
+      && candidate.vacancyStatus !== 'NOT_A_LIST'
+    ));
+    if (firstPartyRecruitmentFound) break;
+  }
+  const uniqueByUrl = (values) => [
+    ...new Map(values.map((item) => [item.url, item])).values(),
+  ];
+  const statuses = results.map((result) => result.status);
+  const blocked = results.find((result) => result.status === 'BLOCKED');
+  const completed = results.some((result) => result.status === 'COMPLETED');
+  return {
+    company,
+    officialDomain,
+    query: queryPlan[0].text,
+    queries: Object.freeze(results.map((result) => result.query)),
+    queryPlan: Object.freeze(queryPlan.map((step, index) => Object.freeze({
+      ...step,
+      status: results[index]?.status || 'NOT_RUN',
+      reasonCode: results[index]?.reasonCode || null,
+    }))),
+    status: blocked ? 'BLOCKED' : completed ? 'COMPLETED' : 'FAILED',
+    reasonCode: blocked?.reasonCode
+      || (!completed ? results.find((result) => result.reasonCode)?.reasonCode : null),
+    officialCandidates: uniqueByUrl([
+      ...officialDomainCandidates,
+      ...results.flatMap((result) => result.officialCandidates || []),
+    ]),
+    platformCandidates: uniqueByUrl(results.flatMap((result) => result.platformCandidates || [])),
+    leads: uniqueByUrl(results.flatMap((result) => result.leads || [])),
+    rejected: uniqueByUrl(results.flatMap((result) => result.rejected || [])),
+    observations: uniqueByUrl([
+      ...(officialDomainResult.observations || []),
+      ...results.flatMap((result) => result.observations || []),
+    ]),
+    failures: [
+      ...(officialDomainResult.failures || []),
+      ...results.flatMap((result) => result.failures || []),
+    ],
+    queryStatuses: Object.freeze(statuses),
+    discoveryProvider: `chrome_${normalizePublicSearchEngine(searchEngine)}_visible_search`,
+    liveSearchExecuted: true,
+  };
 }
 
 export function normalizeBrowserCompanyInput(input) {
@@ -741,7 +1233,7 @@ export function normalizeBrowserCompanyInput(input) {
       || '',
     ).trim();
     const officialDomains = item.officialDomains || item.official_domains || [];
-    return {
+    return applyCompanyDomainKnowledge({
       ...item,
       company,
       chineseName,
@@ -750,7 +1242,8 @@ export function normalizeBrowserCompanyInput(input) {
       aliases: Array.isArray(item.aliases) ? item.aliases : [],
       industry: item.industry || item.industryTags || item.industry_tags || [],
       countryRegion: item.countryRegion || item.country_region || null,
-    };
+      officialDomains,
+    });
   });
 }
 
@@ -767,14 +1260,14 @@ export function browserDiscoveryLimits(args = {}) {
     maxCareerEntries: boundedInteger(args['max-career-entries'], 5, 1, 10),
     maxDepth: boundedInteger(args['max-depth'], 2, 0, 2),
     timeoutMs: boundedInteger(args['timeout-ms'], 10_000, 1_000, 30_000),
-    searchDelayMs: boundedInteger(args['search-delay-ms'], 10_000, 10_000, 60_000),
+    searchDelayMs: boundedInteger(args['search-delay-ms'], 4_000, 4_000, 60_000),
     searchJitterMs: boundedInteger(args['search-jitter-ms'], 20_000, 0, 60_000),
-    maxCompaniesPerRun: boundedInteger(args['max-companies-per-run'], 10, 1, 100),
+    maxCompaniesPerRun: boundedInteger(args['max-companies-per-run'], 10, 1, 200),
   });
 }
 
 export function createMinimumSearchIntervalGate({
-  minimumIntervalMs = 10_000,
+  minimumIntervalMs = 4_000,
   nowMs = () => Date.now(),
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
@@ -817,14 +1310,16 @@ async function loadChromeBinding(modulePath) {
   return loaded.chromeBrowserBinding || loaded.default || null;
 }
 
-export async function probeBaiduSearchHealth({
+export async function probePublicSearchHealth({
   browser,
+  engine = 'baidu',
   timeoutMs = 10_000,
 } = {}) {
   if (!browser) throw new Error('browser is required');
+  const selectedEngine = normalizePublicSearchEngine(engine);
   const page = await browser.newPage();
   try {
-    await page.goto(`https://www.baidu.com/s?wd=${encodeURIComponent('招聘')}`, {
+    await page.goto(publicSearchUrl(selectedEngine, '招聘官网'), {
       waitUntil: 'domcontentloaded',
       timeout: timeoutMs,
     });
@@ -832,10 +1327,13 @@ export async function probeBaiduSearchHealth({
     const bodyText = typeof page.readBodyText === 'function'
       ? await page.readBodyText()
       : await page.locator('body').innerText({ timeout: timeoutMs }).catch(() => '');
-    if (isSearchBlockedPage(bodyText)) {
+    if (isSearchBlockedPage(bodyText, {
+      engine: selectedEngine,
+      url: await page.url(),
+    })) {
       return { healthy: false, reasonCode: 'search_challenge_or_access_blocked' };
     }
-    const rows = await readSearchRows(page, 1);
+    const rows = await readSearchRows(page, 1, selectedEngine);
     return rows.length
       ? { healthy: true, reasonCode: null }
       : { healthy: false, reasonCode: 'search_results_unreadable' };
@@ -846,12 +1344,16 @@ export async function probeBaiduSearchHealth({
   }
 }
 
+export function probeBaiduSearchHealth(options = {}) {
+  return probePublicSearchHealth({ ...options, engine: 'baidu' });
+}
+
 async function runCli() {
   const runtimeProcess = globalThis.process;
   const args = parseArgs(runtimeProcess?.argv?.slice(2) || []);
   const healthProbeMode = Boolean(args['resume-provider'] && args['health-probe']);
   if (args.help || (!healthProbeMode && (!args.input || !args['output-dir']))) {
-    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--xlsx-output outputs/student-applications.xlsx] [--browser-mode persistent-chrome|normal-chrome] [--profile-dir data/local-chrome-worker-profile] [--chrome-binding-module path/to/binding.mjs] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 10000] [--search-jitter-ms 20000] [--max-companies-per-run 10] [--headless]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/local-chrome-worker-profile]\n');
+    runtimeProcess.stdout.write('Usage: node scripts/company-browser-discovery.mjs --input companies.json --output-dir output [--database data/lite-job-search.sqlite] [--xlsx-output outputs/student-applications.xlsx] [--browser-mode persistent-chrome] [--profile-dir data/persistent-chrome-worker-profile] [--search-engine baidu|google] [--role 公开招聘岗位] [--industry AI] [--location 上海] [--freshness-days 90] [--target-count 1000] [--batch-id id] [--retry-failed] [--max-results 10] [--max-candidates 3] [--max-career-entries 5] [--max-depth 2] [--timeout-ms 10000] [--search-delay-ms 4000] [--search-jitter-ms 20000] [--max-companies-per-run 10]\n       node scripts/company-browser-discovery.mjs --resume-provider baidu|google --health-probe [--database data/lite-job-search.sqlite] [--profile-dir data/persistent-chrome-worker-profile]\n');
     return args.help ? 0 : 2;
   }
   let companies = [];
@@ -865,15 +1367,32 @@ async function runCli() {
     }
   }
   const browserMode = String(args['browser-mode'] || 'persistent-chrome');
+  if (!['persistent-chrome', 'normal-chrome'].includes(browserMode)) {
+    process.stderr.write(`${JSON.stringify({
+      status: 'NOT_CONFIGURED',
+      reasonCode: 'unsupported_browser_mode',
+      message: 'Use persistent-chrome with a dedicated automation profile, or normal-chrome only for explicit host integration tests.',
+    })}\n`);
+    return 2;
+  }
   let chromium = null;
   if (browserMode === 'persistent-chrome') {
     try { ({ chromium } = await import('playwright')); }
-    catch (error) { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'playwright_not_available', error: String(error?.message || error) })}\n`); return 2; }
+    catch (error) { process.stderr.write(`${JSON.stringify({ status: 'NOT_CONFIGURED', reasonCode: 'playwright_not_available', error: String(error?.message || error) })}\n`); return 2; }
   }
   let browser;
-  const profileDir = path.resolve(args['profile-dir'] || path.join('data', 'local-chrome-worker-profile'));
+  let profileLock;
+  const profileDir = path.resolve(args['profile-dir'] || path.join('data', 'persistent-chrome-worker-profile'));
   try {
-    await fs.mkdir(profileDir, { recursive: true });
+    if (browserMode === 'persistent-chrome') {
+      await fs.mkdir(profileDir, { recursive: true });
+      profileLock = await acquireProfileLock({
+        profilePath: profileDir,
+        instanceId: healthProbeMode ? `health-probe-${process.pid}` : `legacy-worker-${process.pid}`,
+        batchId: healthProbeMode ? 'baidu-health-probe' : String(args['batch-id'] || 'legacy-browser-run'),
+        processStartToken: currentProcessStartToken(),
+      });
+    }
     const chrome = globalThis.chromeBrowserBinding
       || await loadChromeBinding(args['chrome-binding-module']);
     browser = await createBrowserRuntime({
@@ -884,7 +1403,11 @@ async function runCli() {
       headless: buildBrowserLaunchOptions(args).headless,
     });
   }
-  catch (error) { process.stderr.write(`${JSON.stringify({ status: 'FAILED', reasonCode: 'browser_launch_failed', error: String(error?.message || error) })}\n`); return 2; }
+  catch (error) {
+    await profileLock?.release();
+    process.stderr.write(`${JSON.stringify({ status: 'NOT_CONFIGURED', reasonCode: browserMode === 'persistent-chrome' ? 'persistent_chrome_not_configured' : 'normal_chrome_binding_not_configured', error: String(error?.message || error) })}\n`);
+    return 2;
+  }
   const databaseFile = path.resolve(args.database || path.join('data', 'lite-job-search.sqlite'));
   const repository = openSqliteMarketDiscoveryRepository({ file: databaseFile });
   repository.migrate();
@@ -893,8 +1416,10 @@ async function runCli() {
     if (healthProbeMode) {
       const circuit = await resumeProviderCircuit({
         provider: args['resume-provider'],
-        healthProbe: () => probeBaiduSearchHealth({
+        ownerId: `health-probe-${process.pid}`,
+        healthProbe: () => probePublicSearchHealth({
           browser,
+          engine: args['resume-provider'],
           timeoutMs: limits.timeoutMs,
         }),
       }, { repository });
@@ -929,16 +1454,20 @@ async function runCli() {
       },
     }, {
       repository,
-      discoverCompany: async (company) => {
-        await waitForSearchSlot();
+      discoverCompany: async (company, discoveryContext = {}) => {
         return {
           ...company,
           ...await discoverCompanyWithBrowser({
-          company: company.company,
-          officialDomain: company.officialDomain,
-          browser,
-          ...limits,
-        }),
+            company: company.company,
+            chineseName: company.chineseName,
+            englishName: company.englishName,
+            officialDomain: company.officialDomain,
+            market: company.market || 'CN',
+            browser,
+            publicSearchAllowed: discoveryContext.publicSearchAllowed,
+            beforeSearchQuery: waitForSearchSlot,
+            ...limits,
+          }),
         };
       },
       ingestCompany: (options) => ingestBrowserCompanyResult({
@@ -983,6 +1512,7 @@ async function runCli() {
   } finally {
     await browser.close();
     repository.close();
+    await profileLock?.release();
   }
 }
 

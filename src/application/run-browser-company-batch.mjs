@@ -6,6 +6,20 @@ import {
 } from './browser-search-circuit-breaker.mjs';
 import { runDiscoveryBatch } from './run-discovery-batch.mjs';
 
+export const BROWSER_QUEUE_TYPES = Object.freeze({
+  LOCAL: 'LOCAL_OR_DIRECT_VERIFICATION',
+  SEARCH: 'PUBLIC_SEARCH_DISCOVERY_REQUIRED',
+  LEGACY_BAIDU: 'BAIDU_DISCOVERY_REQUIRED',
+  BAIDU: 'BAIDU_DISCOVERY_REQUIRED',
+});
+
+export function isPublicSearchQueueType(value) {
+  return [
+    BROWSER_QUEUE_TYPES.SEARCH,
+    BROWSER_QUEUE_TYPES.LEGACY_BAIDU,
+  ].includes(value);
+}
+
 function companyItemId(company = {}) {
   if (company.id) return String(company.id);
   if (company.companyIdentityKey) return String(company.companyIdentityKey);
@@ -20,6 +34,7 @@ function companyItemId(company = {}) {
 export async function runBrowserCompanyBatch({
   batchId,
   companies = [],
+  batchInputHash = null,
   retryFailed = false,
   maxCompaniesPerRun = 10,
   runOptions = {},
@@ -43,38 +58,74 @@ export async function runBrowserCompanyBatch({
       ...company,
       company: name,
       id: companyItemId({ ...company, company: name }),
+      queueType: company.queueType === BROWSER_QUEUE_TYPES.LOCAL
+        ? BROWSER_QUEUE_TYPES.LOCAL
+        : isPublicSearchQueueType(company.queueType)
+          ? company.queueType
+          : company.officialDomain
+            || company.officialDomains?.length
+            || company.reviewedCareerPortals?.length
+            || company.candidates?.length
+            ? BROWSER_QUEUE_TYPES.LOCAL
+            : BROWSER_QUEUE_TYPES.SEARCH,
     });
   });
   const companyResults = [];
   const discoveryRuns = [];
   let circuit = repository.getProviderCircuitState(provider)
     || createClosedCircuit(provider, now());
-  const pauseBeforeRun = circuit.state !== 'CLOSED';
   const retryDeferred = circuit.state === 'CLOSED' && Boolean(circuit.lastHealthyAt);
 
   const batch = await runDiscoveryBatch({
     batchId,
     items,
+    inputHash: batchInputHash,
     retryFailed,
     retryDeferred,
-    pauseBeforeRun,
+    pauseBeforeRun: false,
+    pauseOnBlocked: false,
     maxItemsPerRun: maxCompaniesPerRun,
-    stopOnResultStatuses: ['BLOCKED'],
+    stopOnResultStatuses: [],
   }, {
     repository,
     now,
+    shouldStop: () => (
+      typeof repository.isBatchStopRequested === 'function'
+      && repository.isBatchStopRequested(batchId)
+    ),
+    shouldDeferItem: (company) => (
+      isPublicSearchQueueType(company.queueType) && circuit.state !== 'CLOSED'
+        ? {
+            resultStatus: 'BLOCKED',
+            retryClass: 'PROVIDER_BLOCKED',
+            deferReason: 'SEARCH_ENGINE_OPEN',
+            reason: `provider circuit is ${circuit.state}`,
+          }
+        : null
+    ),
     runItem: async (company) => {
-      const companyResult = await discoverCompany(company);
+      const companyResult = await discoverCompany(company, {
+        publicSearchAllowed: circuit.state === 'CLOSED',
+        providerCircuit: circuit,
+      });
       companyResults.push(companyResult);
       if (companyResult?.status === 'BLOCKED') {
-        circuit = transitionCircuit(circuit, {
-          type: 'BLOCKED',
-          reasonCode: companyResult.reasonCode || 'browser_search_blocked',
-        }, now());
-        repository.saveProviderCircuitState(circuit);
+        if (
+          isPublicSearchQueueType(company.queueType)
+          || companyResult.liveSearchExecuted === true
+        ) {
+          circuit = transitionCircuit(circuit, {
+            type: 'BLOCKED',
+            reasonCode: companyResult.reasonCode || 'browser_search_blocked',
+          }, now());
+          repository.saveProviderCircuitState(circuit);
+        }
         return {
           status: 'BLOCKED',
           reason: companyResult.reasonCode || 'browser_search_blocked',
+          deferReason: /captcha/i.test(companyResult.reasonCode || '')
+            ? 'CAPTCHA_REQUIRED'
+            : 'SEARCH_ENGINE_OPEN',
         };
       }
       if (companyResult?.status === 'FAILED') {
@@ -88,6 +139,13 @@ export async function runBrowserCompanyBatch({
         ...runOptions,
       });
       discoveryRuns.push(discoveryRun);
+      if (discoveryRun?.status === 'BLOCKED') {
+        return {
+          ...discoveryRun,
+          status: 'FAILED',
+          reason: 'candidate_page_blocked',
+        };
+      }
       return discoveryRun;
     },
   });

@@ -194,8 +194,209 @@ test('generic recruitment navigation is not promoted to an active opening', asyn
   assert.deepEqual(observed.jobs, []);
 });
 
+test('extracts a concise job title from a verbose iQiyi-style position card', async () => {
+  const jobUrl = 'https://careers.iqiyi.com/campus/position/764000000000000001/detail';
+  const page = {
+    async snapshot() {
+      return {
+        text: '招聘职位 C++研发工程师-26届校招',
+        html: '<main>招聘职位</main>',
+        title: '爱奇艺校园招聘',
+        links: [{
+          text: 'C++研发工程师-26届校招 北京 正式 技术研发 职位 ID 764000000000000001',
+          href: jobUrl,
+        }],
+      };
+    },
+    async waitForTimeout() {},
+    async url() {
+      return 'https://careers.iqiyi.com/campus/';
+    },
+  };
+
+  const observed = await observeRenderedRecruitmentPage(page, {
+    requestedUrl: 'https://careers.iqiyi.com/campus/',
+    response: { status: () => 200 },
+    renderWaitMs: 0,
+  });
+
+  assert.deepEqual(observed.jobs, [{
+    title: 'C++研发工程师-26届校招',
+    jobDetailUrl: jobUrl,
+    sourceUrl: jobUrl,
+    status: 'ACTIVE',
+    sourceJobId: '764000000000000001',
+    locations: ['北京'],
+    employmentType: 'full_time',
+  }]);
+});
+
+test('recognizes iQiyi rendered listing text and compact location metadata', async () => {
+  const jobUrl = 'https://careers.iqiyi.com/campus/position/7644394087927728447/detail';
+  const page = {
+    async snapshot() {
+      return {
+        text: '2026应届生项目 开启新的工作（7） C++研发工程师-26届校招',
+        html: '<main>开启新的工作（7）</main>',
+        title: '爱奇艺校园招聘',
+        links: [{
+          text: 'C++研发工程师-26届校招 北京正式技术 - 研发2026应届生项目职位 ID：A84965 - 支持推荐业务在线推理平台的构建和迭代优化',
+          href: jobUrl,
+        }],
+      };
+    },
+    async waitForTimeout() {},
+    async url() {
+      return 'https://careers.iqiyi.com/campus';
+    },
+  };
+
+  const observed = await observeRenderedRecruitmentPage(page, {
+    requestedUrl: 'https://careers.iqiyi.com/campus',
+    response: { status: () => 200 },
+    renderWaitMs: 0,
+  });
+
+  assert.equal(observed.vacancyStatus, 'UNKNOWN');
+  assert.deepEqual(observed.jobs.map((job) => job.title), [
+    'C++研发工程师-26届校招',
+  ]);
+});
+
+test('extracts explicit Workday dynamic job anchors with adapter evidence', async () => {
+  const jobUrl = 'https://example.wd5.myworkdayjobs.com/en-US/jobs/job/Shanghai/Product-Manager_R123';
+  const page = {
+    async snapshot() {
+      return {
+        text: 'Open positions Product Manager',
+        html: '<main>Open positions</main>',
+        title: 'Example Careers',
+        links: [{
+          text: 'Product Manager - Shanghai',
+          href: jobUrl,
+        }],
+      };
+    },
+    async waitForTimeout() {},
+    async url() {
+      return 'https://example.wd5.myworkdayjobs.com/en-US/jobs';
+    },
+  };
+
+  const observed = await observeRenderedRecruitmentPage(page, {
+    requestedUrl: 'https://example.wd5.myworkdayjobs.com/en-US/jobs',
+    response: { status: () => 200 },
+    renderWaitMs: 0,
+  });
+
+  assert.equal(observed.jobs.length, 1);
+  assert.equal(observed.jobs[0].title, 'Product Manager - Shanghai');
+  assert.equal(observed.jobs[0].extractionAdapter, 'WORKDAY');
+  assert.deepEqual(observed.extractionAdapters, ['WORKDAY']);
+});
+
+test('does not confuse search-engineering and director job titles with navigation', async () => {
+  const page = {
+    async snapshot() {
+      return {
+        text: '开启新的工作（2）',
+        html: '<main>开启新的工作（2）</main>',
+        title: '爱奇艺校园招聘',
+        links: [{
+          text: '搜索算法工程师-26年校招 北京正式技术 - 算法2026应届生项目职位 ID：A63513 - 利用深度学习算法优化视频排序模型',
+          href: 'https://careers.iqiyi.com/campus/position/7628553236739655974/detail',
+        }, {
+          text: 'AIGC导演-26年校招（需上传AI短片作品） 北京正式内容制作 - 导演2026应届生项目职位 ID：A36952 - 审核与统筹剧本创作流程',
+          href: 'https://careers.iqiyi.com/campus/position/7616214185181104435/detail',
+        }],
+      };
+    },
+    async waitForTimeout() {},
+    async url() {
+      return 'https://careers.iqiyi.com/campus';
+    },
+  };
+
+  const observed = await observeRenderedRecruitmentPage(page, {
+    requestedUrl: 'https://careers.iqiyi.com/campus',
+    response: { status: () => 200 },
+    renderWaitMs: 0,
+  });
+
+  assert.deepEqual(observed.jobs.map((job) => job.title), [
+    '搜索算法工程师-26年校招',
+    'AIGC导演-26年校招（需上传AI短片作品）',
+  ]);
+});
+
+test('does not classify the word internal as an internship signal', async () => {
+  const jobUrl = 'https://careers.iqiyi.com/campushire/position/7554335474921670939/detail';
+  const page = {
+    async snapshot() {
+      return {
+        text: 'Find Your New Job (1)',
+        html: '<main>Find Your New Job (1)</main>',
+        title: 'Graduates',
+        links: [{
+          text: 'Social Media Operation Specialist SingaporeRegular运营 Use internal AI tools to improve efficiency',
+          href: jobUrl,
+        }],
+      };
+    },
+    async waitForTimeout() {},
+    async url() {
+      return 'https://careers.iqiyi.com/campushire/';
+    },
+  };
+
+  const observed = await observeRenderedRecruitmentPage(page, {
+    requestedUrl: 'https://careers.iqiyi.com/campushire/',
+    response: { status: () => 200 },
+    renderWaitMs: 0,
+  });
+
+  assert.equal(observed.jobs[0].employmentType, 'full_time');
+});
+
+test('extracts JSON-LD jobs from a dynamic recruitment page without anchor links', async () => {
+  const page = {
+    async snapshot() {
+      return {
+        text: '招聘职位',
+        html: `<script type="application/ld+json">${JSON.stringify({
+          '@type': 'JobPosting',
+          title: 'AI 产品经理',
+          identifier: { value: 'pm-42' },
+          url: '/jobs/pm-42',
+          jobLocation: { address: { addressLocality: '上海' } },
+          datePosted: '2026-07-01',
+        })}</script>`,
+        title: '招聘职位',
+        links: [],
+      };
+    },
+    async waitForTimeout() {},
+    async url() {
+      return 'https://jobs.example.com/openings';
+    },
+  };
+  const observed = await observeRenderedRecruitmentPage(page, {
+    requestedUrl: 'https://jobs.example.com/openings',
+    response: { status: () => 200 },
+    renderWaitMs: 0,
+  });
+  assert.equal(observed.jobs[0].title, 'AI 产品经理');
+  assert.equal(observed.jobs[0].sourceJobId, 'pm-42');
+  assert.deepEqual(observed.jobs[0].locations, ['上海']);
+  assert.equal(observed.jobs[0].extractionAdapter, 'JSON_LD_JOB_POSTING');
+});
+
 test('Playwright wrapper implements the BrowserSession port', async () => {
+  let configuredTimeout = null;
   const rawPage = {
+    setDefaultTimeout: (timeoutMs) => {
+      configuredTimeout = timeoutMs;
+    },
     goto: async () => ({ status: () => 200 }),
     waitForTimeout: async () => {},
     url: () => 'https://jobs.example.com/',
@@ -216,5 +417,6 @@ test('Playwright wrapper implements the BrowserSession port', async () => {
 
   assert.equal(assertBrowserSession(session), session);
   assert.equal(assertBrowserPage(page), page);
+  assert.equal(configuredTimeout, 5_000);
   assert.equal((await page.snapshot()).text, '招聘职位');
 });

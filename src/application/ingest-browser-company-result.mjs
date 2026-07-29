@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { canonicalRecruitmentUrl } from '../core/canonical-recruitment-url.mjs';
 
 import {
   adaptBrowserCompanyResult,
@@ -18,6 +19,15 @@ import {
 } from './recruitment-event-classifier.mjs';
 
 const BROWSER_PROVIDER = 'chrome_baidu_visible_search';
+const OBSERVED_PAGE_ROLES = new Set([
+  'CAREER_HOME',
+  'CAMPAIGN',
+  'JOB_LIST',
+  'JOB_DETAIL',
+  'APPLY',
+  'SITEMAP',
+  'UNKNOWN',
+]);
 
 function stableId(prefix, value) {
   const digest = createHash('sha256').update(String(value || '')).digest('hex').slice(0, 24);
@@ -59,19 +69,21 @@ function createBrowserPlanningModel(query, role) {
   });
 }
 
-function createBrowserSearchSource(adapted) {
+function createBrowserSearchSource(adapted, companyResult = {}) {
+  const provider = companyResult.discoveryProvider || BROWSER_PROVIDER;
+  const liveSearchExecuted = companyResult.liveSearchExecuted !== false;
   return Object.freeze({
     async search(query) {
       return Object.freeze({
         status: 'ok',
-        provider: BROWSER_PROVIDER,
+        provider,
         attempts: Object.freeze([{
-          provider: BROWSER_PROVIDER,
+          provider,
           status: 'ok',
-          networkRequest: true,
+          networkRequest: liveSearchExecuted,
           query: query.text,
         }]),
-        liveSearchExecuted: true,
+        liveSearchExecuted,
         items: adapted.items,
       });
     },
@@ -93,13 +105,92 @@ function createBrowserIds(companyResult) {
 }
 
 function canonicalHttpUrl(value) {
-  try {
-    const url = new URL(String(value || '').trim());
-    if (!['http:', 'https:'].includes(url.protocol)) return null;
-    url.hash = '';
-    return url.href;
-  } catch {
-    return null;
+  return canonicalRecruitmentUrl(value) || null;
+}
+
+function sha256(value) {
+  return createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+function observationOutcome(observation = {}) {
+  const fetchStatus = String(observation.fetchStatus || '').toUpperCase();
+  const status = Number(observation.status);
+  if (fetchStatus === 'BLOCKED' || [401, 403, 429].includes(status)) return 'BLOCKED';
+  if (fetchStatus === 'FAILED' || fetchStatus === 'DEFERRED' || status >= 400 || status === 0) {
+    return 'FAILED';
+  }
+  if (observation.vacancyStatus === 'NO_OPENINGS') return 'NO_OPENINGS';
+  return 'SUCCESS';
+}
+
+function persistEndpointObservations({
+  companyResult,
+  result,
+  repository,
+  observedAt,
+}) {
+  if (
+    typeof repository.listSourceEndpoints !== 'function'
+    || typeof repository.appendFetchObservation !== 'function'
+  ) return;
+  const decisions = result.report.portalDecisions.filter((portal) => (
+    portal.sourceTier !== 'PLATFORM_ONLY'
+  ));
+  const endpointByUrl = new Map();
+  for (const decision of decisions) {
+    for (const endpoint of repository.listSourceEndpoints({
+      companyId: decision.companyId,
+    })) {
+      endpointByUrl.set(canonicalHttpUrl(endpoint.canonicalUrl), endpoint);
+    }
+  }
+  for (const observation of companyResult.observations || []) {
+    const observedUrl = canonicalHttpUrl(
+      observation.finalUrl || observation.url || observation.requestedUrl,
+    );
+    const requestedUrl = canonicalHttpUrl(observation.requestedUrl);
+    const endpoint = endpointByUrl.get(observedUrl) || endpointByUrl.get(requestedUrl);
+    if (!endpoint) continue;
+    const decision = decisions.find((item) => (
+      item.portalId === endpoint.careerPortalId
+      || canonicalHttpUrl(item.url) === endpoint.canonicalUrl
+    ));
+    const body = observation.html || observation.text || '';
+    const links = (observation.links || []).map((link) => ({
+      text: String(link.text || ''),
+      href: canonicalHttpUrl(link.href) || String(link.href || ''),
+    }));
+    const jobs = observation.jobs || [];
+    const outcome = observationOutcome(observation);
+    repository.appendFetchObservation({
+      sourceEndpointId: endpoint.id,
+      runId: result.runId,
+      fetchedAt: observation.observedAt || observedAt,
+      outcome,
+      httpStatus: Number(observation.status) || null,
+      finalUrl: observedUrl,
+      contentHash: body ? sha256(body) : null,
+      structureHash: sha256(JSON.stringify({
+        title: observation.title || '',
+        links,
+        jobs: jobs.map((job) => ({
+          id: job.id || job.sourceJobId || null,
+          title: job.title || job.jobName || job.positionName || '',
+        })),
+      })),
+      pageRole: OBSERVED_PAGE_ROLES.has(decision?.pageType)
+        ? decision.pageType
+        : 'UNKNOWN',
+      hiringAvailability: decision?.hiringAvailability || 'UNKNOWN',
+      jobCount: jobs.length,
+      reasonCode: observation.reasonCode || null,
+      evidence: decision?.evidence || [],
+      durationMs: observation.durationMs || null,
+      metadata: {
+        observationMethod: observation.observationMethod || null,
+        requestedUrl,
+      },
+    });
   }
 }
 
@@ -407,7 +498,7 @@ export async function ingestBrowserCompanyResult({
   }, {
     repository: staged.repository,
     planningModel: createBrowserPlanningModel(adapted.query, String(role || '公开招聘岗位')),
-    searchSource: createBrowserSearchSource(adapted),
+    searchSource: createBrowserSearchSource(adapted, companyResult),
     verificationAdapter,
     pageAdvisoryClassifier: null,
     jobExtractor,
@@ -457,6 +548,26 @@ export async function ingestBrowserCompanyResult({
       // The returned report remains FAILED even if run-status persistence also fails.
     }
     return failedAtomicPersistenceResult(augmented, error);
+  }
+  try {
+    persistEndpointObservations({
+      companyResult,
+      result: augmented,
+      repository,
+      observedAt: now(),
+    });
+  } catch (error) {
+    if (typeof repository.appendAuditLog === 'function') {
+      repository.appendAuditLog({
+        action: 'endpoint_observation_persistence_failed',
+        entityType: 'DiscoveryRun',
+        entityId: result.runId,
+        details: {
+          message: error instanceof Error ? error.message : String(error),
+        },
+        createdAt: now(),
+      });
+    }
   }
   return augmented;
 }

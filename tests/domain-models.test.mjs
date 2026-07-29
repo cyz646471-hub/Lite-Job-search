@@ -152,6 +152,35 @@ test('CareerPortal defaults verified official portals to confirmed official iden
   assert.equal(portal.platformIdentityConfirmed, false);
   assert.equal(portal.hiringAvailability, 'UNKNOWN');
   assert.equal(portal.searchCoverage, 'PARTIAL');
+  assert.equal(portal.channelType, 'WEB_PORTAL');
+});
+
+test('CareerPortal stores a verified official WeChat recruitment channel without claiming its shared host as a company domain', () => {
+  const portal = createCareerPortal({
+    id: 'portal-wechat',
+    companyId: 'company-1',
+    canonicalUrl: 'https://mp.weixin.qq.com/s/example',
+    registrableDomain: 'weixin.qq.com',
+    pageType: 'CAMPAIGN',
+    verificationStatus: 'VERIFIED',
+    confidenceScore: 55,
+    sourceTier: 'OFFICIAL_SOCIAL',
+    channelType: 'WECHAT_OFFICIAL_ACCOUNT',
+    officialIdentityConfirmed: true,
+    officialAccountName: '示例科技招聘',
+    officialAccountId: 'example-careers',
+    verifiedSubject: '示例科技有限公司',
+  });
+
+  assert.equal(portal.sourceTier, 'OFFICIAL_SOCIAL');
+  assert.equal(portal.channelType, 'WECHAT_OFFICIAL_ACCOUNT');
+  assert.equal(portal.officialAccountId, 'example-careers');
+  assert.equal(portal.verifiedSubject, '示例科技有限公司');
+  assert.throws(() => createCareerPortal({
+    ...portal,
+    id: 'portal-wechat-invalid',
+    sourceTier: 'OFFICIAL_SITE',
+  }), /WECHAT_OFFICIAL_ACCOUNT/);
 });
 
 test('CareerPortal keeps platform-only sources isolated from official verification', () => {
@@ -205,6 +234,25 @@ test('JobOpening uses source job id before URL fallback', () => {
     sourceUrl: 'https://jobs.example.com/changed',
     title: 'Changed title',
   });
+  assert.equal(first, second);
+});
+
+test('JobOpening URL identity is stable across event and location enrichment', () => {
+  const first = stableOpeningId({
+    companyId: 'company-1',
+    recruitmentEventId: 'event-before-enrichment',
+    sourceUrl: 'https://jobs.example.com/42',
+    title: 'AI 产品经理',
+    locations: [],
+  });
+  const second = stableOpeningId({
+    companyId: 'company-1',
+    recruitmentEventId: 'event-after-enrichment',
+    sourceUrl: 'https://jobs.example.com/42',
+    title: 'AI 产品经理',
+    locations: ['北京'],
+  });
+
   assert.equal(first, second);
 });
 

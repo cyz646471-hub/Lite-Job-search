@@ -144,7 +144,11 @@ Run:
 node bin/lite-job-search.mjs batch --input .\companies.json --output .\candidates.json --json
 ```
 
-Use small batches first. For Apify Google search, use the extracted `ApifyGoogleSearchProvider.runBatch()` in groups of 20–100 queries; never launch one Actor run per company.
+Use small batches first. The natural-language China production workflow uses an
+explicitly selected visible browser engine: Baidu by default, or Google when the
+instruction says Google/谷歌 or the CLI passes `--search-engine google`. Baidu
+API and Apify are disabled. Never switch engines automatically after a
+challenge.
 
 ## Run browser company discovery
 
@@ -189,6 +193,68 @@ stage failures. CAPTCHA, network failure, browser disconnection, or an
 unconfigured dependency remains `BLOCKED`, `FAILED`, or `NOT_CONFIGURED`; none
 is a successful empty search.
 
+## Run a complete task from one Chinese instruction
+
+Use the instruction runner when the user supplies market, freshness, role, and
+company count in one sentence:
+
+```powershell
+npm.cmd run discover:instruction -- `
+  "检索近90天内中国，开放产品经理方向岗位公司100个"
+```
+
+The deterministic compiler fills the worker manifest, loads the current local
+company registry, excludes every company already represented in SQLite by
+formal name, bilingual name, alias, or official domain, and writes
+`task-manifest.json` plus `selected-companies.json` before browser work begins.
+It then runs the existing browser worker repeatedly with the same selection
+batch id until the selected companies are complete or the circuit breaker,
+browser, or Provider stops progress.
+
+Use `--plan-only` to inspect the compiled task and selected companies without
+starting Chrome. A configured `--company-supplement-module` may provide more
+company identities when local registries are insufficient. Without one, retain
+the truthful `NOT_CONFIGURED` supplement status and process the local subset;
+do not fabricate the missing companies.
+
+This instruction layer has no verification authority. The existing
+deterministic Verification Engine remains the only component allowed to mark an
+official site or ATS as verified.
+
+## Monitor verified China recruitment endpoints
+
+Known verified official and ATS entries do not return to public search. Prepare
+the independent queues and monitor direct endpoints with:
+
+```powershell
+npm.cmd run monitor:network:prepare -- --market CN --target-count 300
+npm.cmd run monitor:endpoints -- --market CN --target-count 200
+```
+
+`PORTAL_MONITOR` uses conditional HTTP or an ATS adapter.
+`PORTAL_RECOVERY` handles failed, redirected, or parser-incompatible known
+entries. `MARKET_DISCOVERY` alone may use the explicitly selected search
+engine, so an open search circuit cannot stop known endpoints.
+
+Each changed response creates a `FetchObservation` and `PageSnapshot`; replay a
+snapshot without network access using:
+
+```powershell
+npm.cmd run monitor:snapshot:replay -- --snapshot-id <snapshot-id>
+```
+
+Run the bounded one-day China Canary with:
+
+```powershell
+npm.cmd run monitor:canary:one-day -- `
+  --target-count 200 --duration-hours 24 --cycle-minutes 30
+```
+
+The report must retain actual endpoint success, job changes, browser fallback,
+and actionable-job denominators. A failed or blocked fetch never closes a job.
+Absent jobs close only after the configured number of successful snapshots, or
+explicit closure evidence.
+
 ## Verify candidates
 
 ```powershell
@@ -203,9 +269,58 @@ Do not copy one URL into every role. Aggregators, media, universities, governmen
 
 Use the degradation order:
 
-`local HTTP → local Playwright → Apify raw HTTP → Apify browser → manual review`.
+`local HTTP → user's normal Chrome session → manual review`.
+
+If the selected search engine shows CAPTCHA, unusual traffic, consent/access
+verification, or rate limiting, preserve the checkpoint and return `BLOCKED`.
+Do not switch to Baidu API, Apify, another search engine, or a fresh browser
+profile to bypass it.
 
 Do not bypass login, access controls, CAPTCHA/验证码, rate limits, browser fingerprints, or anti-bot systems. Never submit an application, upload a resume, accept terms, or send messages.
+
+## Current production browser policy
+
+This policy supersedes earlier normal-Chrome and extension-binding guidance in
+this file. China production discovery uses
+`run-persistent-browser-supervisor.mjs`: a long-running Node.js process that
+owns one Playwright `launchPersistentContext` and a dedicated automation
+`userDataDir` for the full SQLite queue run. Never use a daily/default Chrome
+profile or borrow a user Chrome extension host. The dedicated profile is
+exclusive to one supervisor process and may retain only its own browser state
+across restarts. CAPTCHA and access challenges must be checkpointed as
+`BLOCKED`; do not bypass them or silently change the explicitly selected search
+engine or profile.
+
+## Operate the local control plane
+
+The Web control plane never owns Playwright. Start it with:
+
+```powershell
+npm.cmd run web -- --database data/lite-job-search.sqlite --port 4317
+```
+
+Use `npm.cmd run control -- status`, `stop --batch <id> --confirm`, and
+`resume --batch <id> --confirm` for SQLite-backed worker control. A stop is
+cooperative and batch-scoped.
+
+After a human completes a challenge, run
+`control -- provider-ack --provider baidu|google --confirm`. The legacy
+`baidu-ack` command remains available. Acknowledgement does not close the
+circuit. One worker must atomically acquire the
+`HALF_OPEN` probe lease and reach a real results page before the state becomes
+`CLOSED`. Never refresh, retry, switch engines, or run a second probe while the
+lease is held.
+
+The dashboard exposes two different live SQLite projections:
+
+- the formal student XLSX contains only publication-eligible verified openings;
+- the company collection XLSX contains the current task's company queue and its
+  latest portal, channel, verification, hiring, and coverage state.
+
+Generate both files when the user clicks the download buttons. Do not serve a
+stale startup artifact. A low formal-row count is not evidence that company
+collection is missing; it means most records have not passed the publication
+gate.
 
 ## Export
 
@@ -224,6 +339,19 @@ Student-facing XLSX is a downstream compatibility projection of verified `JobOpe
 When `batch` or `verify` receives a non-XLSX `--output`, keep the requested primary JSON/JSONL/CSV output and automatically write the sibling `<basename>.student.xlsx`. A direct XLSX output is not duplicated.
 
 Use the deepest verified official role in this order: direct application, job detail, job list, campaign landing, career home. For persisted report records, `recruitmentEntryUrl` may be used only when `entryType` is an `official_*` value, `官方招聘站或受委托 ATS`, or `企业官方招聘公告（公众号）`; never use a discovery-evidence URL as the student entry. Only active verified openings belong in the final student list. Leave missing links blank rather than substituting discovery evidence.
+
+Company identity and recruitment-page identity are independent gates. A
+corporate home page can confirm the company domain but can never become a
+verified career portal by itself. `VERIFIED` requires both a deterministic
+company-identity anchor and a recruitment anchor such as a career-page
+identity, job structure, campaign structure, or apply action.
+
+Treat an official WeChat account as `OFFICIAL_SOCIAL`, not as a company-owned
+web domain. Preserve the account name, account identifier, verified subject,
+article URL, and attribution evidence. The shared `mp.weixin.qq.com` domain
+never proves company ownership. A WeChat recruitment announcement may become
+actionable only when its subject/account attribution and recruitment content
+both pass deterministic verification.
 
 Company type is a model advisory, not official-site evidence. Display its label only when the recorded confidence is at least `0.8`; otherwise use `待确认`. Preserve classification evidence outside the student sheet. Use `未披露` for missing dates and `招满即止` only when that deadline semantics is explicit.
 

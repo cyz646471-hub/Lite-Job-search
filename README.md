@@ -1,5 +1,26 @@
 # Lite Job Search
 
+## 自然语言任务入口
+
+一条指令可以生成任务清单、排除 SQLite 已收录公司并启动完整浏览器
+生产链路：
+
+```powershell
+npm.cmd run discover:instruction -- `
+  "检索近90天内中国，开放产品经理方向岗位公司100个"
+```
+
+先检查自动填充内容而不启动浏览器：
+
+```powershell
+npm.cmd run discover:instruction -- `
+  "检索近90天内中国，开放产品经理方向岗位公司100个" `
+  --plan-only
+```
+
+字段、名单补充接口、去重和失败状态说明见
+[一句话招聘检索任务指导](docs/search-instruction-template.md)。
+
 Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具。它面向中国和北美市场，提供公司招聘官网发现、公开 ATS 扫描、候选链接验证、招聘页面下钻、去重、缓存、预算控制和 JSON/JSONL/CSV/XLSX 导出。
 
 它不包含简历生成、岗位匹配评分、自动申请、申请跟踪、面试准备或薪酬分析。
@@ -8,7 +29,7 @@ Lite Job Search 是从 Career OP 中拆出的独立招聘检索与验证工具�
 
 | 模块 | 中国市场 | 北美市场 |
 |---|---|---|
-| 搜索服务 | 百度 API、可见 Chrome 百度工作流、Tavily、Brave、Apify Google、人工候选 | Tavily、Brave、人工候选 |
+| 搜索服务 | Persistent Chrome 中显式选择百度或 Google；百度 API 与 Apify 已禁用 | Tavily、Brave、人工候选 |
 | 发现源 | Gank Interview、牛客招聘日程、牛企直聘、实习僧等公开线索；浪浪网申已移除 | 企业官网、VC portfolio seeds、公开职位板 |
 | ATS / 招聘系统 | Moka、北森/Hotjob、飞书招聘、智联招聘系统、Moseeker 等 | Greenhouse、Lever、Ashby、Workday、SmartRecruiters、Teamtailor 等 |
 | 验证 | 企业主域、品牌信号、ATS 租户、招聘语义、页面角色 | 企业域名、ATS 租户、职位列表/详情/申请动作 |
@@ -198,19 +219,43 @@ try {
 }
 ```
 
-高级调用可直接导入 `runCnDiscovery()`、`runAtsDiscovery()`、`ApifyGoogleSearchProvider` 和招聘页面下钻函数。
+高级调用可直接导入 `runCnDiscovery()`、`runAtsDiscovery()` 和招聘页面下钻函数。
 
-## 浏览器与 Apify
+## 浏览器搜索
 
-- 浏览器 Worker 支持扩展 binding 或显式 binding 模块连接的 `normal-chrome`，以及独立可见 profile 的 `persistent-chrome`；模式不可用时明确返回 `NOT_CONFIGURED`，不会静默降级。
-- 百度搜索默认至少间隔 10 秒并叠加 0–20 秒抖动；首次安全验证立即将当前公司记为 `DEFERRED`、打开持久化断路器并停止后续 Query。
+- 中国生产 Worker 使用长期运行的 Persistent Chrome Supervisor 和独立自动化 Profile，不连接用户日常 Chrome Profile。
+- 发现顺序是已验证 Portal、官方域名、历史入口、ATS、缓存、公开线索外链、常见招聘路径、显式选择的百度或 Google、人工发现。
+- Direct HTTP 与 ATS Adapter 优先；只有动态渲染、分页或交互确有需要时才启动 Playwright。
+- 浏览器搜索默认至少间隔 10 秒并叠加抖动；首次安全验证立即将该引擎任务记为 `DEFERRED` 并打开独立断路器，直接官网核验任务继续执行。
 - 浏览器搜索不绕过验证码、登录、限流或访问控制；人工健康探测成功后才恢复延迟队列。
-- Apify 只作为增量搜索与动态页面降级，不保存业务主数据。
-- Apify Google 查询应按 20–100 条批量提交，每条只取第一页和前 8 个自然结果。
+- 不得通过自动切换引擎、百度 API、Apify 或新 Profile 规避安全验证。
 - 默认不启用住宅代理。
 - 预算耗尽返回 `search_deferred_by_budget`，不等于“没有官网”。
 
 完整命令、断点恢复、来源边界、SQLite 完整性与 XLSX 输出见[本地 Chrome 招聘发现 Worker](docs/local-browser-worker.md)。
+
+## Persistent Chrome Supervisor
+
+Production browser discovery runs through `npm.cmd run
+discover:persistent-supervisor`. The Supervisor is a long-running Node.js
+process that owns one Playwright persistent context and a dedicated automation
+profile for its entire SQLite-backed company queue. It never attaches to a
+user's daily Chrome profile or extension host. The profile is exclusive to one
+process and uses a lock file to fail closed on a second worker. CAPTCHA and
+access challenges remain `BLOCKED`; the worker does not try to bypass them.
+
+See [Persistent Chrome Supervisor](docs/persistent-chrome-supervisor.md) for
+the service/container command and profile requirements.
+
+Local task creation, Worker state, batch stop/resume, Baidu/Google manual
+acknowledgement and XLSX download are available through the
+[local control plane](docs/local-control-plane.md).
+
+For periodic maintenance of the local 1,000+ company registry, use the
+[fixed company monitor and A/B/C publication gate](docs/fixed-company-monitor-and-publication-gate.md).
+This path rechecks confirmed official/ATS entries without repeating web search;
+third-party platform records remain review candidates and never enter the
+student-facing workbook.
 
 ## 项目结构
 

@@ -76,6 +76,42 @@ function canonicalHttpUrl(value) {
   }
 }
 
+function candidateAssuranceKey(candidate = {}) {
+  const url = canonicalHttpUrl(candidate.url);
+  if (!url) return '';
+  const assurance = candidate.parentOfficialVerified === true
+    && candidate.verifiedTenant === true
+    ? 'officially_attributed'
+    : 'unattributed';
+  return `${url}|${assurance}`;
+}
+
+function candidateUrlFromAssuranceKey(key) {
+  const separator = String(key || '').lastIndexOf('|');
+  return separator > 0 ? key.slice(0, separator) : '';
+}
+
+function isKnownAtsUrl(value) {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return KNOWN_ATS_REGISTRABLE_DOMAINS.some((domain) => (
+      host === domain || host.endsWith(`.${domain}`)
+    ));
+  } catch {
+    return false;
+  }
+}
+
+function traversalVisitedUrls(...keyCollections) {
+  return [...new Set(keyCollections.flatMap((keys) => [...keys])
+    .filter((key) => (
+      String(key).endsWith('|officially_attributed')
+      || !isKnownAtsUrl(candidateUrlFromAssuranceKey(key))
+    ))
+    .map(candidateUrlFromAssuranceKey)
+    .filter(Boolean))];
+}
+
 function linksFromPage(page = {}) {
   if (Array.isArray(page.links)) return page.links;
   const html = String(page.html || page.body || '');
@@ -225,8 +261,8 @@ export async function discoverMarketJobs(input, dependencies = {}) {
   const storedJobsById = new Map();
   const jobIdsByPortalId = new Map();
   const discoveredCompanyKeys = new Set();
-  const processedCandidateUrls = new Set();
-  const queuedCandidateUrls = new Set();
+  const processedCandidateKeys = new Set();
+  const queuedCandidateKeys = new Set();
   const childEntriesByCompany = new Map();
   const noOpeningPortalIds = new Set();
   const unknownVacancyPortalIds = new Set();
@@ -411,17 +447,17 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       entryDepth: 0,
     }));
     for (const candidate of candidateQueue) {
-      const queuedUrl = canonicalHttpUrl(candidate.url);
-      if (queuedUrl) queuedCandidateUrls.add(queuedUrl);
+      const queuedKey = candidateAssuranceKey(candidate);
+      if (queuedKey) queuedCandidateKeys.add(queuedKey);
     }
 
     while (candidateQueue.length) {
       const candidate = candidateQueue.shift();
-      const candidateUrl = canonicalHttpUrl(candidate.url);
-      if (candidateUrl) {
-        queuedCandidateUrls.delete(candidateUrl);
-        if (processedCandidateUrls.has(candidateUrl)) continue;
-        processedCandidateUrls.add(candidateUrl);
+      const candidateKey = candidateAssuranceKey(candidate);
+      if (candidateKey) {
+        queuedCandidateKeys.delete(candidateKey);
+        if (processedCandidateKeys.has(candidateKey)) continue;
+        processedCandidateKeys.add(candidateKey);
       }
 
       let company = createCompany({
@@ -480,6 +516,20 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         continue;
       }
 
+      if (
+        inspected.confirmedOfficialDomain
+        && !company.officialDomains.includes(inspected.confirmedOfficialDomain)
+      ) {
+        company = createCompany({
+          ...company,
+          primaryOfficialDomain: company.primaryOfficialDomain
+            || inspected.confirmedOfficialDomain,
+          officialDomains: [
+            ...company.officialDomains,
+            inspected.confirmedOfficialDomain,
+          ],
+        }, { now: now() });
+      }
       const decision = verifyCareerPortal(inspected);
       let advisory = null;
       if (
@@ -544,8 +594,16 @@ export async function discoverMarketJobs(input, dependencies = {}) {
         pageType: decision.pageType,
         verificationStatus: decision.verificationStatus,
         confidenceScore: decision.confidenceScore,
-        sourceTier: inspected.atsType ? 'OFFICIAL_ATS' : 'OFFICIAL_SITE',
-        officialIdentityConfirmed: decision.verificationStatus === 'VERIFIED',
+        sourceTier: inspected.channelType === 'WECHAT_OFFICIAL_ACCOUNT'
+          ? 'OFFICIAL_SOCIAL'
+          : inspected.atsType
+            ? 'OFFICIAL_ATS'
+            : 'OFFICIAL_SITE',
+        channelType: inspected.channelType,
+        officialAccountName: inspected.officialAccountName,
+        officialAccountId: inspected.officialAccountId,
+        verifiedSubject: inspected.verifiedSubject,
+        officialIdentityConfirmed: decision.identityAnchor === true,
         hiringAvailability: inspected.vacancyStatus === 'NO_OPENINGS'
           ? 'NO_OPENINGS'
           : 'UNKNOWN',
@@ -557,7 +615,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
       }, { now: observedAt });
 
       repository.withTransaction(() => {
-        repository.upsertCareerPortal(portal);
+        portal = repository.upsertCareerPortal(portal) || portal;
         repository.replaceVerificationEvidence(portal.id, portalEvidence);
       });
 
@@ -645,18 +703,17 @@ export async function discoverMarketJobs(input, dependencies = {}) {
           trustedRegistrableDomains: company.officialDomains,
           knownAtsRegistrableDomains: KNOWN_ATS_REGISTRABLE_DOMAINS,
           parentOfficialVerified,
-          visitedUrls: [...processedCandidateUrls, ...queuedCandidateUrls],
+          visitedUrls: traversalVisitedUrls(
+            processedCandidateKeys,
+            queuedCandidateKeys,
+          ),
           parentUrl: portal.canonicalUrl,
           depth: nextDepth,
           maxDepth: 2,
           maxEntries: remainingChildBudget,
         });
         for (const entry of entries) {
-          const entryUrl = canonicalHttpUrl(entry.url);
-          if (!entryUrl || processedCandidateUrls.has(entryUrl) || queuedCandidateUrls.has(entryUrl)) {
-            continue;
-          }
-          candidateQueue.push({
+          const childCandidate = {
             ...candidate,
             url: entry.url,
             title: entry.text || candidate.title,
@@ -670,8 +727,20 @@ export async function discoverMarketJobs(input, dependencies = {}) {
               ? []
               : [entry.recruitmentType],
             discoveryReason: entry.discoveryReason,
-          });
-          queuedCandidateUrls.add(entryUrl);
+            confirmedOfficialDomain: company.primaryOfficialDomain
+              || candidate.confirmedOfficialDomain
+              || null,
+          };
+          const entryKey = candidateAssuranceKey(childCandidate);
+          if (
+            !entryKey
+            || processedCandidateKeys.has(entryKey)
+            || queuedCandidateKeys.has(entryKey)
+          ) {
+            continue;
+          }
+          candidateQueue.push(childCandidate);
+          queuedCandidateKeys.add(entryKey);
           childEntriesByCompany.set(
             companyKey,
             (childEntriesByCompany.get(companyKey) || 0) + 1,
@@ -838,7 +907,7 @@ export async function discoverMarketJobs(input, dependencies = {}) {
           hiringAvailability: 'OPENINGS_FOUND',
           lastCheckedAt: observedAt,
         }, { now: observedAt });
-        repository.upsertCareerPortal(portal);
+        portal = repository.upsertCareerPortal(portal) || portal;
         portalDecisionsById.set(portal.id, Object.freeze({
           ...portalDecisionsById.get(portal.id),
           hiringAvailability: portal.hiringAvailability,

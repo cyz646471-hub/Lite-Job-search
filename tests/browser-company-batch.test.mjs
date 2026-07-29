@@ -4,6 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import {
+  createClosedCircuit,
+  transitionCircuit,
+} from '../src/application/browser-search-circuit-breaker.mjs';
 import { runBrowserCompanyBatch } from '../src/application/run-browser-company-batch.mjs';
 import { openSqliteMarketDiscoveryRepository } from '../src/storage/sqlite-job-repository.mjs';
 
@@ -101,7 +105,45 @@ test('blocked browser search is checkpointed without ingestion', async (t) => {
   assert.match(result.items[0].errorMessage, /search_challenge_or_access_blocked/);
 });
 
-test('browser batch stops after the first search challenge and checkpoints remaining companies', async (t) => {
+test('blocked candidate ingestion fails only that company and continues the batch', async (t) => {
+  const repository = await createRepository(t);
+  const searched = [];
+
+  const result = await runBrowserCompanyBatch({
+    batchId: 'browser-candidate-blocked',
+    companies: [
+      { company: '候选页受限公司' },
+      { company: '后续公司' },
+    ],
+  }, {
+    repository,
+    discoverCompany: async (company) => {
+      searched.push(company.company);
+      return {
+        company: company.company,
+        status: 'COMPLETED',
+        officialCandidates: [],
+        observations: [],
+      };
+    },
+    ingestCompany: async ({ companyResult }) => (
+      companyResult.company === '候选页受限公司'
+        ? { status: 'BLOCKED', runId: 'run-blocked' }
+        : { status: 'COMPLETE', runId: 'run-complete' }
+    ),
+  });
+
+  assert.deepEqual(searched, ['候选页受限公司', '后续公司']);
+  assert.equal(result.status, 'COMPLETE_WITH_ERRORS');
+  assert.equal(result.failed, 1);
+  assert.equal(result.succeeded, 1);
+  assert.equal(result.deferred, 0);
+  assert.equal(result.items[0].status, 'FAILED');
+  assert.equal(result.items[0].resultStatus, 'FAILED');
+  assert.equal(repository.getProviderCircuitState('baidu')?.state ?? 'CLOSED', 'CLOSED');
+});
+
+test('browser batch defers remaining Baidu companies after the first challenge', async (t) => {
   const repository = await createRepository(t);
   const searched = [];
 
@@ -127,9 +169,50 @@ test('browser batch stops after the first search challenge and checkpoints remai
   assert.deepEqual(searched, ['Blocked Co']);
   assert.equal(result.status, 'PAUSED');
   assert.equal(result.failed, 0);
-  assert.equal(result.deferred, 1);
-  assert.equal(result.pending, 1);
+  assert.equal(result.deferred, 2);
+  assert.equal(result.pending, 0);
   assert.equal(result.items[0].status, 'DEFERRED');
-  assert.equal(result.items[1].status, 'PENDING');
+  assert.equal(result.items[1].status, 'DEFERRED');
   assert.equal(repository.getProviderCircuitState('baidu').state, 'OPEN');
+});
+
+test('an official-domain company still receives local navigation while public search is open', async (t) => {
+  const repository = await createRepository(t);
+  repository.saveProviderCircuitState(transitionCircuit(
+    createClosedCircuit('google', '2026-07-29T00:00:00.000Z'),
+    { type: 'BLOCKED', reasonCode: 'search_challenge_or_access_blocked' },
+    '2026-07-29T00:00:01.000Z',
+  ));
+  const contexts = [];
+
+  const result = await runBrowserCompanyBatch({
+    batchId: 'browser-local-before-google',
+    provider: 'google',
+    companies: [{
+      company: '官网已知公司',
+      officialDomain: 'example.com',
+    }],
+  }, {
+    repository,
+    discoverCompany: async (company, context) => {
+      contexts.push({ company, context });
+      return {
+        company: company.company,
+        status: 'COMPLETED',
+        liveSearchExecuted: false,
+        officialCandidates: [{
+          url: 'https://example.com/careers',
+          pageStatus: 'COMPLETED',
+        }],
+        observations: [],
+      };
+    },
+    ingestCompany: async () => ({ status: 'COMPLETE' }),
+  });
+
+  assert.equal(contexts.length, 1);
+  assert.equal(contexts[0].company.queueType, 'LOCAL_OR_DIRECT_VERIFICATION');
+  assert.equal(contexts[0].context.publicSearchAllowed, false);
+  assert.equal(result.succeeded, 1);
+  assert.equal(result.deferred, 0);
 });

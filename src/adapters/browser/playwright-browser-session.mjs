@@ -3,6 +3,7 @@ import {
   assertBrowserSession,
 } from '../../ports/browser-session.mjs';
 import { readBaiduRows } from './baidu-search-page-adapter.mjs';
+import { readPublicSearchRows } from './public-search-page-adapter.mjs';
 import {
   captureRenderedSnapshot,
   observeRenderedRecruitmentPage,
@@ -11,6 +12,7 @@ import {
 export function createPlaywrightBrowserSession(context, {
   closeContext = true,
   onClose = null,
+  actionTimeoutMs = 5_000,
 } = {}) {
   if (typeof context?.newPage !== 'function') {
     throw new Error('Playwright context.newPage is required');
@@ -18,6 +20,7 @@ export function createPlaywrightBrowserSession(context, {
   const session = Object.freeze({
     async newPage() {
       const page = await context.newPage();
+      page.setDefaultTimeout?.(Math.max(1_000, Number(actionTimeoutMs) || 5_000));
       const wrapped = Object.freeze({
         goto: (url, options) => page.goto(url, options),
         waitForTimeout: (milliseconds) => page.waitForTimeout(milliseconds),
@@ -26,6 +29,7 @@ export function createPlaywrightBrowserSession(context, {
         snapshot: () => captureRenderedSnapshot(page),
         readBodyText: () => page.locator('body').innerText().catch(() => ''),
         readSearchRows: (limit) => readBaiduRows(page, limit),
+        readPublicSearchRows: (engine, limit) => readPublicSearchRows(page, engine, limit),
         observeCareerPage: (options) => observeRenderedRecruitmentPage(page, options),
         close: () => page.close(),
       });

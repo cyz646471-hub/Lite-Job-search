@@ -13,6 +13,7 @@ const portal = {
   companyId: 'company-1',
   sourceTier: 'OFFICIAL_SITE',
   verificationStatus: 'VERIFIED',
+  officialIdentityConfirmed: true,
   supersededByPortalId: null,
   lastVerifiedAt: '2026-07-26T00:00:00.000Z',
 };
@@ -40,6 +41,8 @@ const job = {
   title: '产品经理',
   locations: ['上海', '北京'],
   status: 'ACTIVE',
+  qualityGrade: 'A',
+  publicationStatus: 'PUBLISHED',
 };
 
 test('student rows group jobs by event and use the event directory URL', () => {
@@ -64,13 +67,13 @@ test('student rows group jobs by event and use the event directory URL', () => {
   assert.equal(rows[0].截止时间, '');
 });
 
-test('student rows hide a platform event superseded by an official portal', () => {
+test('student rows always hide platform records, including unsuperseded candidates', () => {
   const platformPortal = {
     ...portal,
     id: 'portal-platform',
     sourceTier: 'PLATFORM_ONLY',
     verificationStatus: 'REVIEW',
-    supersededByPortalId: 'portal-1',
+    supersededByPortalId: null,
   };
   const platformEvent = {
     ...event,
@@ -93,7 +96,7 @@ test('student rows hide a platform event superseded by an official portal', () =
   assert.deepEqual(rows.map((row) => row.来源等级), ['OFFICIAL_SITE']);
 });
 
-test('student rows retain events with blank unknown fields', () => {
+test('student rows exclude events without an A-grade published opening', () => {
   const rows = buildStudentApplicationRows({
     companies: [{ ...company, industryTags: [] }],
     portals: [portal],
@@ -101,10 +104,48 @@ test('student rows retain events with blank unknown fields', () => {
     jobs: [],
   });
 
+  assert.equal(rows.length, 0);
+});
+
+test('student rows exclude B-grade official openings pending review', () => {
+  const rows = buildStudentApplicationRows({
+    companies: [company],
+    portals: [portal],
+    events: [event],
+    jobs: [{ ...job, qualityGrade: 'B', publicationStatus: 'REVIEW_REQUIRED' }],
+  });
+
+  assert.equal(rows.length, 0);
+});
+
+test('student rows can publish a verified official WeChat recruitment event', () => {
+  const socialPortal = {
+    ...portal,
+    id: 'portal-wechat',
+    sourceTier: 'OFFICIAL_SOCIAL',
+    channelType: 'WECHAT_OFFICIAL_ACCOUNT',
+  };
+  const socialEvent = {
+    ...event,
+    id: 'event-wechat',
+    careerPortalId: socialPortal.id,
+    sourceTier: 'OFFICIAL_SOCIAL',
+    directoryUrl: 'https://mp.weixin.qq.com/s/example',
+  };
+  const rows = buildStudentApplicationRows({
+    companies: [company],
+    portals: [socialPortal],
+    events: [socialEvent],
+    jobs: [{
+      ...job,
+      id: 'job-wechat',
+      careerPortalId: socialPortal.id,
+      recruitmentEventId: socialEvent.id,
+      sourceTier: 'OFFICIAL_SOCIAL',
+    }],
+  });
+
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].开始时间, '');
-  assert.equal(rows[0].截止时间, '');
-  assert.equal(rows[0].地区, '');
-  assert.equal(rows[0].开放岗位, '');
-  assert.equal(rows[0].公司类型, '');
+  assert.equal(rows[0].来源等级, 'OFFICIAL_SOCIAL');
+  assert.equal(rows[0].投递链接, socialEvent.directoryUrl);
 });

@@ -76,6 +76,65 @@ test('official domain and recruitment structure verify at the 50-point threshold
   assert.equal(result.confidenceScore, 50);
   assert.equal(result.verificationStatus, 'VERIFIED');
   assert.equal(result.identityAnchor, true);
+  assert.equal(result.recruitmentAnchor, true);
+});
+
+test('company homepage identity cannot satisfy the recruitment portal gate', () => {
+  const result = verifyCareerPortal({
+    pageType: 'CORPORATE_HOME',
+    evidence: [
+      { code: 'official_domain_match' },
+      { code: 'recruitment_structure' },
+    ],
+  });
+
+  assert.equal(result.confidenceScore, 50);
+  assert.equal(result.identityAnchor, true);
+  assert.equal(result.recruitmentAnchor, true);
+  assert.notEqual(result.verificationStatus, 'VERIFIED');
+});
+
+test('weak career-home label without a recruitment anchor is not verified', () => {
+  const result = verifyCareerPortal({
+    pageType: 'CAREER_HOME',
+    evidence: [
+      { code: 'official_domain_match' },
+    ],
+  });
+
+  assert.equal(result.identityAnchor, true);
+  assert.equal(result.recruitmentAnchor, false);
+  assert.notEqual(result.verificationStatus, 'VERIFIED');
+});
+
+test('explicit career route and company identity pass both verification gates', () => {
+  const result = verifyCareerPortal({
+    pageType: 'CAREER_HOME',
+    evidence: [
+      { code: 'official_domain_match' },
+      { code: 'career_page_identity' },
+    ],
+  });
+
+  assert.equal(result.confidenceScore, 50);
+  assert.equal(result.identityAnchor, true);
+  assert.equal(result.recruitmentAnchor, true);
+  assert.equal(result.verificationStatus, 'VERIFIED');
+});
+
+test('verified WeChat subject plus official recruitment announcement can verify a social channel', () => {
+  const result = verifyCareerPortal({
+    pageType: 'CAMPAIGN',
+    evidence: [
+      { code: 'wechat_verified_subject_match' },
+      { code: 'official_recruitment_announcement' },
+    ],
+  });
+
+  assert.equal(result.confidenceScore, 55);
+  assert.equal(result.identityAnchor, true);
+  assert.equal(result.recruitmentAnchor, true);
+  assert.equal(result.verificationStatus, 'VERIFIED');
 });
 
 test('official-site-confirmed ATS tenant is an independent identity anchor', () => {
@@ -92,6 +151,19 @@ test('official-site-confirmed ATS tenant is an independent identity anchor', () 
   assert.equal(result.verificationStatus, 'VERIFIED');
   assert.equal(result.identityAnchor, true);
   assert.equal(result.confidenceScore, 80);
+});
+
+test('reviewed ATS ownership plus recruitment structure reaches verification threshold', () => {
+  const result = verifyCareerPortal({
+    pageType: 'JOB_LIST',
+    evidence: [
+      { code: 'reviewed_ats_tenant_ownership' },
+      { code: 'recruitment_structure' },
+    ],
+  });
+
+  assert.equal(result.confidenceScore, 50);
+  assert.equal(result.verificationStatus, 'VERIFIED');
 });
 
 test('LLM advisory has no scoring or identity authority', () => {

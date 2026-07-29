@@ -60,8 +60,27 @@ test('allows only trusted first-party or official-attributed ATS domains', () =>
   });
 
   assert.deepEqual(entries.map((entry) => entry.url), [
-    'https://campus.example.com/jobs',
     'https://example.mokahr.com/social',
+    'https://campus.example.com/jobs',
+  ]);
+});
+
+test('skips authentication, employer publishing, and editorial content links', () => {
+  const entries = discoverRecruitmentEntries({
+    baseUrl: 'https://www.example.com/',
+    trustedRegistrableDomains: ['example.com'],
+    links: [
+      { text: '招聘职位登录', href: 'https://passport.example.com/login?path=/jobs' },
+      { text: '发布招聘职位', href: 'https://fabu.example.com/zhaopin/new' },
+      { text: '产品经理招聘趋势', href: 'https://www.example.com/article/123' },
+      { text: 'AI 产品经理', href: 'https://career.example.com/position/42/detail' },
+      { text: '管理简历', href: 'https://career.example.com/resume.html' },
+      { text: '加入我们', href: 'https://career.example.com/careers' },
+    ],
+  });
+
+  assert.deepEqual(entries.map((entry) => entry.url), [
+    'https://career.example.com/careers',
   ]);
 });
 
@@ -77,6 +96,36 @@ test('verified official page may enqueue a known ATS tenant link', () => {
   assert.equal(entry.discoveryReason, 'verified_official_outbound_ats_link');
   assert.equal(entry.parentOfficialVerified, true);
   assert.equal(entry.officialAttributionUrl, 'https://example.com/careers');
+});
+
+test('official careers page may enqueue a first-party apply-jobs link and preserve filters', () => {
+  const [entry] = discoverRecruitmentEntries({
+    baseUrl: 'https://www.bosch.com.cn/careers/',
+    links: [{
+      text: '申请岗位',
+      href: 'https://jobs.bosch.com/en/?country=cn',
+    }],
+    trustedRegistrableDomains: ['bosch.com', 'bosch.com.cn'],
+    parentOfficialVerified: true,
+  });
+
+  assert.equal(entry.url, 'https://jobs.bosch.com/en?country=cn');
+  assert.equal(entry.recruitmentType, 'general');
+  assert.equal(entry.discoveryReason, 'career_navigation_link');
+});
+
+test('ATS login page may return to a trusted recruitment homepage', () => {
+  const [entry] = discoverRecruitmentEntries({
+    baseUrl: 'https://ainnovation.zhiye.com/Portal/Account/Login',
+    links: [{
+      text: '回到招聘首页',
+      href: 'https://ainnovation.zhiye.com/Campus',
+    }],
+    trustedRegistrableDomains: ['zhiye.com'],
+  });
+
+  assert.equal(entry.url, 'https://ainnovation.zhiye.com/Campus');
+  assert.equal(entry.recruitmentType, 'general');
 });
 
 test('unverified page cannot authorize a cross-domain ATS link', () => {
@@ -136,4 +185,20 @@ test('preserves parent and depth evidence for child entries', () => {
     discoveryReason: 'career_navigation_link',
   });
   assert.ok(Object.isFrozen(entry));
+});
+
+test('prioritizes job directories before culture pages when the budget is small', () => {
+  const entries = discoverRecruitmentEntries({
+    baseUrl: 'https://jobs.example.com/',
+    trustedRegistrableDomains: ['example.com'],
+    links: [
+      { text: '企业文化', href: '/careers/culture' },
+      { text: '员工福利', href: '/careers/benefits' },
+      { text: '查看全部职位', href: '/careers/open-positions?department=product&utm_source=home' },
+    ],
+    maxEntries: 1,
+  });
+  assert.deepEqual(entries.map((entry) => entry.url), [
+    'https://jobs.example.com/careers/open-positions',
+  ]);
 });

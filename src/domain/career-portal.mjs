@@ -25,6 +25,11 @@ export const HIRING_AVAILABILITIES = Object.freeze([
   'UNKNOWN',
 ]);
 export const SEARCH_COVERAGES = Object.freeze(['COMPLETE', 'PARTIAL']);
+export const CHANNEL_TYPES = Object.freeze([
+  'WEB_PORTAL',
+  'ATS',
+  'WECHAT_OFFICIAL_ACCOUNT',
+]);
 export const FALLBACK_REASONS = Object.freeze([
   'NO_OFFICIAL_FOUND',
   'OFFICIAL_INACCESSIBLE',
@@ -66,8 +71,22 @@ export function createCareerPortal(input = {}, {
   const fallbackReason = input.fallbackReason == null
     ? null
     : String(input.fallbackReason).toUpperCase();
+  const channelType = String(input.channelType || (
+    sourceTier === 'OFFICIAL_SOCIAL'
+      ? 'WECHAT_OFFICIAL_ACCOUNT'
+      : atsType
+        ? 'ATS'
+        : 'WEB_PORTAL'
+  )).toUpperCase();
 
   if (!SOURCE_TIERS.includes(sourceTier)) throw new Error('unsupported sourceTier');
+  if (!CHANNEL_TYPES.includes(channelType)) throw new Error('unsupported channelType');
+  if (sourceTier === 'OFFICIAL_SOCIAL' && channelType !== 'WECHAT_OFFICIAL_ACCOUNT') {
+    throw new Error('OFFICIAL_SOCIAL source requires WECHAT_OFFICIAL_ACCOUNT channelType');
+  }
+  if (channelType === 'WECHAT_OFFICIAL_ACCOUNT' && sourceTier !== 'OFFICIAL_SOCIAL') {
+    throw new Error('WECHAT_OFFICIAL_ACCOUNT channel requires OFFICIAL_SOCIAL sourceTier');
+  }
   if (!HIRING_AVAILABILITIES.includes(hiringAvailability)) {
     throw new Error('unsupported hiringAvailability');
   }
@@ -103,6 +122,10 @@ export function createCareerPortal(input = {}, {
     verificationStatus: input.verificationStatus,
     confidenceScore,
     sourceTier,
+    channelType,
+    officialAccountName: String(input.officialAccountName || '').trim() || null,
+    officialAccountId: String(input.officialAccountId || '').trim() || null,
+    verifiedSubject: String(input.verifiedSubject || '').trim() || null,
     officialIdentityConfirmed,
     platformIdentityConfirmed,
     hiringAvailability,

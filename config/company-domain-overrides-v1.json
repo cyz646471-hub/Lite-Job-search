@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "reviewedAt": "2026-07-27",
+  "records": [
+    {
+      "company": "阿迪达斯",
+      "aliases": ["adidas", "Adidas AG"],
+      "officialDomains": ["adidas-group.com", "adidas.com.cn"],
+      "evidence": "2026-07-27 visible-browser canary resolved official careers to jobs.adidas-group.com"
+    },
+    {
+      "company": "阿里健康",
+      "aliases": ["Alibaba Health"],
+      "officialDomains": ["alihealth.cn", "alibabaforyou.com"],
+      "evidence": "2026-07-27 rendered page identified 阿里健康招聘官网 at careers.alihealth.cn"
+    },
+    {
+      "company": "阿里云国际",
+      "aliases": ["Alibaba Cloud International", "Alibaba Cloud"],
+      "officialDomains": ["aliyun.com", "alibabacloud.com"],
+      "evidence": "2026-07-27 visible-browser canary resolved official careers to careers.aliyun.com"
+    },
+    {
+      "company": "霸王茶姬",
+      "aliases": ["CHAGEE"],
+      "replace": true,
+      "officialDomains": ["chagee.com"],
+      "evidence": "2026-07-27 visible-browser canary resolved official careers to jobs.chagee.com; replaces erroneous chatee.com"
+    },
+    {
+      "company": "百度地图",
+      "aliases": ["Baidu Maps"],
+      "officialDomains": ["baidu.com", "map.baidu.com"],
+      "evidence": "Product hiring belongs to Baidu unified recruitment identity; map.baidu.com remains product-domain evidence"
+    },
+    {
+      "company": "360 数科",
+      "aliases": ["360数科", "360 Shuoke", "360 金融", "奇富科技", "Qifu Technology"],
+      "replace": true,
+      "officialDomains": ["qifu.tech", "360shuke.com"],
+      "rejectedOfficialDomains": ["360shuoke.com"],
+      "evidence": "2026-07-28 official 360shuke.com states the brand became Qifu Technology and links to qifu.tech; replaces erroneous 360shuoke.com"
+    },
+    {
+      "company": "博世",
+      "aliases": ["Bosch", "Robert Bosch"],
+      "officialDomains": ["bosch.com", "bosch.com.cn"],
+      "careerPortals": [
+        "https://www.bosch.com.cn/careers/",
+        "https://jobs.bosch.com/en/?country=cn"
+      ],
+      "evidence": "2026-07-29 reviewed official China careers page at bosch.com.cn/careers links to the China-filtered job list at jobs.bosch.com/en/?country=cn"
+    },
+    {
+      "company": "华帝",
+      "aliases": ["Vatti", "华帝股份"],
+      "officialDomains": ["vatti.com.cn"],
+      "careerPortals": ["https://vatti.com.cn/join_info"],
+      "evidence": "2026-07-29 reviewed first-party recruitment page exposes campus and social job-list navigation"
+    },
+    {
+      "company": "华盛证券",
+      "aliases": ["Huasheng Securities", "华盛通"],
+      "officialDomains": ["hstong.com"],
+      "careerPortals": ["https://www.hstong.com/hk/about/recruit"],
+      "evidence": "2026-07-29 reviewed first-party Join Huasheng page; user review records doctoral and social recruitment but no active campus hiring, so a static campus tab must not be treated as an active campus event"
+    },
+    {
+      "company": "上海农商银行",
+      "aliases": ["沪农商行", "Shanghai Rural Commercial Bank", "SHRCB"],
+      "officialDomains": ["shrcb.com"],
+      "careerPortals": [
+        "https://www.shrcb.com/shrcb/xxgk/gsjs/ygzp/index.html",
+        "https://shrcb.zhiye.com/campus"
+      ],
+      "evidence": "2026-07-29 reviewed first-party employee recruitment page and official 2026 spring campus recruitment PDF naming shrcb.zhiye.com as the recruitment site; user review confirms the portal is correct but campus recruitment is not currently open"
+    }
+  ]
+}

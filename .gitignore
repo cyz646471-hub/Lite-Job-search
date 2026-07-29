@@ -9,6 +9,7 @@ test-output/
 output/
 outputs/
 logs/
+patches/
 *.log
 *.tmp
 *.xlsx

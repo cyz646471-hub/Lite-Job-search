@@ -1,7 +1,7 @@
 export const CIRCUIT_STATES = Object.freeze([
   'CLOSED',
   'OPEN',
-  'PROBE_REQUIRED',
+  'HALF_OPEN',
 ]);
 
 function requireProvider(provider) {
@@ -15,9 +15,19 @@ export function createClosedCircuit(provider, now = new Date().toISOString()) {
     provider: requireProvider(provider),
     state: 'CLOSED',
     reasonCode: null,
+    openedReason: null,
     openedAt: null,
+    openUntil: null,
     nextProbeAt: null,
     lastHealthyAt: null,
+    manualActionRequired: false,
+    manualAcknowledgedAt: null,
+    probeOwnerId: null,
+    probeLeaseUntil: null,
+    lastProbeAt: null,
+    lastSuccessAt: null,
+    consecutiveFailures: 0,
+    version: 0,
     updatedAt: now,
   });
 }
@@ -31,16 +41,38 @@ export function transitionCircuit(current, event = {}, now = new Date().toISOStr
       provider: current.provider,
       state: 'OPEN',
       reasonCode: event.reasonCode || 'provider_blocked',
+      openedReason: event.reasonCode || 'provider_blocked',
       openedAt: current.openedAt || now,
+      openUntil: event.openUntil || null,
       nextProbeAt: event.nextProbeAt || null,
       lastHealthyAt: current.lastHealthyAt || null,
+      manualActionRequired: true,
+      manualAcknowledgedAt: null,
+      probeOwnerId: null,
+      probeLeaseUntil: null,
+      lastProbeAt: current.lastProbeAt || null,
+      lastSuccessAt: current.lastSuccessAt || current.lastHealthyAt || null,
+      consecutiveFailures: (Number(current.consecutiveFailures) || 0) + 1,
+      version: (Number(current.version) || 0) + 1,
       updatedAt: now,
     });
   }
-  if (event.type === 'MANUAL_RESUME_REQUESTED') {
+  if (event.type === 'MANUAL_ACKNOWLEDGED') {
     return Object.freeze({
       ...current,
-      state: 'PROBE_REQUIRED',
+      manualAcknowledgedAt: now,
+      version: (Number(current.version) || 0) + 1,
+      updatedAt: now,
+    });
+  }
+  if (event.type === 'PROBE_LEASE_ACQUIRED') {
+    return Object.freeze({
+      ...current,
+      state: 'HALF_OPEN',
+      probeOwnerId: event.ownerId,
+      probeLeaseUntil: event.leaseUntil,
+      lastProbeAt: now,
+      version: (Number(current.version) || 0) + 1,
       updatedAt: now,
     });
   }
@@ -49,9 +81,18 @@ export function transitionCircuit(current, event = {}, now = new Date().toISOStr
       ...current,
       state: 'CLOSED',
       reasonCode: null,
+      openedReason: null,
       openedAt: null,
+      openUntil: null,
       nextProbeAt: null,
       lastHealthyAt: now,
+      lastSuccessAt: now,
+      manualActionRequired: false,
+      manualAcknowledgedAt: null,
+      probeOwnerId: null,
+      probeLeaseUntil: null,
+      consecutiveFailures: 0,
+      version: (Number(current.version) || 0) + 1,
       updatedAt: now,
     });
   }
@@ -59,13 +100,13 @@ export function transitionCircuit(current, event = {}, now = new Date().toISOStr
 }
 
 export function createAdaptiveSearchIntervalGate({
-  minimumIntervalMs = 10_000,
+  minimumIntervalMs = 4_000,
   jitterMs = 20_000,
   random = Math.random,
   nowMs = () => Date.now(),
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
-  const minimum = Math.max(10_000, Number(minimumIntervalMs) || 10_000);
+  const minimum = Math.max(4_000, Number(minimumIntervalMs) || 4_000);
   const jitter = Math.max(0, Number(jitterMs) || 0);
   let lastSearchStartedAt = null;
   return async function waitForSearchSlot() {
@@ -83,25 +124,47 @@ export function createAdaptiveSearchIntervalGate({
 export async function resumeProviderCircuit({
   provider,
   healthProbe,
+  ownerId,
+  leaseMs = 60_000,
 } = {}, {
   repository,
   now = () => new Date().toISOString(),
 } = {}) {
   if (!repository
     || typeof repository.getProviderCircuitState !== 'function'
-    || typeof repository.saveProviderCircuitState !== 'function') {
+    || typeof repository.acquireProviderProbeLease !== 'function'
+    || typeof repository.completeProviderProbe !== 'function') {
     throw new Error('circuit repository is required');
   }
   if (typeof healthProbe !== 'function') {
     throw new Error('healthProbe is required');
   }
   const normalizedProvider = requireProvider(provider);
-  const current = repository.getProviderCircuitState(normalizedProvider)
-    || createClosedCircuit(normalizedProvider, now());
-  const probeRequired = transitionCircuit(current, {
-    type: 'MANUAL_RESUME_REQUESTED',
-  }, now());
-  repository.saveProviderCircuitState(probeRequired);
+  const probeOwnerId = String(ownerId || '').trim();
+  if (!probeOwnerId) throw new Error('ownerId is required');
+  const current = repository.getProviderCircuitState(normalizedProvider);
+  if (!current || current.state !== 'OPEN' || !current.manualAcknowledgedAt) {
+    const error = new Error('manual acknowledgement is required before a health probe');
+    error.code = 'MANUAL_ACK_REQUIRED';
+    throw error;
+  }
+  const acknowledgedAt = now();
+  const leaseUntil = new Date(
+    Date.parse(acknowledgedAt) + Math.max(1_000, Number(leaseMs) || 60_000),
+  ).toISOString();
+  const lease = repository.acquireProviderProbeLease({
+    provider: normalizedProvider,
+    ownerId: probeOwnerId,
+    acquiredAt: acknowledgedAt,
+    leaseUntil,
+  });
+  if (!lease) {
+    return Object.freeze({
+      provider: normalizedProvider,
+      state: 'HALF_OPEN',
+      status: 'PROBE_ALREADY_OWNED',
+    });
+  }
 
   let probe;
   try {
@@ -112,11 +175,11 @@ export async function resumeProviderCircuit({
       reasonCode: String(error?.message || error || 'health_probe_failed').slice(0, 120),
     };
   }
-  const next = probe?.healthy === true
-    ? transitionCircuit(probeRequired, { type: 'HEALTHY_PROBE' }, now())
-    : transitionCircuit(probeRequired, {
-      type: 'BLOCKED',
-      reasonCode: probe?.reasonCode || 'health_probe_failed',
-    }, now());
-  return repository.saveProviderCircuitState(next);
+  return repository.completeProviderProbe({
+    provider: normalizedProvider,
+    ownerId: probeOwnerId,
+    healthy: probe?.healthy === true,
+    reasonCode: probe?.reasonCode || 'health_probe_failed',
+    completedAt: now(),
+  });
 }

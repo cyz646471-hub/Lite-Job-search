@@ -5,9 +5,11 @@ const FINGERPRINTS = Object.freeze([
   { name: 'Ashby', domains: ['ashbyhq.com'], html: ['ashby'], api: ['/api/non-user-graphql'] },
   { name: 'SAP SuccessFactors', domains: ['successfactors.com'], html: ['successfactors'], api: ['/careers?company='] },
   { name: 'MOKA', domains: ['mokahr.com', 'mokahr.cn'], html: ['mokahr'], api: ['/api/'] },
-  { name: 'Beisen', domains: ['beisen.com', 'beisencloud.com'], html: ['beisen'], api: ['/api/'] },
+  { name: 'Beisen', domains: ['beisen.com', 'beisencloud.com', 'italent.cn'], html: ['beisen', 'italent'], api: ['/api/'] },
   { name: 'HOTJOB', domains: ['hotjob.cn'], html: ['hotjob'], api: ['/api/'] },
   { name: 'Zhiye', domains: ['zhiye.com'], html: ['zhiye'], api: ['/api/'] },
+  { name: 'Feishu Recruitment', domains: ['jobs.feishu.cn', 'jobs.bytedance.com'], html: ['feishu', 'bytedance'], api: ['/api/'] },
+  { name: 'Moseeker', domains: ['moseeker.com', 'moseeker.cn'], html: ['moseeker'], api: ['/api/'] },
 ]);
 export function detectAtsFingerprint({ url = '', html = '', cookies = [], requests = [] } = {}) {
   const host = (() => { try { return new URL(url).hostname.toLowerCase(); } catch { return ''; } })();

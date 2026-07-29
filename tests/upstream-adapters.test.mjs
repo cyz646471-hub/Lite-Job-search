@@ -5,6 +5,8 @@ import { detectAtsFingerprint } from '../engine/upstream/planner/cn-ats-fingerpr
 import { toLegacyJobResult } from '../src/adapters/legacy/job-result-adapter.mjs';
 import { createUpstreamJobExtractionAdapter } from '../src/adapters/upstream/job-extraction-adapter.mjs';
 import { createOfficialVerificationAdapter } from '../src/adapters/upstream/official-verification-adapter.mjs';
+import { applyVerificationPolicy } from '../src/verification/verification-policy.mjs';
+import { resolveAtsTenantOwnership } from '../src/verification/ats-tenant-ownership.mjs';
 
 const NOW = '2026-07-24T00:00:00.000Z';
 
@@ -21,6 +23,21 @@ test('CN ATS fingerprint registry recognizes supported tenant domains', () => {
   assert.equal(detectAtsFingerprint({
     url: 'https://example.zhiye.com/social',
   }).ats, 'Zhiye');
+});
+
+test('reviewed registry attributes Shanghai Rural Commercial Bank Zhiye tenant', () => {
+  const result = resolveAtsTenantOwnership({
+    company: {
+      canonicalName: '上海农商银行',
+      aliases: ['沪农商行'],
+    },
+    url: 'https://shrcb.zhiye.com/campus',
+    atsType: 'Zhiye',
+  });
+
+  assert.equal(result.status, 'VERIFIED');
+  assert.equal(result.record.tenantKey, 'shrcb');
+  assert.equal(result.record.officialDomains[0], 'shrcb.com');
 });
 
 function createVerificationAdapter() {
@@ -76,6 +93,27 @@ test('known official domain becomes an independent anchor', async () => {
   assert.ok(!result.evidence.some((item) => item.code === 'candidate_self_domain'));
 });
 
+test('empty-domain first-party page returns a confirmed official domain with audit evidence', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '米哈游', aliases: [], officialDomains: [] },
+    candidate: { url: 'https://jobs.mihoyo.com/' },
+    page: {
+      status: 200,
+      finalUrl: 'https://jobs.mihoyo.com/',
+      title: '米哈游招聘',
+      html: '<main><h1>加入米哈游</h1><p>开放职位</p></main>',
+      parsed: { pageRole: 'CAREER_HOME' },
+    },
+  });
+
+  assert.equal(result.confirmedOfficialDomain, 'mihoyo.com');
+  assert.ok(result.evidence.some((item) => item.code === 'official_domain_match'));
+  assert.ok(result.evidence.some((item) => item.code === 'company_brand_match'));
+  assert.ok(result.evidence.some((item) => item.code === 'domain_bootstrap_confirmed'));
+  assert.ok(!result.evidence.some((item) => item.code === 'candidate_self_domain'));
+});
+
 test('ATS tenant requires directed attribution from a verified official page', async () => {
   const adapter = createVerificationAdapter();
   const result = await adapter.inspect({
@@ -95,6 +133,59 @@ test('ATS tenant requires directed attribution from a verified official page', a
 
   assert.ok(result.evidence.some((item) => item.code === 'verified_ats_tenant'));
   assert.ok(result.evidence.some((item) => item.code === 'official_site_confirms_ats_tenant'));
+});
+
+test('reviewed ATS tenant ownership is deterministic company evidence', async () => {
+  const adapter = createOfficialVerificationAdapter({
+    classifyPage: () => ({ pageRole: 'JOB_LIST', vacancyStatus: 'ACTIVE' }),
+    evaluateIdentity: () => ({ strongEvidence: [], riskSignals: [] }),
+  });
+  const result = await adapter.inspect({
+    company: {
+      canonicalName: '安谋科技（中国）',
+      aliases: ['Arm China'],
+      officialDomains: ['armchina.com'],
+    },
+    candidate: {
+      url: 'https://app.mokahr.com/apply/armchina/885#/jobs',
+    },
+    page: {
+      finalUrl: 'https://app.mokahr.com/apply/armchina/885#/jobs',
+      status: 200,
+      html: '<main>招聘职位</main>',
+    },
+  });
+
+  assert.ok(result.evidence.some(
+    (item) => item.code === 'reviewed_ats_tenant_ownership',
+  ));
+  assert.ok(result.evidence.some((item) => item.code === 'verified_ats_tenant'));
+});
+
+test('reviewed ATS tenant ownership does not cross company identities', async () => {
+  const adapter = createOfficialVerificationAdapter({
+    classifyPage: () => ({ pageRole: 'JOB_LIST', vacancyStatus: 'ACTIVE' }),
+    evaluateIdentity: () => ({ strongEvidence: [], riskSignals: [] }),
+  });
+  const result = await adapter.inspect({
+    company: {
+      canonicalName: '无关公司',
+      aliases: [],
+      officialDomains: ['unrelated.example'],
+    },
+    candidate: {
+      url: 'https://app.mokahr.com/apply/armchina/885#/jobs',
+    },
+    page: {
+      finalUrl: 'https://app.mokahr.com/apply/armchina/885#/jobs',
+      status: 200,
+      html: '<main>招聘职位</main>',
+    },
+  });
+
+  assert.ok(!result.evidence.some(
+    (item) => item.code === 'reviewed_ats_tenant_ownership',
+  ));
 });
 
 test('unverified parent cannot create official ATS attribution evidence', async () => {
@@ -133,6 +224,44 @@ test('candidate domain without prior company evidence does not self-verify', asy
   });
 
   assert.ok(result.evidence.some((item) => item.code === 'candidate_self_domain'));
+  assert.ok(!result.evidence.some((item) => item.code === 'official_domain_match'));
+  assert.equal(result.confirmedOfficialDomain, null);
+});
+
+test('official WeChat article uses verified subject evidence without bootstrapping the shared domain', async () => {
+  const adapter = createOfficialVerificationAdapter({
+    detectAts: () => ({ ats: '', confidence: 0 }),
+    classifyPage: () => ({
+      pageRole: 'CAMPAIGN',
+      vacancyStatus: 'ACTIVE',
+      links: [],
+    }),
+    evaluateIdentity: () => ({ strongEvidence: [], riskSignals: [] }),
+  });
+  const result = await adapter.inspect({
+    company: {
+      canonicalName: '示例科技',
+      aliases: [],
+      officialDomains: ['example.com'],
+    },
+    candidate: {
+      url: 'https://mp.weixin.qq.com/s/example',
+      verifiedSubject: '示例科技有限公司',
+      officialAccountName: '示例科技招聘',
+      officialAccountId: 'example-careers',
+    },
+    page: {
+      status: 200,
+      finalUrl: 'https://mp.weixin.qq.com/s/example',
+      html: '<h1>示例科技 2027 届校园招聘</h1>',
+    },
+  });
+
+  assert.equal(result.channelType, 'WECHAT_OFFICIAL_ACCOUNT');
+  assert.equal(result.confirmedOfficialDomain, null);
+  assert.equal(result.officialAccountId, 'example-careers');
+  assert.ok(result.evidence.some((item) => item.code === 'wechat_verified_subject_match'));
+  assert.ok(result.evidence.some((item) => item.code === 'official_recruitment_announcement'));
   assert.ok(!result.evidence.some((item) => item.code === 'official_domain_match'));
 });
 
@@ -192,6 +321,96 @@ test('employee development language on an official recruitment surface is not a 
   assert.ok(result.evidence.some((item) => item.code === 'recruitment_structure'));
 });
 
+test('news navigation on a first-party recruitment page is not a news reprint', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '极飞科技', officialDomains: ['xa.com'] },
+    candidate: { url: 'https://www.xa.com/about/career' },
+    page: {
+      status: 200,
+      finalUrl: 'https://www.xa.com/about/career',
+      title: '极飞科技招聘',
+      html: '<main><h1>加入我们</h1><p>开放职位</p></main><nav>公司新闻</nav>',
+      parsed: { pageRole: 'CAREER_HOME' },
+    },
+  });
+
+  assert.ok(!result.evidence.some((item) => item.code === 'news_reprint'));
+  assert.ok(result.evidence.some((item) => item.code === 'career_page_identity'));
+});
+
+test('country-filtered first-party jobs route is a job list', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '博世', officialDomains: ['bosch.com', 'bosch.com.cn'] },
+    candidate: { url: 'https://jobs.bosch.com/en/?country=cn' },
+    page: {
+      status: 200,
+      finalUrl: 'https://jobs.bosch.com/en/?country=cn',
+      title: 'Jobs worldwide | Bosch Global',
+      html: '<main><h1>Find jobs at Bosch</h1></main>',
+    },
+  });
+
+  assert.equal(result.pageType, 'JOB_LIST');
+  assert.ok(result.evidence.some((item) => item.code === 'recruitment_structure'));
+  assert.equal(applyVerificationPolicy(result).verificationStatus, 'VERIFIED');
+});
+
+test('nested first-party recruit route is a career home', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '华盛证券', officialDomains: ['hstong.com'] },
+    candidate: { url: 'https://www.hstong.com/hk/about/recruit' },
+    page: {
+      status: 200,
+      finalUrl: 'https://www.hstong.com/hk/about/recruit',
+      title: '华盛通-招聘',
+      html: '<main><h1>加入华盛</h1><h2>社会招聘</h2></main>',
+    },
+  });
+
+  assert.equal(result.pageType, 'CAREER_HOME');
+  assert.equal(applyVerificationPolicy(result).verificationStatus, 'VERIFIED');
+});
+
+test('employee courses on a first-party career page are not a training provider', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '完美世界', officialDomains: ['wanmei.com'] },
+    candidate: { url: 'https://jobs.games.wanmei.com/school.html' },
+    page: {
+      status: 200,
+      finalUrl: 'https://jobs.games.wanmei.com/school.html',
+      title: '完美世界校园招聘',
+      html: '<main><h1>校园招聘</h1><p>员工课程与人才发展</p></main>',
+      parsed: { pageRole: 'CAMPAIGN' },
+    },
+  });
+
+  assert.ok(!result.evidence.some((item) => item.code === 'training_provider'));
+  assert.ok(result.evidence.some((item) => item.code === 'recruitment_structure'));
+});
+
+test('article-shaped recruitment repost remains a news reprint', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '示例科技', officialDomains: [] },
+    candidate: { url: 'https://media.example/news/2026-campus-recruitment' },
+    page: {
+      status: 200,
+      finalUrl: 'https://media.example/news/2026-campus-recruitment',
+      title: '示例科技招聘新闻转载',
+      html: '<main><h1>示例科技招聘新闻转载</h1><p>招聘职位</p></main>',
+      parsed: { pageRole: 'CAMPAIGN' },
+    },
+  });
+
+  assert.ok(result.evidence.some((item) => item.code === 'news_reprint'));
+  assert.equal(result.confirmedOfficialDomain, null);
+  assert.ok(!result.evidence.some((item) => item.code === 'domain_bootstrap_confirmed'));
+});
+
 test('commercial career coaching remains a training-provider rejection', async () => {
   const adapter = createVerificationAdapter();
   const result = await adapter.inspect({
@@ -205,6 +424,8 @@ test('commercial career coaching remains a training-provider rejection', async (
   });
 
   assert.ok(result.evidence.some((item) => item.code === 'training_provider'));
+  assert.equal(result.confirmedOfficialDomain, null);
+  assert.ok(!result.evidence.some((item) => item.code === 'domain_bootstrap_confirmed'));
 });
 
 test('blocked page produces a non-bypass evidence code', async () => {
@@ -220,6 +441,149 @@ test('blocked page produces a non-bypass evidence code', async () => {
   });
 
   assert.ok(result.evidence.some((item) => item.code === 'blocked_page'));
+});
+
+test('banking application routes are rejected even when the page is blocked', async () => {
+  const adapter = createVerificationAdapter();
+  for (const url of [
+    'https://ibank.bosc.cn:6074/eib/?#/onlineApply/sign/search',
+    'https://ebanks.bankofshanghai.com/pweb/LogoutCreditApplyProQryPre.do?_locale=zh_CN',
+  ]) {
+    const result = await adapter.inspect({
+      company: {
+        canonicalName: '上海银行',
+        officialDomains: ['bosc.cn', 'bankofshanghai.com'],
+      },
+      candidate: { url },
+      page: {
+        status: 403,
+        finalUrl: url.split('#')[0],
+        html: 'Access denied',
+      },
+    });
+
+    assert.ok(result.evidence.some((item) => item.code === 'banking_business_application'));
+    const decision = applyVerificationPolicy(result);
+    assert.equal(decision.verificationStatus, 'REJECTED');
+    assert.deepEqual(decision.hardRejectReasons, ['banking_business_application']);
+  }
+});
+
+test('publisher article paths cannot become employer recruitment portals', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '36氪', officialDomains: ['36kr.com'] },
+    candidate: { url: 'https://36kr.com/p/123456' },
+    page: {
+      status: 200,
+      finalUrl: 'https://36kr.com/p/123456',
+      title: '某公司招聘报道',
+      html: '<h1>某公司招聘报道</h1><p>岗位职责与任职要求</p>',
+      parsed: { pageRole: 'JOB_DETAIL' },
+    },
+  });
+
+  assert.equal(result.pageType, 'UNKNOWN');
+  assert.ok(result.evidence.some((item) => item.code === 'content_article_page'));
+  assert.ok(!result.evidence.some((item) => item.code === 'recruitment_structure'));
+});
+
+test('corporate root is identity evidence but not a recruitment portal', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: { canonicalName: '51CTO', officialDomains: ['51cto.com'] },
+    candidate: { url: 'https://51cto.com/' },
+    page: {
+      status: 200,
+      finalUrl: 'https://51cto.com/',
+      title: '51CTO',
+      html: '<h1>51CTO</h1><nav>招聘频道</nav>',
+    },
+  });
+
+  assert.equal(result.pageType, 'CORPORATE_HOME');
+  assert.ok(result.evidence.some((item) => item.code === 'corporate_home_only'));
+  assert.ok(!result.evidence.some((item) => item.code === 'recruitment_structure'));
+});
+
+test('error and access-challenge URLs are rejected as portal candidates', async () => {
+  const adapter = createVerificationAdapter();
+  const error = await adapter.inspect({
+    company: { canonicalName: '58同城', officialDomains: ['58.com'] },
+    candidate: { url: 'https://404.58.com/404.html?from=58.com/careers' },
+    page: {
+      status: 200,
+      finalUrl: 'https://404.58.com/404.html?from=58.com/careers',
+      html: '<h1>招聘</h1>',
+    },
+  });
+  const challenge = await adapter.inspect({
+    company: { canonicalName: '58同城', officialDomains: ['58.com'] },
+    candidate: { url: 'https://callback.58.com/antibot/verifycode?code=300' },
+    page: {
+      status: 200,
+      finalUrl: 'https://callback.58.com/antibot/verifycode?code=300',
+      html: '<h1>安全验证</h1>',
+    },
+  });
+
+  assert.ok(error.evidence.some((item) => item.code === 'error_page_url'));
+  assert.ok(challenge.evidence.some((item) => item.code === 'access_challenge_url'));
+});
+
+test('reviewed ATS tenant plus deterministic ATS route supplies recruitment evidence', async () => {
+  const adapter = createVerificationAdapter();
+  const result = await adapter.inspect({
+    company: {
+      canonicalName: '360 数科',
+      aliases: ['360数科', '360金融'],
+      officialDomains: ['360shuke.com'],
+    },
+    candidate: { url: 'https://app.mokahr.com/apply/360jinrong' },
+    page: {
+      status: 200,
+      finalUrl: 'https://app.mokahr.com/apply/360jinrong',
+      html: '<div id="app"></div>',
+    },
+  });
+
+  assert.equal(result.pageType, 'CAREER_HOME');
+  assert.ok(result.evidence.some((item) => item.code === 'reviewed_ats_tenant_ownership'));
+  assert.ok(result.evidence.some((item) => item.code === 'ats_recruitment_route'));
+});
+
+test('reviewed AInnovation Zhiye tenant verifies the public Campus portal', async () => {
+  const adapter = createOfficialVerificationAdapter({
+    classifyPage: () => ({
+      pageRole: 'CAMPAIGN',
+      vacancyStatus: 'ACTIVE',
+      links: [],
+    }),
+    evaluateIdentity: () => ({
+      strongEvidence: [],
+      mediumEvidence: ['job_content_match'],
+      riskSignals: [],
+    }),
+  });
+  const result = await adapter.inspect({
+    company: {
+      canonicalName: '创新奇智',
+      englishName: 'AInnovation',
+      aliases: ['创新奇智科技'],
+      officialDomains: ['ainnovation.com'],
+    },
+    candidate: { url: 'https://ainnovation.zhiye.com/Campus' },
+    page: {
+      status: 200,
+      finalUrl: 'https://ainnovation.zhiye.com/Campus',
+      title: '创新奇智（北京）科技有限公司招聘系统--校园招聘',
+      html: '<h1>职位搜索</h1><a href="https://www.ainnovation.com/">了解奇智</a>',
+    },
+  });
+
+  assert.ok(result.evidence.some((item) => item.code === 'reviewed_ats_tenant_ownership'));
+  assert.ok(result.evidence.some((item) => item.code === 'ats_recruitment_route'));
+  assert.equal(applyVerificationPolicy(result).verificationStatus, 'VERIFIED');
 });
 
 test('job extraction maps page provider jobs without inventing dates', async () => {

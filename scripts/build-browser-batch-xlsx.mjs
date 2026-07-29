@@ -88,6 +88,16 @@ export async function buildStudentApplicationWorkbook({
   };
   sheet.getRange('A1:M1').format.rowHeight = 28;
   sheet.getRange(`A2:M${lastRow}`).format.rowHeight = 48;
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    const longestCell = Math.max(
+      String(row.开放岗位 || '').length,
+      String(row.地区 || '').length,
+      String(row.公司简介 || '').length,
+    );
+    const rowHeight = Math.min(120, Math.max(48, Math.ceil(longestCell / 42) * 18));
+    sheet.getRange(`A${index + 2}:M${index + 2}`).format.rowHeight = rowHeight;
+  }
   const widths = [22, 18, 28, 16, 22, 10, 14, 14, 20, 42, 16, 12, 18];
   for (let column = 0; column < widths.length; column++) {
     sheet.getRangeByIndexes(0, column, lastRow, 1).format.columnWidth = widths[column];

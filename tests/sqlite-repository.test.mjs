@@ -144,7 +144,52 @@ test('repository persists an official recruitment event snapshot atomically', as
   assert.equal(repository.listCompanies().length, 1);
   assert.equal(repository.listCareerPortals()[0].sourceTier, 'OFFICIAL_SITE');
   assert.equal(repository.listRecruitmentEvents().length, 1);
-  assert.equal(repository.listJobOpenings()[0].recruitmentEventId, 'event-1');
+  const [opening] = repository.listJobOpenings();
+  assert.equal(opening.recruitmentEventId, 'event-1');
+  assert.equal(opening.qualityGrade, 'A');
+  assert.equal(opening.publicationStatus, 'PUBLISHED');
+});
+
+test('repository persists official WeChat recruitment channel metadata and formal records', async (t) => {
+  const repository = await createRepository('lite-job-social-');
+  t.after(() => repository.close());
+  repository.upsertCompany(createCompany());
+  const portal = createPortal({
+    id: 'portal-social',
+    canonicalUrl: 'https://mp.weixin.qq.com/s/example',
+    url: 'https://mp.weixin.qq.com/s/example',
+    registrableDomain: 'weixin.qq.com',
+    pageType: 'CAMPAIGN',
+    sourceTier: 'OFFICIAL_SOCIAL',
+    channelType: 'WECHAT_OFFICIAL_ACCOUNT',
+    officialIdentityConfirmed: true,
+    officialAccountName: '示例科技招聘',
+    officialAccountId: 'example-careers',
+    verifiedSubject: '示例科技有限公司',
+  });
+  repository.upsertCareerPortal(portal);
+  const event = createEvent({
+    id: 'event-social',
+    careerPortalId: portal.id,
+    sourceTier: 'OFFICIAL_SOCIAL',
+    directoryUrl: portal.canonicalUrl,
+  });
+  repository.upsertRecruitmentEvent(event);
+  repository.upsertJobOpening(createOpening({
+    id: 'job-social',
+    careerPortalId: portal.id,
+    recruitmentEventId: event.id,
+    sourceTier: 'OFFICIAL_SOCIAL',
+    sourceUrl: portal.canonicalUrl,
+    jobDetailUrl: portal.canonicalUrl,
+  }));
+
+  const stored = repository.listCareerPortals()[0];
+  assert.equal(stored.channelType, 'WECHAT_OFFICIAL_ACCOUNT');
+  assert.equal(stored.officialAccountId, 'example-careers');
+  assert.equal(stored.verifiedSubject, '示例科技有限公司');
+  assert.equal(repository.listRecruitmentEvents()[0].sourceTier, 'OFFICIAL_SOCIAL');
+  assert.equal(repository.listJobOpenings()[0].sourceTier, 'OFFICIAL_SOCIAL');
 });
 
 test('repository isolates platform-only events and openings', async (t) => {
@@ -185,7 +230,14 @@ test('repository isolates platform-only events and openings', async (t) => {
   }));
 
   assert.equal(repository.listRecruitmentEvents()[0].sourceTier, 'PLATFORM_ONLY');
-  assert.equal(repository.listJobOpenings()[0].sourceTier, 'PLATFORM_ONLY');
+  const [platformOpening] = repository.listJobOpenings();
+  assert.equal(platformOpening.sourceTier, 'PLATFORM_ONLY');
+  assert.equal(platformOpening.qualityGrade, 'C');
+  assert.equal(platformOpening.publicationStatus, 'REVIEW_REQUIRED');
+  assert.deepEqual(repository.listReviewTasks({
+    targetType: 'JOB_OPENING',
+    targetId: 'job-platform',
+  }).map((task) => task.reasonCodes), [['PLATFORM_ONLY_SOURCE']]);
   assert.throws(() => repository.upsertCareerPortal(createPortal({
     id: 'portal-platform-invalid',
     canonicalUrl: 'https://www.liepin.com/company-jobs/456/',
@@ -202,6 +254,109 @@ test('repository isolates platform-only events and openings', async (t) => {
     recruitmentEventId: 'event-platform',
     sourceTier: 'OFFICIAL_SITE',
   })), /PLATFORM_ONLY/);
+});
+
+test('repository persists job assignments and user actions with re-verification review', async (t) => {
+  const repository = await createRepository('lite-job-product-loop-');
+  t.after(() => repository.close());
+  repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal({
+      sourceTier: 'OFFICIAL_SITE',
+      officialIdentityConfirmed: true,
+      hiringAvailability: 'OPENINGS_FOUND',
+      searchCoverage: 'COMPLETE',
+      lastCheckedAt: NOW,
+    }),
+    evidence: [],
+    events: [createEvent()],
+    openings: [createOpening({
+      recruitmentEventId: 'event-1',
+      sourceTier: 'OFFICIAL_SITE',
+    })],
+  });
+
+  const assignment = repository.upsertJobAssignment({
+    id: 'assignment-1',
+    jobId: 'job-1',
+    assigneeType: 'STUDENT',
+    assigneeId: 'student-1',
+    assignedBy: 'planner-1',
+    note: '重点跟进',
+    assignedAt: NOW,
+    updatedAt: NOW,
+  });
+  assert.equal(assignment.assigneeId, 'student-1');
+  assert.equal(repository.listJobAssignments({ assigneeId: 'student-1' }).length, 1);
+
+  repository.appendUserAction({
+    id: 'action-1',
+    actorId: 'student-1',
+    studentId: 'student-1',
+    jobId: 'job-1',
+    actionType: 'REPORT_INVALID',
+    note: '链接已失效',
+    createdAt: NOW,
+  });
+  assert.equal(repository.listUserActions({ jobId: 'job-1' })[0].triggersReverification, true);
+  assert.deepEqual(repository.listReviewTasks({
+    targetType: 'JOB_OPENING',
+    targetId: 'job-1',
+  }).map((task) => task.reviewType), ['DATA_COMPLETENESS']);
+});
+
+test('publication re-evaluation closes review and student assignment requires A grade', async (t) => {
+  const repository = await createRepository('lite-job-publication-review-');
+  t.after(() => repository.close());
+  repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal({
+      sourceTier: 'OFFICIAL_SITE',
+      officialIdentityConfirmed: true,
+      hiringAvailability: 'OPENINGS_FOUND',
+      lastCheckedAt: NOW,
+    }),
+    events: [createEvent({ locations: [] })],
+    openings: [createOpening({
+      recruitmentEventId: 'event-1',
+      sourceTier: 'OFFICIAL_SITE',
+      locations: [],
+    })],
+  });
+  assert.equal(repository.listJobOpenings()[0].qualityGrade, 'B');
+  assert.throws(() => repository.upsertJobAssignment({
+    jobId: 'job-1',
+    assigneeType: 'STUDENT',
+    assigneeId: 'student-1',
+    assignedBy: 'planner-1',
+  }), /A-grade/);
+
+  repository.persistCompanySnapshot({
+    company: createCompany(),
+    portal: createPortal({
+      sourceTier: 'OFFICIAL_SITE',
+      officialIdentityConfirmed: true,
+      hiringAvailability: 'OPENINGS_FOUND',
+      lastCheckedAt: NOW,
+    }),
+    events: [createEvent({ locations: ['上海'] })],
+    openings: [createOpening({
+      recruitmentEventId: 'event-1',
+      sourceTier: 'OFFICIAL_SITE',
+      locations: ['上海'],
+    })],
+  });
+  assert.equal(repository.listJobOpenings()[0].qualityGrade, 'A');
+  assert.equal(repository.listReviewTasks({
+    targetType: 'JOB_OPENING',
+    targetId: 'job-1',
+  })[0].status, 'RESOLVED');
+  assert.doesNotThrow(() => repository.upsertJobAssignment({
+    jobId: 'job-1',
+    assigneeType: 'STUDENT',
+    assigneeId: 'student-1',
+    assignedBy: 'planner-1',
+  }));
 });
 
 test('company snapshot rolls back every row when an opening violates its event', async (t) => {
@@ -475,6 +630,31 @@ test('company knowledge base matches an incoming alias to an existing formal nam
   assert.equal(repository.listCompanies().length, 1);
 });
 
+test('reviewed rejected domains are hidden from the current company read model', async (t) => {
+  const repository = await createRepository();
+  t.after(() => repository.close());
+  const company = repository.upsertCompany(createCompany({
+    id: 'company-domain-correction',
+    canonicalName: 'Example Company',
+    primaryOfficialDomain: 'correct.example',
+    officialDomains: ['correct.example', 'typo.example'],
+    market: 'CN',
+  }));
+  repository.upsertCompanyWebKnowledge({
+    id: 'knowledge-rejected-domain',
+    companyId: company.id,
+    knowledgeType: 'REJECTED_DOMAIN',
+    value: 'typo.example',
+    verificationStatus: 'REJECTED',
+    evidenceSource: 'reviewed_correction',
+    firstSeenAt: NOW,
+    lastVerifiedAt: NOW,
+    rejectionReason: 'typographical_error',
+  });
+
+  assert.deepEqual(repository.listCompanies()[0].officialDomains, ['correct.example']);
+});
+
 test('career portal knowledge retains recruitment types and evidence', async (t) => {
   const repository = await createRepository();
   const company = createCompany();
@@ -584,6 +764,8 @@ test('repository persists batch checkpoints for resume', async (t) => {
     errorMessage: null,
     retryClass: null,
     deferredUntil: null,
+    queueType: 'LOCAL_OR_DIRECT_VERIFICATION',
+    deferReason: null,
     startedAt: NOW,
     completedAt: NOW,
     createdAt: NOW,
@@ -623,9 +805,19 @@ test('blocked batch item is deferred and provider circuit state round-trips', as
     provider: 'baidu-browser',
     state: 'OPEN',
     reasonCode: 'SEARCH_CHALLENGE',
+    openedReason: 'SEARCH_CHALLENGE',
     openedAt: NOW,
+    openUntil: null,
     nextProbeAt: '2026-07-26T01:00:00.000Z',
     lastHealthyAt: null,
+    manualActionRequired: false,
+    manualAcknowledgedAt: null,
+    probeOwnerId: null,
+    probeLeaseUntil: null,
+    lastProbeAt: null,
+    lastSuccessAt: null,
+    consecutiveFailures: 0,
+    version: 0,
     updatedAt: NOW,
   });
 
@@ -637,11 +829,30 @@ test('blocked batch item is deferred and provider circuit state round-trips', as
     provider: 'baidu-browser',
     state: 'OPEN',
     reasonCode: 'SEARCH_CHALLENGE',
+    openedReason: 'SEARCH_CHALLENGE',
     openedAt: NOW,
+    openUntil: null,
     nextProbeAt: '2026-07-26T01:00:00.000Z',
     lastHealthyAt: null,
+    manualActionRequired: false,
+    manualAcknowledgedAt: null,
+    probeOwnerId: null,
+    probeLeaseUntil: null,
+    lastProbeAt: null,
+    lastSuccessAt: null,
+    consecutiveFailures: 0,
+    version: 0,
     updatedAt: NOW,
   });
+  const requeued = repository.requeueDeferredBatchItems({
+    batchId: 'batch-deferred',
+  });
+  assert.equal(requeued.requeued, 1);
+  const [pending] = repository.listBatchItems('batch-deferred');
+  assert.equal(pending.status, 'PENDING');
+  assert.equal(pending.retryClass, null);
+  assert.equal(pending.deferReason, null);
+  assert.equal(pending.errorMessage, null);
 });
 
 test('batch id cannot be silently reused with different inputs', async (t) => {

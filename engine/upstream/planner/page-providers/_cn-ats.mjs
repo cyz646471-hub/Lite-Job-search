@@ -19,6 +19,15 @@ function extractUrls(html, baseUrl) {
   return [...new Set(values.map((value) => absolute(value, baseUrl)).filter((url) => /^https?:/i.test(url) && /job|position|recruit|career|hire|campus|apply|intern/i.test(url)))];
 }
 
+function decodeAttributeJson(value = '') {
+  return String(value)
+    .replace(/&quot;/gi, '"')
+    .replace(/&#34;/gi, '"')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}
+
 function parseStateBlocks(html) {
   const values = [];
   for (const match of html.matchAll(/<script[^>]*(?:id=["'](?:__NEXT_DATA__|__INITIAL_STATE__)["']|type=["']application\/json["'])[^>]*>([\s\S]*?)<\/script>/gi)) {
@@ -26,6 +35,13 @@ function parseStateBlocks(html) {
   }
   for (const match of html.matchAll(/window\.(?:__INITIAL_STATE__|__NEXT_DATA__)\s*=\s*(\{[\s\S]*?\});/gi)) {
     try { values.push(JSON.parse(match[1])); } catch { /* ignore */ }
+  }
+  for (const match of html.matchAll(/<input\b[^>]*>/gi)) {
+    const tag = match[0];
+    if (!/\bid=["']init-data["']/i.test(tag)) continue;
+    const encoded = tag.match(/\bvalue=(["'])([\s\S]*?)\1/i)?.[2];
+    if (!encoded) continue;
+    try { values.push(JSON.parse(decodeAttributeJson(encoded))); } catch { /* malformed state */ }
   }
   return values;
 }
@@ -56,18 +72,32 @@ function stateUrls(states, baseUrl) {
   return urls;
 }
 
-function stateJobs(states, baseUrl) {
+function stateJobs(states, baseUrl, vendor = '') {
   const jobs = [];
   for (const state of states) walk(state, (value, path) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return;
-    const title = value.title || value.jobName || value.positionName || value.name;
+    const jobSignals = value.status || value.commitment || value.openedAt
+      || value.publishedAt || value.closedAt || value.mjCode
+      || value.jobId || value.positionId || value.detailUrl || value.jobUrl;
+    const title = value.title || value.jobName || value.positionName
+      || (jobSignals ? value.name : '');
     const id = value.id || value.jobId || value.positionId || value.code;
-    if (!title || !id || !/job|position|jobs|positions/i.test(path.join('.'))) return;
+    if (!title || !id || !jobSignals
+      || !/job|position|jobs|positions/i.test(path.join('.'))) return;
+    const rawLocation = value.location || value.city || value.cityName || value.locations || '';
+    const location = Array.isArray(rawLocation)
+      ? rawLocation.map((item) => item?.address || item?.cityName || item?.name || item).filter(Boolean).join('、')
+      : typeof rawLocation === 'object' && rawLocation
+        ? rawLocation.address || rawLocation.cityName || rawLocation.name || ''
+        : rawLocation;
+    const fallbackDetail = String(vendor).toUpperCase() === 'MOKA'
+      ? `${String(baseUrl).split('#')[0]}#/job/${id}`
+      : `/job/${id}`;
     jobs.push({
-      id: String(id), title: String(title), location: String(value.location || value.city || value.cityName || ''),
+      id: String(id), title: String(title), location: String(location || ''),
       scope: String(value.scope || value.channel || value.recruitmentScope || value.jobType || ''),
       recruitmentType: String(value.recruitmentType || value.batch || value.campaignType || ''), cohortYear: Number(value.cohortYear || value.graduationYear) || null,
-      detailUrl: absolute(value.detailUrl || value.jobUrl || value.url || `/job/${id}`, baseUrl), applyUrl: absolute(value.applyUrl || value.applicationUrl || '', baseUrl),
+      detailUrl: absolute(value.detailUrl || value.jobUrl || value.url || fallbackDetail, baseUrl), applyUrl: absolute(value.applyUrl || value.applicationUrl || '', baseUrl),
     });
   });
   return [...new Map(jobs.map((job) => [job.id, job])).values()];
@@ -80,6 +110,11 @@ function tenantFromUrl(baseUrl, vendor) {
     if (vendor === 'HOTJOB') return url.pathname.match(/\/(SU[^/]+)/i)?.[1] || '';
     if (vendor === 'FEISHU') return subdomain !== 'jobs' ? subdomain : '';
     if (vendor === 'BEISEN') return !['www', 'jobs'].includes(subdomain) ? subdomain : '';
+    if (vendor === 'MOSEEKER') {
+      return !['www', 'jobs', 'career'].includes(subdomain)
+        ? subdomain
+        : url.pathname.split('/').filter(Boolean)[0] || '';
+    }
     return '';
   } catch { return ''; }
 }
@@ -99,17 +134,27 @@ function currentPageStateText(states) {
   return values.join(' ');
 }
 
+function visiblyBlocked(html = '') {
+  const visible = String(html)
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ');
+  return /验证码|安全验证|访问过于频繁|captcha|access denied|browser not support/i.test(visible);
+}
+
 export function parseCnAtsPage(html = '', context = {}) {
   const baseUrl = context.finalUrl || context.requestedUrl || '';
   const vendor = String(context.vendor || 'OTHER').toUpperCase();
   const jsonLd = parseJobPostingJsonLd(html, baseUrl);
   const states = parseStateBlocks(html);
-  const activeJobs = stateJobs(states, baseUrl);
+  const activeJobs = stateJobs(states, baseUrl, vendor);
   const urls = [...new Set([...extractUrls(html, baseUrl), ...stateUrls(states, baseUrl), ...activeJobs.flatMap((job) => [job.detailUrl, job.applyUrl]).filter(Boolean)])];
   const blocked = /验证码|安全验证|访问过于频繁|captcha|access denied|browser-not-support/i.test(html);
   const expiredCampaign = /招聘已结束|本次招聘已结束|已截止|停止申请|no longer accepting/i.test(html);
   const explicitNoOpenings = /暂无(?:开放)?职位|暂无岗位|没有在招职位|no open(?:ing| position| job)/i.test(html);
-  if (!urls.length && !states.length && !jsonLd && !blocked && !expiredCampaign && !explicitNoOpenings) return null;
+  const effectiveBlocked = blocked && visiblyBlocked(html);
+  if (!urls.length && !states.length && !jsonLd && !effectiveBlocked && !expiredCampaign && !explicitNoOpenings) return null;
   const applyUrl = urls.find((url) => /(?:^|\/)apply(?:\.html|\/|\?|$)|application(?:\/|\?|$)/i.test(pathOf(url))) || '';
   const jobDetailUrl = urls.find((url) => /(?:job|position)(?:\/|=)[^/?&#]+/i.test(pathOf(url)) && url !== applyUrl) || '';
   const jobListUrl = urls.find((url) => /(?:^|\/)(?:jobs?|job-list|joblist|positions?)(?:\/|\?|$)/i.test(pathOf(url)) && url !== applyUrl && url !== jobDetailUrl) || '';
@@ -125,9 +170,9 @@ export function parseCnAtsPage(html = '', context = {}) {
   if (/social|社招|社会招聘/i.test(text)) recruitmentScope.push('SOCIAL');
   if (!recruitmentScope.length) recruitmentScope.push('GENERAL');
   const applicationRequiresLogin = Boolean(applyUrl && /login|signin|登录|returnUrl|redirect/i.test(`${applyUrl} ${html}`));
-  const vacancyStatus = blocked ? 'BLOCKED' : expiredCampaign ? 'EXPIRED' : activeJobs.length || jobDetailUrl || jobListUrl || applyUrl ? 'ACTIVE' : explicitNoOpenings || states.some((state) => Array.isArray(state.jobs) && state.jobs.length === 0) ? 'NO_OPENINGS' : 'UNKNOWN';
+  const vacancyStatus = effectiveBlocked ? 'BLOCKED' : expiredCampaign ? 'EXPIRED' : activeJobs.length || jobDetailUrl || jobListUrl || applyUrl ? 'ACTIVE' : explicitNoOpenings || states.some((state) => Array.isArray(state.jobs) && state.jobs.length === 0) ? 'NO_OPENINGS' : 'UNKNOWN';
   const pageRole = applyUrl ? 'APPLY' : jobDetailUrl ? 'JOB_DETAIL' : jobListUrl || activeJobs.length ? 'JOB_LIST' : /campus|校招|校园招聘|intern|实习/i.test(text) ? 'CAMPAIGN' : 'CAREER_HOME';
-  const pageState = blocked ? 'BLOCKED_OR_CAPTCHA' : expiredCampaign ? 'EXPIRED_CAMPAIGN' : vacancyStatus === 'NO_OPENINGS' ? 'VERIFIED_NO_OPENINGS' : pageRole === 'APPLY' ? 'APPLY_ACTION' : pageRole === 'JOB_DETAIL' ? 'ACTIVE_JOB_DETAIL' : pageRole === 'JOB_LIST' ? 'ACTIVE_JOB_LIST' : pageRole === 'CAMPAIGN' ? 'VERIFIED_CAMPAIGN' : 'VERIFIED_CAREER_HOME';
+  const pageState = effectiveBlocked ? 'BLOCKED_OR_CAPTCHA' : expiredCampaign ? 'EXPIRED_CAMPAIGN' : vacancyStatus === 'NO_OPENINGS' ? 'VERIFIED_NO_OPENINGS' : pageRole === 'APPLY' ? 'APPLY_ACTION' : pageRole === 'JOB_DETAIL' ? 'ACTIVE_JOB_DETAIL' : pageRole === 'JOB_LIST' ? 'ACTIVE_JOB_LIST' : pageRole === 'CAMPAIGN' ? 'VERIFIED_CAMPAIGN' : 'VERIFIED_CAREER_HOME';
   const identityEvidence = [displayedCompany && { code: 'displayed_company', value: displayedCompany }, legalOrPrivacyEntity && { code: 'legal_or_privacy_entity', value: legalOrPrivacyEntity }, tenantKey && { code: 'tenant_key', value: tenantKey }].filter(Boolean);
-  return { ...(jsonLd || {}), vendor, tenantKey, displayedCompany, legalOrPrivacyEntity, recruitmentScope: [...new Set(recruitmentScope)], recruitmentChannels: [...new Set(recruitmentScope)], jobListUrl, jobDetailUrl, applyUrl, activeJobs, jobCount: activeJobs.length, applicationRequiresLogin, noOpenings: vacancyStatus === 'NO_OPENINGS', expiredCampaign, blocked, vacancyStatus, pageRole, pageState, identityEvidence };
+  return { ...(jsonLd || {}), vendor, tenantKey, displayedCompany, legalOrPrivacyEntity, recruitmentScope: [...new Set(recruitmentScope)], recruitmentChannels: [...new Set(recruitmentScope)], jobListUrl, jobDetailUrl, applyUrl, activeJobs, jobCount: activeJobs.length, applicationRequiresLogin, noOpenings: vacancyStatus === 'NO_OPENINGS', expiredCampaign, blocked: effectiveBlocked, vacancyStatus, pageRole, pageState, identityEvidence };
 }

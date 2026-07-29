@@ -130,6 +130,14 @@ export function classifyRecruitmentSource({
     });
   }
 
+  if (host === 'mp.weixin.qq.com' && /^\/s(?:\/|$)/i.test(target.pathname)) {
+    return Object.freeze({
+      decision: 'VERIFY_OFFICIAL_SOCIAL_CANDIDATE',
+      sourceTier: 'OFFICIAL_SOCIAL',
+      channelType: 'WECHAT_OFFICIAL_ACCOUNT',
+    });
+  }
+
   return Object.freeze({
     decision: 'VERIFY_OFFICIAL_CANDIDATE',
     sourceTier: 'OFFICIAL_SITE',
