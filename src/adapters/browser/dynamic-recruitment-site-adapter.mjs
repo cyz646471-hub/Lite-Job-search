@@ -30,6 +30,11 @@ const ADAPTERS = Object.freeze([
     detail: /\/(?:job|position|detail)(?:\/|[?][^#]*(?:id|jobid)=)/i,
   },
   {
+    id: 'MOSEEKER',
+    host: /(?:^|\.)moseeker\.(?:com|cn)$/i,
+    detail: /\/(?:job|position|detail)(?:\/|[?][^#]*(?:id|jobid|positionid)=)/i,
+  },
+  {
     id: 'WORKDAY',
     host: /(?:^|\.)myworkdayjobs\.com$/i,
     detail: /\/job\/[^/?#]+/i,
@@ -43,6 +48,16 @@ const ADAPTERS = Object.freeze([
     id: 'SMARTRECRUITERS',
     host: /(?:^|\.)smartrecruiters\.com$/i,
     detail: /\/[^/]+\/\d+-[^/?#]+/i,
+  },
+  {
+    id: 'SELF_HOSTED_XIAOHONGSHU',
+    host: /(?:^|\.)job\.xiaohongshu\.com$/i,
+    detail: /\/(?:job|position|detail)(?:\/|[?][^#]*(?:id|jobid|positionid)=)/i,
+  },
+  {
+    id: 'SELF_HOSTED_IQIYI',
+    host: /(?:^|\.)zhaopin\.iqiyi\.com$/i,
+    detail: /\/(?:job|position|detail)(?:\/|[?][^#]*(?:id|jobid|positionid)=)/i,
   },
 ]);
 

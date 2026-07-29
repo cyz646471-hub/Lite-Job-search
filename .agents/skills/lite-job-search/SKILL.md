@@ -221,6 +221,40 @@ This instruction layer has no verification authority. The existing
 deterministic Verification Engine remains the only component allowed to mark an
 official site or ATS as verified.
 
+## Monitor verified China recruitment endpoints
+
+Known verified official and ATS entries do not return to public search. Prepare
+the independent queues and monitor direct endpoints with:
+
+```powershell
+npm.cmd run monitor:network:prepare -- --market CN --target-count 300
+npm.cmd run monitor:endpoints -- --market CN --target-count 200
+```
+
+`PORTAL_MONITOR` uses conditional HTTP or an ATS adapter.
+`PORTAL_RECOVERY` handles failed, redirected, or parser-incompatible known
+entries. `MARKET_DISCOVERY` alone may use the explicitly selected search
+engine, so an open search circuit cannot stop known endpoints.
+
+Each changed response creates a `FetchObservation` and `PageSnapshot`; replay a
+snapshot without network access using:
+
+```powershell
+npm.cmd run monitor:snapshot:replay -- --snapshot-id <snapshot-id>
+```
+
+Run the bounded one-day China Canary with:
+
+```powershell
+npm.cmd run monitor:canary:one-day -- `
+  --target-count 200 --duration-hours 24 --cycle-minutes 30
+```
+
+The report must retain actual endpoint success, job changes, browser fallback,
+and actionable-job denominators. A failed or blocked fetch never closes a job.
+Absent jobs close only after the configured number of successful snapshots, or
+explicit closure evidence.
+
 ## Verify candidates
 
 ```powershell

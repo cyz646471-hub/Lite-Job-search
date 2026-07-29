@@ -64,3 +64,50 @@ test('page fetch timeout also bounds DNS resolution', async () => {
     /page fetch timeout/,
   );
 });
+
+test('page fetcher forwards only supported conditional request headers', async () => {
+  let requestHeaders;
+  const fetchPage = createPageFetcher({
+    resolver: async () => [{ address: '93.184.216.34' }],
+    fetcher: async (_url, options) => {
+      requestHeaders = new Headers(options.headers);
+      return new Response(null, { status: 304 });
+    },
+  });
+  const page = await fetchPage('https://example.com/jobs', {
+    headers: {
+      'if-none-match': '"v2"',
+      'if-modified-since': 'Tue, 28 Jul 2026 00:00:00 GMT',
+      authorization: 'must-not-forward',
+    },
+  });
+  assert.equal(page.status, 304);
+  assert.equal(requestHeaders.get('if-none-match'), '"v2"');
+  assert.equal(requestHeaders.get('if-modified-since'), 'Tue, 28 Jul 2026 00:00:00 GMT');
+  assert.equal(requestHeaders.has('authorization'), false);
+});
+
+test('page fetcher carries response cookies only across redirects on the same host', async () => {
+  const cookies = [];
+  let callCount = 0;
+  const fetchPage = createPageFetcher({
+    resolver: async () => [{ address: '93.184.216.34' }],
+    fetcher: async (_url, options) => {
+      callCount += 1;
+      cookies.push(new Headers(options.headers).get('cookie'));
+      if (callCount === 1) {
+        return new Response('', {
+          status: 302,
+          headers: {
+            location: '/jobs',
+            'set-cookie': 'session=public-ats-session; Path=/; HttpOnly',
+          },
+        });
+      }
+      return new Response('<html>jobs</html>', { status: 200 });
+    },
+  });
+  const page = await fetchPage('https://example.com/jobs');
+  assert.equal(page.status, 200);
+  assert.deepEqual(cookies, [null, 'session=public-ats-session']);
+});

@@ -107,9 +107,13 @@ function pinnedHttpFetch(url, options, address) {
       const body = [204, 205, 304].includes(statusCode)
         ? null
         : Readable.toWeb(response);
+      const headers = new Headers();
+      for (let index = 0; index < response.rawHeaders.length; index += 2) {
+        headers.append(response.rawHeaders[index], response.rawHeaders[index + 1]);
+      }
       resolve(new Response(body, {
         status: statusCode,
-        headers: response.headers,
+        headers,
       }));
     });
     req.on('error', reject);
@@ -136,13 +140,14 @@ export function createPageFetcher({
   resolver = (hostname) => lookup(hostname, { all: true, verbatim: true }),
 } = {}) {
   if (fetcher != null && typeof fetcher !== 'function') throw new Error('page fetcher is required');
-  return async function fetchPage(rawUrl) {
+  return async function fetchPage(rawUrl, { headers = {} } = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(new Error('page fetch timeout')),
       Math.max(1, Number(timeoutMs) || 15_000),
     );
     let current = assertPublicHttpUrl(rawUrl);
+    const cookiesByHost = new Map();
     try {
       for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
         const hostname = normalizeIp(current.hostname);
@@ -160,12 +165,47 @@ export function createPageFetcher({
           signal: controller.signal,
           headers: {
             'user-agent': 'Lite-Job-Search/0.2 (+public recruitment discovery)',
+            ...Object.fromEntries(
+              Object.entries(headers).filter(([name]) => (
+                ['if-none-match', 'if-modified-since', 'accept'].includes(
+                  String(name).toLowerCase(),
+                )
+              )),
+            ),
+            ...(cookiesByHost.has(hostname)
+              ? { cookie: cookiesByHost.get(hostname) }
+              : {}),
           },
         };
         const response = fetcher
           ? await fetcher(current, requestOptions, { pinnedAddress: addresses[0] })
           : await pinnedHttpFetch(current, requestOptions, addresses[0]);
-        if (response.status >= 300 && response.status < 400) {
+        const setCookies = typeof response.headers.getSetCookie === 'function'
+          ? response.headers.getSetCookie()
+          : [];
+        if (setCookies.length) {
+          const currentCookies = new Map(
+            String(cookiesByHost.get(hostname) || '')
+              .split(/;\s*/)
+              .filter(Boolean)
+              .map((item) => {
+                const separator = item.indexOf('=');
+                return [item.slice(0, separator), item.slice(separator + 1)];
+              }),
+          );
+          for (const header of setCookies) {
+            const pair = String(header).split(';', 1)[0];
+            const separator = pair.indexOf('=');
+            if (separator > 0) {
+              currentCookies.set(pair.slice(0, separator), pair.slice(separator + 1));
+            }
+          }
+          cookiesByHost.set(
+            hostname,
+            [...currentCookies].map(([name, value]) => `${name}=${value}`).join('; '),
+          );
+        }
+        if (response.status >= 300 && response.status < 400 && response.status !== 304) {
           const location = response.headers.get('location');
           if (!location) throw new Error('redirect response missing location');
           if (redirectCount === maxRedirects) throw new Error('too many redirects');

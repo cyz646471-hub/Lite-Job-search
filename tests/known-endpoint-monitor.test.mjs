@@ -111,6 +111,7 @@ test('known endpoint monitor fetches once, persists jobs, and skips unchanged pa
   assert.equal(repository.listJobOpenings().length, 1);
   assert.equal(repository.listRecruitmentEvents().length, 1);
   assert.equal(repository.listFetchObservations().length, 2);
+  assert.equal(repository.listPageSnapshots().length, 1);
   assert.ok(repository.listJobRevisions().some((revision) => (
     revision.changeType === 'DISCOVERED'
   )));
@@ -140,6 +141,35 @@ test('known endpoint monitor fetches once, persists jobs, and skips unchanged pa
   [policy] = repository.listMonitorPolicies();
   assert.equal(policy.queueLane, 'PORTAL_MONITOR');
   assert.equal(policy.browserAllowed, false);
+
+  const [storedJob] = repository.listJobOpenings();
+  const failedReconciliation = repository.reconcileEndpointOpenings({
+    sourceEndpointId: endpoint.id,
+    seenJobIds: [],
+    successful: false,
+    observedAt: FIRST_CHECK,
+  });
+  assert.equal(failedReconciliation.skipped, true);
+  assert.equal(repository.listJobOpenings()[0].consecutiveMissingCount, 0);
+
+  for (const observedAt of [
+    '2026-07-30T00:00:00.000Z',
+    '2026-07-31T00:00:00.000Z',
+    '2026-08-01T00:00:00.000Z',
+  ]) {
+    repository.reconcileEndpointOpenings({
+      sourceEndpointId: endpoint.id,
+      observationId: repository.listFetchObservations()[0].id,
+      seenJobIds: [],
+      successful: true,
+      missingThreshold: 3,
+      observedAt,
+    });
+  }
+  const closedJob = repository.listJobOpenings().find((job) => job.id === storedJob.id);
+  assert.equal(closedJob.status, 'CLOSED');
+  assert.equal(closedJob.consecutiveMissingCount, 3);
+  assert.equal(closedJob.closedEvidence[0].code, 'MISSING_FROM_CONSECUTIVE_SUCCESSFUL_SNAPSHOTS');
 });
 
 test('one endpoint failure does not stop later known endpoints', async () => {

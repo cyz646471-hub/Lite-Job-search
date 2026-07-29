@@ -71,6 +71,12 @@ export function createJobOpening(input = {}, {
     applyUrl: cleanUrl(input.applyUrl),
     status,
     sourceUrl,
+    consecutiveMissingCount: Math.max(
+      0,
+      Math.trunc(Number(input.consecutiveMissingCount) || 0),
+    ),
+    lastPresentAt: input.lastPresentAt || input.lastSeenAt || now,
+    closedEvidence: Object.freeze([...(input.closedEvidence || [])]),
     firstSeenAt: input.firstSeenAt || now,
     lastSeenAt: input.lastSeenAt || now,
   });

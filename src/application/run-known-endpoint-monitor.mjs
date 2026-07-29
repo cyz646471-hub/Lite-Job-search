@@ -49,7 +49,8 @@ function pageTitle(html = '') {
 }
 
 function explicitNoOpenings(text) {
-  return EXPLICIT_NO_OPENINGS.some((pattern) => pattern.test(text));
+  return /暂无(?:可投递)?(?:职位|岗位|招聘)|当前(?:暂无|没有)(?:开放)?(?:职位|岗位|招聘)|没有找到相关(?:职位|岗位)/i.test(text)
+    || EXPLICIT_NO_OPENINGS.some((pattern) => pattern.test(text));
 }
 
 function pageRoleOf(portal) {
@@ -142,6 +143,8 @@ export async function runKnownEndpointMonitor({
   targetCount = 100,
   market = 'CN',
   includeNotDue = false,
+  sourceEndpointIds = null,
+  onProgress = null,
   now = () => new Date().toISOString(),
 } = {}) {
   assertMonitoringNetworkRepository(repository);
@@ -151,22 +154,46 @@ export async function runKnownEndpointMonitor({
   const portals = repository.listCareerPortals();
   const companyById = new Map(companies.map((company) => [company.id, company]));
   const portalById = new Map(portals.map((portal) => [portal.id, portal]));
+  const allSourceEndpoints = repository.listSourceEndpoints();
   const plan = buildMonitoringNetworkPlan({
     companies,
     portals,
-    sourceEndpoints: repository.listSourceEndpoints(),
+    sourceEndpoints: allSourceEndpoints,
     monitorPolicies: repository.listMonitorPolicies(),
     reviewTasks: repository.listReviewTasks(),
     userActions: repository.listUserActions(),
     jobs: repository.listJobOpenings(),
     providerCircuits: repository.listProviderCircuitStates(),
     market,
-    targetCount,
+    targetCount: sourceEndpointIds ? allSourceEndpoints.length : targetCount,
+    laneShares: sourceEndpointIds
+      ? {
+        PORTAL_MONITOR: 1,
+        PORTAL_RECOVERY: 0,
+        MARKET_DISCOVERY: 0,
+        REVIEW_FEEDBACK: 0,
+      }
+      : undefined,
     includeNotDue,
     now: startedAt,
   });
-  const items = plan.queues.PORTAL_MONITOR.filter((item) => item.runnable);
+  const endpointFilter = sourceEndpointIds
+    ? new Set(sourceEndpointIds.map(String))
+    : null;
+  const items = plan.queues.PORTAL_MONITOR.filter((item) => (
+    item.runnable && (!endpointFilter || endpointFilter.has(item.sourceEndpointId))
+  ));
   const results = [];
+  async function recordResult(result) {
+    results.push(result);
+    if (typeof onProgress === 'function') {
+      await onProgress(Object.freeze({
+        result,
+        processedCount: results.length,
+        selectedCount: items.length,
+      }));
+    }
+  }
 
   for (const item of items) {
     const endpoint = repository.listSourceEndpoints({
@@ -176,7 +203,7 @@ export async function runKnownEndpointMonitor({
     const company = companyById.get(item.companyId);
     const portal = portalById.get(item.careerPortalId);
     if (!endpoint || !company || !portal || portal.verificationStatus !== 'VERIFIED') {
-      results.push({
+      await recordResult({
         ...item,
         status: 'SKIPPED',
         reasonCode: 'VERIFIED_ENDPOINT_CONTEXT_MISSING',
@@ -187,15 +214,24 @@ export async function runKnownEndpointMonitor({
     const fetchedAt = now();
     const started = Date.now();
     try {
-      const page = await fetchPage(endpoint.canonicalUrl);
+      const conditionalHeaders = {};
+      if (endpoint.etag) conditionalHeaders['if-none-match'] = endpoint.etag;
+      if (endpoint.lastModified) {
+        conditionalHeaders['if-modified-since'] = endpoint.lastModified;
+      }
+      const page = await fetchPage(endpoint.canonicalUrl, {
+        headers: conditionalHeaders,
+      });
       const status = Number(page.status ?? 200);
       if ([401, 403, 429].includes(status)) {
         throw new Error(`HTTP_${status}_ACCESS_BLOCKED`);
       }
       if (status >= 400) throw new Error(`HTTP_${status}`);
+      const notModified = status === 304;
       const html = String(page.html || page.body || '');
-      const contentHash = sha256(html);
-      const unchanged = Boolean(endpoint.contentHash && endpoint.contentHash === contentHash);
+      const contentHash = notModified ? endpoint.contentHash : sha256(html);
+      const unchanged = notModified
+        || Boolean(endpoint.contentHash && endpoint.contentHash === contentHash);
       const text = cleanText(html);
       let jobs = [];
       let outcome = unchanged ? 'NOT_MODIFIED' : 'SUCCESS';
@@ -276,12 +312,38 @@ export async function runKnownEndpointMonitor({
           transport: endpoint.transport,
         },
       });
-      results.push({
+      if (snapshotPath) {
+        repository.appendPageSnapshot({
+          sourceEndpointId: endpoint.id,
+          observationId: observation.id,
+          capturedAt: fetchedAt,
+          finalUrl: page.finalUrl || endpoint.canonicalUrl,
+          contentType: page.headers?.contentType || 'text/html',
+          bodyPath: snapshotPath,
+          bodyBytes: Buffer.byteLength(html),
+          contentHash,
+          structureHash: structureHashOf(page, storedJobs),
+          metadata: {
+            adapterType: endpoint.adapterType,
+            pageRole: pageRoleOf(storedPortal),
+          },
+        });
+      }
+      const reconciliation = repository.reconcileEndpointOpenings({
+        sourceEndpointId: endpoint.id,
+        observationId: observation.id,
+        seenJobIds: storedJobs.map((job) => job.id),
+        successful: outcome === 'SUCCESS' || outcome === 'NO_OPENINGS',
+        missingThreshold: item.consecutiveMissingThreshold || 3,
+        observedAt: fetchedAt,
+      });
+      await recordResult({
         ...item,
         status: outcome,
         observationId: observation.id,
         hiringAvailability,
         jobCount: storedJobs.length,
+        reconciliation,
       });
     } catch (error) {
       const outcome = failedOutcome(error);
@@ -311,7 +373,7 @@ export async function runKnownEndpointMonitor({
           persistenceError?.message || persistenceError,
         );
       }
-      results.push({
+      await recordResult({
         ...item,
         status: outcome,
         observationId,

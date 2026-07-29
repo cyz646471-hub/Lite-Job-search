@@ -108,7 +108,7 @@ function hostMatchesOfficialDomain(value, officialDomains = []) {
 
 function isKnownAtsUrl(value) {
   try {
-    return /(^|\.)(?:mokahr\.(?:com|cn)|zhiye\.com|hotjob\.cn|jobs\.feishu\.cn|myworkdayjobs\.com)$/i
+    return /(^|\.)(?:mokahr\.(?:com|cn)|zhiye\.com|hotjob\.cn|jobs\.feishu\.cn|jobs\.bytedance\.com|beisen\.com|beisencloud\.com|italent\.cn|moseeker\.(?:com|cn)|myworkdayjobs\.com)$/i
       .test(new URL(value).hostname);
   } catch {
     return false;

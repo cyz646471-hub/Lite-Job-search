@@ -3,8 +3,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
-import { buildFixedCompanyMonitorPlan } from '../src/application/build-fixed-company-monitor-plan.mjs';
-import { openSqliteMarketDiscoveryRepository } from '../src/storage/sqlite-job-repository.mjs';
+import { buildFixedCompanyMonitorPlan } from '../../src/application/build-fixed-company-monitor-plan.mjs';
+import { openSqliteMarketDiscoveryRepository } from '../../src/storage/sqlite-job-repository.mjs';
 
 function parseArgs(argv) {
   const values = {};

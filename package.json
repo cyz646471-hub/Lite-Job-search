@@ -1,6 +1,6 @@
 {
   "name": "lite-job-search",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Standalone China and North America job discovery, official-site verification and ATS crawling skill.",
   "type": "module",
   "private": false,
@@ -41,8 +41,6 @@
     "diagnose:chrome": "node ./scripts/diagnose-browser-search-challenge.mjs",
     "task:run": "node ./scripts/run-control-task.mjs",
     "prepare:full-recheck": "node ./scripts/prepare-full-database-maintenance.mjs",
-    "monitor:fixed-pool:prepare": "node ./scripts/prepare-fixed-company-monitor.mjs",
-    "monitor:fixed-pool": "node ./scripts/run-fixed-company-monitor.mjs",
     "watch:new-companies:prepare": "node ./scripts/prepare-new-company-watch.mjs",
     "watch:new-companies": "node ./scripts/run-new-company-watch.mjs",
     "discover:cn-market": "node ./scripts/discover-cn-market-companies.mjs",
@@ -53,6 +51,8 @@
     "maintenance:series": "node ./scripts/run-full-maintenance-series.mjs",
     "monitor:network:prepare": "node ./scripts/prepare-monitoring-network.mjs",
     "monitor:endpoints": "node ./scripts/run-known-endpoint-monitor.mjs",
+    "monitor:canary:one-day": "node ./scripts/run-one-day-monitor-canary.mjs",
+    "monitor:snapshot:replay": "node ./scripts/replay-page-snapshot.mjs",
     "audit:cn-ats": "node ./scripts/audit-cn-ats-coverage.mjs"
   },
   "engines": {

@@ -10,7 +10,8 @@ import { createJobRevision } from '../domain/job-revision.mjs';
 import { createJobOpening } from '../domain/job-opening.mjs';
 import { evaluateJobPublication } from '../domain/job-publication.mjs';
 import { createFetchObservation } from '../domain/fetch-observation.mjs';
-import { createMonitorPolicy } from '../domain/monitor-policy.mjs';
+import { createMonitorPolicy, deriveMonitorSchedule } from '../domain/monitor-policy.mjs';
+import { createPageSnapshot } from '../domain/page-snapshot.mjs';
 import { createRecruitmentEvent } from '../domain/recruitment-event.mjs';
 import { createReviewTask } from '../domain/review-task.mjs';
 import { createSourceEndpoint } from '../domain/source-endpoint.mjs';
@@ -140,6 +141,9 @@ function mapOpening(row) {
     qualityReasons: decode(row.quality_reasons_json, []),
     applicationVerifiedAt: row.application_verified_at || null,
     dedupeFingerprint: row.dedupe_fingerprint || null,
+    consecutiveMissingCount: Number(row.consecutive_missing_count) || 0,
+    lastPresentAt: row.last_present_at || row.last_seen_at,
+    closedEvidence: decode(row.closed_evidence_json, []),
     firstSeenAt: row.first_seen_at,
     lastSeenAt: row.last_seen_at,
   };
@@ -213,11 +217,31 @@ function mapSourceEndpoint(row) {
     structureHash: row.structure_hash || null,
     lastCheckedAt: row.last_checked_at || null,
     lastSuccessAt: row.last_success_at || null,
+    lastFailureAt: row.last_failure_at || null,
+    lastFailureReason: row.last_failure_reason || null,
+    lastHttpStatus: row.last_http_status,
     nextCheckAt: row.next_check_at || null,
     consecutiveFailures: Number(row.consecutive_failures) || 0,
     metadata: decode(row.metadata_json, {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapPageSnapshot(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    sourceEndpointId: row.source_endpoint_id,
+    observationId: row.observation_id,
+    capturedAt: row.captured_at,
+    finalUrl: row.final_url || null,
+    contentType: row.content_type || null,
+    bodyPath: row.body_path,
+    bodyBytes: Number(row.body_bytes) || 0,
+    contentHash: row.content_hash,
+    structureHash: row.structure_hash || null,
+    metadata: decode(row.metadata_json, {}),
   };
 }
 
@@ -275,6 +299,10 @@ function mapMonitorPolicy(row) {
     nextDueAt: row.next_due_at || null,
     enabled: row.enabled === 1,
     reason: row.reason || null,
+    studentInterestCount: Number(row.student_interest_count) || 0,
+    historicalApplicationScore: Number(row.historical_application_score) || 0,
+    lastOutcome: row.last_outcome || null,
+    priorityReasons: decode(row.priority_reasons_json, []),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -557,6 +585,7 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           employment_type, published_at, closes_at, job_detail_url, apply_url,
           status, source_url, quality_grade, publication_status,
           quality_reasons_json, application_verified_at, dedupe_fingerprint,
+          consecutive_missing_count, last_present_at, closed_evidence_json,
           first_seen_at, last_seen_at
         ) VALUES (
           @id, @companyId, @careerPortalId, @recruitmentEventId, @sourceTier,
@@ -564,6 +593,7 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           @employmentType, @publishedAt, @closesAt, @jobDetailUrl, @applyUrl,
           @status, @sourceUrl, @qualityGrade, @publicationStatus,
           @qualityReasonsJson, @applicationVerifiedAt, @dedupeFingerprint,
+          @consecutiveMissingCount, @lastPresentAt, @closedEvidenceJson,
           @firstSeenAt, @lastSeenAt
         )
         ON CONFLICT(id) DO UPDATE SET
@@ -588,6 +618,9 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           quality_reasons_json = excluded.quality_reasons_json,
           application_verified_at = excluded.application_verified_at,
           dedupe_fingerprint = excluded.dedupe_fingerprint,
+          consecutive_missing_count = excluded.consecutive_missing_count,
+          last_present_at = excluded.last_present_at,
+          closed_evidence_json = excluded.closed_evidence_json,
           last_seen_at = excluded.last_seen_at
       `),
       upsertReviewTask: database.prepare(`
@@ -1201,11 +1234,13 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         id, company_id, career_portal_id, url, canonical_url, endpoint_kind,
         transport, adapter_type, state, interval_hours, etag, last_modified,
         content_hash, structure_hash, last_checked_at, last_success_at,
+        last_failure_at, last_failure_reason, last_http_status,
         next_check_at, consecutive_failures, metadata_json, created_at, updated_at
       ) VALUES (
         @id, @companyId, @careerPortalId, @url, @canonicalUrl, @endpointKind,
         @transport, @adapterType, @state, @intervalHours, @etag, @lastModified,
         @contentHash, @structureHash, @lastCheckedAt, @lastSuccessAt,
+        @lastFailureAt, @lastFailureReason, @lastHttpStatus,
         @nextCheckAt, @consecutiveFailures, @metadataJson, @createdAt, @updatedAt
       )
       ON CONFLICT(id) DO UPDATE SET
@@ -1223,6 +1258,12 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         structure_hash = COALESCE(excluded.structure_hash, source_endpoints.structure_hash),
         last_checked_at = COALESCE(excluded.last_checked_at, source_endpoints.last_checked_at),
         last_success_at = COALESCE(excluded.last_success_at, source_endpoints.last_success_at),
+        last_failure_at = COALESCE(excluded.last_failure_at, source_endpoints.last_failure_at),
+        last_failure_reason = COALESCE(
+          excluded.last_failure_reason,
+          source_endpoints.last_failure_reason
+        ),
+        last_http_status = COALESCE(excluded.last_http_status, source_endpoints.last_http_status),
         next_check_at = COALESCE(excluded.next_check_at, source_endpoints.next_check_at),
         consecutive_failures = excluded.consecutive_failures,
         metadata_json = excluded.metadata_json,
@@ -1298,10 +1339,19 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     );
     const blocked = observation.outcome === 'BLOCKED';
     const failures = succeeded ? 0 : Number(endpoint.consecutive_failures || 0) + 1;
-    const intervalHours = Number(endpoint.interval_hours) || 168;
-    const delayHours = succeeded
-      ? intervalHours
-      : Math.min(24 * 7, Math.max(4, 2 ** Math.min(7, failures)));
+    const policyRow = database.prepare(`
+      SELECT * FROM monitor_policies
+      WHERE target_type = 'SOURCE_ENDPOINT' AND target_id = ?
+    `).get(endpoint.id);
+    const schedule = deriveMonitorSchedule({
+      hiringAvailability: observation.hiringAvailability,
+      outcome: observation.outcome,
+      consecutiveFailures: failures,
+      studentInterestCount: policyRow?.student_interest_count || 0,
+      historicalApplicationScore: policyRow?.historical_application_score || 0,
+      recruitingSeason: policyRow?.schedule_class === 'RECRUITING_SEASON',
+    });
+    const delayHours = schedule.intervalHours;
     const nextCheckAt = new Date(
       Date.parse(observation.fetchedAt) + delayHours * 3_600_000,
     ).toISOString();
@@ -1313,7 +1363,7 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         `).get(endpoint.career_portal_id)?.verification_status === 'VERIFIED'
       : false;
     const queueLane = succeeded && verifiedPortal
-      ? 'PORTAL_MONITOR'
+      ? schedule.queueLane
       : 'PORTAL_RECOVERY';
     database.prepare(`
       UPDATE source_endpoints
@@ -1324,7 +1374,11 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
           structure_hash = COALESCE(@structureHash, structure_hash),
           last_checked_at = @lastCheckedAt,
           last_success_at = CASE WHEN @succeeded = 1 THEN @lastCheckedAt ELSE last_success_at END,
+          last_failure_at = CASE WHEN @succeeded = 0 THEN @lastCheckedAt ELSE last_failure_at END,
+          last_failure_reason = CASE WHEN @succeeded = 0 THEN @lastFailureReason ELSE NULL END,
+          last_http_status = @lastHttpStatus,
           next_check_at = @nextCheckAt,
+          interval_hours = @intervalHours,
           consecutive_failures = @consecutiveFailures,
           updated_at = @lastCheckedAt
       WHERE id = @id
@@ -1337,7 +1391,10 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       structureHash: observation.structureHash,
       lastCheckedAt: observation.fetchedAt,
       succeeded: succeeded ? 1 : 0,
+      lastFailureReason: observation.reasonCode,
+      lastHttpStatus: observation.httpStatus,
       nextCheckAt,
+      intervalHours: delayHours,
       consecutiveFailures: failures,
     });
     database.prepare(`
@@ -1345,13 +1402,23 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       SET next_due_at = @nextCheckAt,
           queue_lane = @queueLane,
           browser_allowed = @browserAllowed,
+          priority = @priority,
+          schedule_class = @scheduleClass,
+          interval_hours = @intervalHours,
+          last_outcome = @lastOutcome,
+          priority_reasons_json = @priorityReasonsJson,
           updated_at = @updatedAt
       WHERE target_type = 'SOURCE_ENDPOINT'
         AND target_id = @targetId
     `).run({
       nextCheckAt,
       queueLane,
-      browserAllowed: queueLane === 'PORTAL_RECOVERY' ? 1 : 0,
+      browserAllowed: queueLane === 'PORTAL_RECOVERY' ? 1 : schedule.browserAllowed ? 1 : 0,
+      priority: schedule.priority,
+      scheduleClass: schedule.scheduleClass,
+      intervalHours: delayHours,
+      lastOutcome: observation.outcome,
+      priorityReasonsJson: encode(schedule.reasons, []),
       updatedAt: observation.fetchedAt,
       targetId: endpoint.id,
     });
@@ -1383,6 +1450,67 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       ORDER BY fetched_at DESC, id
       LIMIT ?
     `).all(...values).map(mapFetchObservation);
+  }
+
+  function appendPageSnapshot(input) {
+    requireMigration();
+    const snapshot = createPageSnapshot(input);
+    const observation = database.prepare(`
+      SELECT source_endpoint_id FROM fetch_observations WHERE id = ?
+    `).get(snapshot.observationId);
+    if (!observation || observation.source_endpoint_id !== snapshot.sourceEndpointId) {
+      throw new Error('PageSnapshot must match an existing FetchObservation');
+    }
+    database.prepare(`
+      INSERT INTO page_snapshots (
+        id, source_endpoint_id, observation_id, captured_at, final_url,
+        content_type, body_path, body_bytes, content_hash, structure_hash,
+        metadata_json
+      ) VALUES (
+        @id, @sourceEndpointId, @observationId, @capturedAt, @finalUrl,
+        @contentType, @bodyPath, @bodyBytes, @contentHash, @structureHash,
+        @metadataJson
+      )
+      ON CONFLICT(observation_id) DO UPDATE SET
+        final_url = excluded.final_url,
+        content_type = excluded.content_type,
+        body_path = excluded.body_path,
+        body_bytes = excluded.body_bytes,
+        content_hash = excluded.content_hash,
+        structure_hash = excluded.structure_hash,
+        metadata_json = excluded.metadata_json
+    `).run({
+      ...snapshot,
+      metadataJson: encode(snapshot.metadata, {}),
+    });
+    return mapPageSnapshot(database.prepare(`
+      SELECT * FROM page_snapshots WHERE observation_id = ?
+    `).get(snapshot.observationId));
+  }
+
+  function listPageSnapshots({
+    sourceEndpointId = null,
+    observationId = null,
+    limit = 500,
+  } = {}) {
+    requireMigration();
+    const clauses = [];
+    const values = [];
+    if (sourceEndpointId) {
+      clauses.push('source_endpoint_id = ?');
+      values.push(sourceEndpointId);
+    }
+    if (observationId) {
+      clauses.push('observation_id = ?');
+      values.push(observationId);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    values.push(Math.max(1, Math.min(5000, Math.trunc(Number(limit) || 500))));
+    return database.prepare(`
+      SELECT * FROM page_snapshots ${where}
+      ORDER BY captured_at DESC, id
+      LIMIT ?
+    `).all(...values).map(mapPageSnapshot);
   }
 
   function appendJobRevision(input) {
@@ -1429,6 +1557,104 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     return rows.map(mapJobRevision);
   }
 
+  function reconcileEndpointOpenings({
+    sourceEndpointId,
+    observationId,
+    seenJobIds = [],
+    successful = false,
+    explicitClosedJobIds = [],
+    missingThreshold = 3,
+    observedAt = new Date().toISOString(),
+  } = {}) {
+    requireMigration();
+    if (!successful) {
+      return Object.freeze({ seen: 0, missing: 0, closed: 0, skipped: true });
+    }
+    const endpoint = database.prepare(`
+      SELECT career_portal_id FROM source_endpoints WHERE id = ?
+    `).get(sourceEndpointId);
+    if (!endpoint?.career_portal_id) {
+      throw new Error('SourceEndpoint requires a CareerPortal for job reconciliation');
+    }
+    const seen = new Set(seenJobIds.map(String));
+    const explicit = new Set(explicitClosedJobIds.map(String));
+    const threshold = Math.max(2, Math.trunc(Number(missingThreshold) || 3));
+    return withTransaction(() => {
+      const rows = database.prepare(`
+        SELECT * FROM job_openings
+        WHERE career_portal_id = ?
+          AND source_tier IN ('OFFICIAL_SITE', 'OFFICIAL_ATS', 'OFFICIAL_SOCIAL')
+      `).all(endpoint.career_portal_id);
+      let seenCount = 0;
+      let missingCount = 0;
+      let closedCount = 0;
+      for (const row of rows) {
+        if (seen.has(row.id)) {
+          database.prepare(`
+            UPDATE job_openings
+            SET consecutive_missing_count = 0,
+                last_present_at = ?,
+                closed_evidence_json = CASE
+                  WHEN status = 'CLOSED' THEN closed_evidence_json
+                  ELSE '[]'
+                END
+            WHERE id = ?
+          `).run(observedAt, row.id);
+          seenCount += 1;
+          continue;
+        }
+        if (row.status === 'CLOSED' && !explicit.has(row.id)) continue;
+        const nextMissing = Number(row.consecutive_missing_count || 0) + 1;
+        const explicitClose = explicit.has(row.id);
+        const shouldClose = explicitClose || nextMissing >= threshold;
+        const evidence = [{
+          code: explicitClose
+            ? 'EXPLICIT_JOB_CLOSED'
+            : 'MISSING_FROM_CONSECUTIVE_SUCCESSFUL_SNAPSHOTS',
+          sourceEndpointId,
+          observationId: observationId || null,
+          observedAt,
+          consecutiveMissingCount: nextMissing,
+        }];
+        database.prepare(`
+          UPDATE job_openings
+          SET consecutive_missing_count = ?,
+              status = CASE WHEN ? = 1 THEN 'CLOSED' ELSE status END,
+              closed_evidence_json = CASE WHEN ? = 1 THEN ? ELSE closed_evidence_json END
+          WHERE id = ?
+        `).run(
+          nextMissing,
+          shouldClose ? 1 : 0,
+          shouldClose ? 1 : 0,
+          encode(evidence, []),
+          row.id,
+        );
+        appendJobRevision({
+          jobId: row.id,
+          observationId,
+          changeType: shouldClose ? 'CLOSED' : 'MISSING',
+          fields: {
+            consecutiveMissingCount: nextMissing,
+            status: shouldClose ? 'CLOSED' : row.status,
+            closedEvidence: shouldClose ? evidence : [],
+          },
+          changedFields: shouldClose
+            ? ['consecutiveMissingCount', 'status', 'closedEvidence']
+            : ['consecutiveMissingCount'],
+          observedAt,
+        });
+        missingCount += 1;
+        if (shouldClose) closedCount += 1;
+      }
+      return Object.freeze({
+        seen: seenCount,
+        missing: missingCount,
+        closed: closedCount,
+        skipped: false,
+      });
+    });
+  }
+
   function upsertMonitorPolicy(input) {
     requireMigration();
     const policy = createMonitorPolicy(input);
@@ -1442,12 +1668,14 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         id, target_type, target_id, queue_lane, priority, schedule_class,
         interval_hours, browser_allowed, search_allowed,
         consecutive_missing_threshold, last_scheduled_at, next_due_at,
-        enabled, reason, created_at, updated_at
+        enabled, reason, student_interest_count, historical_application_score,
+        last_outcome, priority_reasons_json, created_at, updated_at
       ) VALUES (
         @id, @targetType, @targetId, @queueLane, @priority, @scheduleClass,
         @intervalHours, @browserAllowed, @searchAllowed,
         @consecutiveMissingThreshold, @lastScheduledAt, @nextDueAt,
-        @enabled, @reason, @createdAt, @updatedAt
+        @enabled, @reason, @studentInterestCount, @historicalApplicationScore,
+        @lastOutcome, @priorityReasonsJson, @createdAt, @updatedAt
       )
       ON CONFLICT(id) DO UPDATE SET
         queue_lane = excluded.queue_lane,
@@ -1461,6 +1689,20 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         next_due_at = COALESCE(excluded.next_due_at, monitor_policies.next_due_at),
         enabled = excluded.enabled,
         reason = excluded.reason,
+        student_interest_count = MAX(
+          monitor_policies.student_interest_count,
+          excluded.student_interest_count
+        ),
+        historical_application_score = MAX(
+          monitor_policies.historical_application_score,
+          excluded.historical_application_score
+        ),
+        last_outcome = COALESCE(excluded.last_outcome, monitor_policies.last_outcome),
+        priority_reasons_json = CASE
+          WHEN excluded.priority_reasons_json = '[]'
+            THEN monitor_policies.priority_reasons_json
+          ELSE excluded.priority_reasons_json
+        END,
         updated_at = excluded.updated_at
     `).run({
       ...policy,
@@ -1468,6 +1710,7 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       browserAllowed: policy.browserAllowed ? 1 : 0,
       searchAllowed: policy.searchAllowed ? 1 : 0,
       enabled: policy.enabled ? 1 : 0,
+      priorityReasonsJson: encode(policy.priorityReasons, []),
     });
     return mapMonitorPolicy(database.prepare(`
       SELECT * FROM monitor_policies WHERE id = ?
@@ -1641,6 +1884,9 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       qualityReasonsJson: encode(policy.reasons, []),
       applicationVerifiedAt: policy.applicationVerifiedAt,
       dedupeFingerprint: opening.dedupeFingerprint || opening.id,
+      consecutiveMissingCount: 0,
+      lastPresentAt: opening.lastSeenAt || new Date().toISOString(),
+      closedEvidenceJson: encode([], []),
     });
     if (policy.publicationStatus === 'REVIEW_REQUIRED') {
       const existing = statements.openReviewTaskForTarget.get(
@@ -2618,12 +2864,15 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     listSourceEndpoints,
     appendFetchObservation,
     listFetchObservations,
+    appendPageSnapshot,
+    listPageSnapshots,
     replaceVerificationEvidence,
     upsertRecruitmentEvent,
     upsertJobOpening,
     upsertPlatformJobOpening,
     appendJobRevision,
     listJobRevisions,
+    reconcileEndpointOpenings,
     upsertMonitorPolicy,
     listMonitorPolicies,
     upsertReviewTask,

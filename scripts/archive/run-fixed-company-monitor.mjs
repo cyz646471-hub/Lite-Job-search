@@ -2,7 +2,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { prepareFixedCompanyMonitor } from './prepare-fixed-company-monitor.mjs';
-import { runPersistentBrowserSupervisor } from './run-persistent-browser-supervisor.mjs';
+import { runPersistentBrowserSupervisor } from '../run-persistent-browser-supervisor.mjs';
 
 function parseArgs(argv) {
   const values = {};

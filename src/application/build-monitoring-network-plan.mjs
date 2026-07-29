@@ -173,6 +173,7 @@ export function buildMonitoringNetworkPlan({
           actionCount: actions.length,
         }),
         browserAllowed: policy?.browserAllowed === true,
+        consecutiveMissingThreshold: policy?.consecutiveMissingThreshold || 3,
         searchAllowed: false,
         nextDueAt: nextDueAt || null,
         runnable: true,
