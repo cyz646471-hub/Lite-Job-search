@@ -32,3 +32,31 @@ export function assertMarketDiscoveryRepository(repository) {
 }
 
 export { REQUIRED_METHODS as MARKET_DISCOVERY_REPOSITORY_METHODS };
+
+const MONITORING_REQUIRED_METHODS = Object.freeze([
+  ...REQUIRED_METHODS,
+  'upsertSourceEndpoint',
+  'listSourceEndpoints',
+  'appendFetchObservation',
+  'listFetchObservations',
+  'appendJobRevision',
+  'listJobRevisions',
+  'upsertMonitorPolicy',
+  'listMonitorPolicies',
+  'listReviewTasks',
+  'listUserActions',
+  'listProviderCircuitStates',
+]);
+
+export function assertMonitoringNetworkRepository(repository) {
+  for (const method of MONITORING_REQUIRED_METHODS) {
+    if (typeof repository?.[method] !== 'function') {
+      throw new Error(`repository.${method} is required`);
+    }
+  }
+  return repository;
+}
+
+export {
+  MONITORING_REQUIRED_METHODS as MONITORING_NETWORK_REPOSITORY_METHODS,
+};

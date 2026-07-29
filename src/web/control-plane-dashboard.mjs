@@ -70,7 +70,7 @@ export function dashboardHtml() {
   </section>
   <div class="grid">
     <div><section class="panel"><h3>Worker 活动</h3><div id="worker"></div></section><section class="panel"><h3>最近失败公司</h3><div id="recent-failures"></div></section></div>
-    <div><section class="panel"><h3>队列构成</h3><div id="queue"></div></section><section class="panel"><h3>失败原因</h3><div id="failure-reasons"></div></section><section class="panel"><h3>搜索引擎熔断</h3><div id="circuits"></div></section></div>
+    <div><section class="panel"><h3>队列构成</h3><div id="queue"></div></section><section class="panel"><h3>招聘入口监控网络</h3><div id="monitoring-network"></div></section><section class="panel"><h3>失败原因</h3><div id="failure-reasons"></div></section><section class="panel"><h3>搜索引擎熔断</h3><div id="circuits"></div></section></div>
   </div>
   <details><summary>高级控制与原始状态</summary><div class="advanced">
     <section><h3>新建结构化任务</h3><form id="task">
@@ -199,6 +199,8 @@ function render(data){
   el('worker').innerHTML=worker?row('健康状态',badge(healthLabels[health]||health,health==='HEALTHY'?'good':health==='STALE'||health==='CRASHED'?'bad':'warn'))+row('进程',escapeHtml((healthLabels[worker.state]||worker.state)+' · PID '+worker.pid))+row('当前公司',escapeHtml(worker.currentCompany))+row('上个完成',escapeHtml(worker.lastCompletedCompany))+row('最近心跳',escapeHtml(dt(worker.heartbeatAt)+'（'+fmt(worker.heartbeatAgeSeconds)+' 秒前）'))+(worker.lastError?row('最近错误',escapeHtml(worker.lastError)):''):'<div class="empty">当前没有 Worker 记录。</div>';
   el('queue').innerHTML=row('目标',fmt(p.target))+row('已物化',fmt(p.materialized))+row('成功',fmt(p.succeeded))+row('失败',fmt(p.failed))+row('延后',fmt(p.deferred))+row('运行中',fmt(p.running))+row('尚未装载',fmt(p.notMaterialized));
   el('failure-reasons').innerHTML=data.failureReasons?.length?data.failureReasons.slice(0,8).map((x)=>row(x.reason,fmt(x.count))).join(''):'<div class="empty">暂无失败原因。</div>';
+  const network=data.monitoringNetwork||{};const endpoints=network.endpoints||{};const observations=network.observations||{};const revisions=network.jobRevisions||{};const lanes=network.queues||{};
+  el('monitoring-network').innerHTML=row('可监控入口',fmt(endpoints.total)+' · 活跃 '+fmt(endpoints.active))+row('访问受阻入口',fmt(endpoints.blocked))+row('抓取观测',fmt(observations.total)+' · 成功 '+fmt((observations.outcomes||{}).SUCCESS)+' · 未变化 '+fmt((observations.outcomes||{}).NOT_MODIFIED))+row('岗位版本变化',fmt(revisions.changed)+' / '+fmt(revisions.total))+row('入口监控队列',fmt(lanes.PORTAL_MONITOR))+row('入口恢复队列',fmt(lanes.PORTAL_RECOVERY))+row('市场补充队列',fmt(lanes.MARKET_DISCOVERY))+row('审核反馈队列',fmt(lanes.REVIEW_FEEDBACK));
   el('circuits').innerHTML=data.circuits?.length?data.circuits.map((x)=>row(x.provider,badge(x.state,x.state==='CLOSED'?'good':x.state==='OPEN'?'bad':'warn')+(x.reasonCode?' · '+escapeHtml(x.reasonCode):''))).join(''):'<div class="empty">当前没有搜索引擎熔断记录。</div>';
   el('recent-failures').innerHTML=data.recentFailures?.length?'<table><thead><tr><th>公司</th><th>原因</th><th>尝试</th><th>时间</th></tr></thead><tbody>'+data.recentFailures.map((x)=>'<tr><td>'+escapeHtml(x.company)+'</td><td>'+escapeHtml(x.reason)+'</td><td>'+fmt(x.attemptCount)+'</td><td>'+escapeHtml(dt(x.completedAt))+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">暂无失败记录。</div>';
   el('updated').textContent='数据更新时间 '+dt(data.updatedAt)+' · 页面刷新 '+dt(data.generatedAt);el('raw').textContent=JSON.stringify(data,null,2);

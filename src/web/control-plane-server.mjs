@@ -171,6 +171,19 @@ export function createControlPlaneServer({
         json(response, 200, repository.listProviderCircuitStates());
         return;
       }
+      if (request.method === 'GET' && url.pathname === '/api/monitoring-network') {
+        json(response, 200, {
+          endpoints: repository.listSourceEndpoints(),
+          policies: repository.listMonitorPolicies(),
+          observations: repository.listFetchObservations({
+            limit: url.searchParams.get('limit') || 500,
+          }),
+          jobRevisions: repository.listJobRevisions({
+            limit: url.searchParams.get('limit') || 500,
+          }),
+        });
+        return;
+      }
       if (request.method === 'GET' && url.pathname === '/api/deferred') {
         json(response, 200, repository.listDeferredBatchItems());
         return;

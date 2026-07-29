@@ -6,10 +6,14 @@ import Database from 'better-sqlite3';
 import { canonicalRecruitmentUrl } from '../core/canonical-recruitment-url.mjs';
 
 import { createJobAssignment } from '../domain/job-assignment.mjs';
+import { createJobRevision } from '../domain/job-revision.mjs';
 import { createJobOpening } from '../domain/job-opening.mjs';
 import { evaluateJobPublication } from '../domain/job-publication.mjs';
+import { createFetchObservation } from '../domain/fetch-observation.mjs';
+import { createMonitorPolicy } from '../domain/monitor-policy.mjs';
 import { createRecruitmentEvent } from '../domain/recruitment-event.mjs';
 import { createReviewTask } from '../domain/review-task.mjs';
+import { createSourceEndpoint } from '../domain/source-endpoint.mjs';
 import { createUserAction } from '../domain/user-action.mjs';
 import { assertMarketDiscoveryRepository } from '../ports/job-repository.mjs';
 
@@ -187,6 +191,92 @@ function mapUserAction(row) {
     note: row.note || null,
     triggersReverification: row.triggers_reverification === 1,
     createdAt: row.created_at,
+  };
+}
+
+function mapSourceEndpoint(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    careerPortalId: row.career_portal_id || null,
+    url: row.url,
+    canonicalUrl: row.canonical_url,
+    endpointKind: row.endpoint_kind,
+    transport: row.transport,
+    adapterType: row.adapter_type || null,
+    state: row.state,
+    intervalHours: Number(row.interval_hours),
+    etag: row.etag || null,
+    lastModified: row.last_modified || null,
+    contentHash: row.content_hash || null,
+    structureHash: row.structure_hash || null,
+    lastCheckedAt: row.last_checked_at || null,
+    lastSuccessAt: row.last_success_at || null,
+    nextCheckAt: row.next_check_at || null,
+    consecutiveFailures: Number(row.consecutive_failures) || 0,
+    metadata: decode(row.metadata_json, {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapFetchObservation(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    sourceEndpointId: row.source_endpoint_id,
+    runId: row.run_id || null,
+    fetchedAt: row.fetched_at,
+    outcome: row.outcome,
+    httpStatus: row.http_status,
+    finalUrl: row.final_url || null,
+    contentHash: row.content_hash || null,
+    structureHash: row.structure_hash || null,
+    pageRole: row.page_role,
+    hiringAvailability: row.hiring_availability,
+    jobCount: Number(row.job_count) || 0,
+    reasonCode: row.reason_code || null,
+    evidence: decode(row.evidence_json, []),
+    snapshotPath: row.snapshot_path || null,
+    durationMs: row.duration_ms,
+    metadata: decode(row.metadata_json, {}),
+  };
+}
+
+function mapJobRevision(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    jobId: row.job_id,
+    observationId: row.observation_id || null,
+    revisionHash: row.revision_hash,
+    changeType: row.change_type,
+    fields: decode(row.fields_json, {}),
+    changedFields: decode(row.changed_fields_json, []),
+    observedAt: row.observed_at,
+  };
+}
+
+function mapMonitorPolicy(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    queueLane: row.queue_lane,
+    priority: Number(row.priority),
+    scheduleClass: row.schedule_class,
+    intervalHours: Number(row.interval_hours),
+    browserAllowed: row.browser_allowed === 1,
+    searchAllowed: row.search_allowed === 1,
+    consecutiveMissingThreshold: Number(row.consecutive_missing_threshold),
+    lastScheduledAt: row.last_scheduled_at || null,
+    nextDueAt: row.next_due_at || null,
+    enabled: row.enabled === 1,
+    reason: row.reason || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -1024,8 +1114,391 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
       if (normalizedPortal.verificationStatus !== 'VERIFIED' && !validPlatformPortal) {
         statements.deletePortalOpenings.run(targetPortalId);
       }
-      return listCareerPortals().find((item) => item.id === targetPortalId);
+      const storedPortal = listCareerPortals().find((item) => item.id === targetPortalId);
+      if (
+        storedPortal
+        && storedPortal.sourceTier !== 'PLATFORM_ONLY'
+        && !storedPortal.supersededByPortalId
+        && ['VERIFIED', 'REVIEW', 'BLOCKED'].includes(storedPortal.verificationStatus)
+      ) {
+        const endpoint = upsertSourceEndpoint({
+          companyId: storedPortal.companyId,
+          careerPortalId: storedPortal.id,
+          url: storedPortal.canonicalUrl,
+          endpointKind: ['JOB_LIST', 'CAMPAIGN'].includes(storedPortal.pageType)
+            ? 'JOB_LIST'
+            : storedPortal.sourceTier === 'OFFICIAL_SOCIAL'
+              ? 'OFFICIAL_SOCIAL'
+              : 'CAREER_PORTAL',
+          transport: storedPortal.sourceTier === 'OFFICIAL_SOCIAL'
+            ? 'SOCIAL'
+            : storedPortal.atsType
+              ? 'ATS_ADAPTER'
+              : 'HTTP',
+          adapterType: storedPortal.atsType || null,
+          state: storedPortal.verificationStatus === 'BLOCKED'
+            ? 'BLOCKED'
+            : 'ACTIVE',
+          intervalHours: storedPortal.hiringAvailability === 'OPENINGS_FOUND' ? 48 : 168,
+          lastCheckedAt: storedPortal.lastCheckedAt,
+          lastSuccessAt: storedPortal.verificationStatus === 'VERIFIED'
+            ? storedPortal.lastCheckedAt || storedPortal.lastVerifiedAt
+            : null,
+          nextCheckAt: storedPortal.lastCheckedAt,
+          metadata: {
+            sourceTier: storedPortal.sourceTier,
+            pageType: storedPortal.pageType,
+            verificationStatus: storedPortal.verificationStatus,
+          },
+          createdAt: storedPortal.firstSeenAt,
+          updatedAt: storedPortal.lastCheckedAt || storedPortal.firstSeenAt,
+        });
+        upsertMonitorPolicy({
+          targetType: 'SOURCE_ENDPOINT',
+          targetId: endpoint.id,
+          queueLane: storedPortal.verificationStatus === 'VERIFIED'
+            ? 'PORTAL_MONITOR'
+            : 'PORTAL_RECOVERY',
+          priority: storedPortal.hiringAvailability === 'OPENINGS_FOUND' ? 90 : 60,
+          scheduleClass: storedPortal.hiringAvailability === 'OPENINGS_FOUND'
+            ? 'RECRUITING_SEASON'
+            : 'STANDARD',
+          intervalHours: endpoint.intervalHours,
+          browserAllowed: storedPortal.verificationStatus !== 'VERIFIED'
+            || endpoint.transport === 'BROWSER',
+          searchAllowed: false,
+          consecutiveMissingThreshold: 3,
+          nextDueAt: endpoint.nextCheckAt,
+          reason: 'career_portal_sync',
+          createdAt: endpoint.createdAt,
+          updatedAt: endpoint.updatedAt,
+        });
+      }
+      return storedPortal;
     });
+  }
+
+  function upsertSourceEndpoint(input) {
+    requireMigration();
+    const endpoint = createSourceEndpoint(input);
+    const company = database.prepare('SELECT id FROM companies WHERE id = ?').get(endpoint.companyId);
+    if (!company) throw new Error(`unknown Company for SourceEndpoint: ${endpoint.companyId}`);
+    if (endpoint.careerPortalId) {
+      const portal = database.prepare(`
+        SELECT id, company_id FROM career_portals WHERE id = ?
+      `).get(endpoint.careerPortalId);
+      if (!portal || portal.company_id !== endpoint.companyId) {
+        throw new Error('SourceEndpoint CareerPortal must belong to its Company');
+      }
+    }
+    const existing = database.prepare(`
+      SELECT * FROM source_endpoints
+      WHERE company_id = ? AND canonical_url = ?
+    `).get(endpoint.companyId, endpoint.canonicalUrl);
+    const targetId = existing?.id || endpoint.id;
+    database.prepare(`
+      INSERT INTO source_endpoints (
+        id, company_id, career_portal_id, url, canonical_url, endpoint_kind,
+        transport, adapter_type, state, interval_hours, etag, last_modified,
+        content_hash, structure_hash, last_checked_at, last_success_at,
+        next_check_at, consecutive_failures, metadata_json, created_at, updated_at
+      ) VALUES (
+        @id, @companyId, @careerPortalId, @url, @canonicalUrl, @endpointKind,
+        @transport, @adapterType, @state, @intervalHours, @etag, @lastModified,
+        @contentHash, @structureHash, @lastCheckedAt, @lastSuccessAt,
+        @nextCheckAt, @consecutiveFailures, @metadataJson, @createdAt, @updatedAt
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        career_portal_id = COALESCE(excluded.career_portal_id, source_endpoints.career_portal_id),
+        url = excluded.url,
+        canonical_url = excluded.canonical_url,
+        endpoint_kind = excluded.endpoint_kind,
+        transport = excluded.transport,
+        adapter_type = COALESCE(excluded.adapter_type, source_endpoints.adapter_type),
+        state = excluded.state,
+        interval_hours = excluded.interval_hours,
+        etag = COALESCE(excluded.etag, source_endpoints.etag),
+        last_modified = COALESCE(excluded.last_modified, source_endpoints.last_modified),
+        content_hash = COALESCE(excluded.content_hash, source_endpoints.content_hash),
+        structure_hash = COALESCE(excluded.structure_hash, source_endpoints.structure_hash),
+        last_checked_at = COALESCE(excluded.last_checked_at, source_endpoints.last_checked_at),
+        last_success_at = COALESCE(excluded.last_success_at, source_endpoints.last_success_at),
+        next_check_at = COALESCE(excluded.next_check_at, source_endpoints.next_check_at),
+        consecutive_failures = excluded.consecutive_failures,
+        metadata_json = excluded.metadata_json,
+        updated_at = excluded.updated_at
+    `).run({
+      ...endpoint,
+      id: targetId,
+      metadataJson: encode(endpoint.metadata, {}),
+    });
+    return mapSourceEndpoint(database.prepare(`
+      SELECT * FROM source_endpoints WHERE id = ?
+    `).get(targetId));
+  }
+
+  function listSourceEndpoints({
+    companyId = null,
+    careerPortalId = null,
+    state = null,
+    dueAt = null,
+  } = {}) {
+    requireMigration();
+    const clauses = [];
+    const values = [];
+    if (companyId) {
+      clauses.push('company_id = ?');
+      values.push(companyId);
+    }
+    if (careerPortalId) {
+      clauses.push('career_portal_id = ?');
+      values.push(careerPortalId);
+    }
+    if (state) {
+      clauses.push('state = ?');
+      values.push(state);
+    }
+    if (dueAt) {
+      clauses.push('(next_check_at IS NULL OR next_check_at <= ?)');
+      values.push(dueAt);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return database.prepare(`
+      SELECT * FROM source_endpoints ${where}
+      ORDER BY COALESCE(next_check_at, ''), company_id, canonical_url
+    `).all(...values).map(mapSourceEndpoint);
+  }
+
+  function appendFetchObservation(input) {
+    requireMigration();
+    const observation = createFetchObservation(input);
+    const endpoint = database.prepare(`
+      SELECT * FROM source_endpoints WHERE id = ?
+    `).get(observation.sourceEndpointId);
+    if (!endpoint) throw new Error(`unknown SourceEndpoint: ${observation.sourceEndpointId}`);
+    database.prepare(`
+      INSERT INTO fetch_observations (
+        id, source_endpoint_id, run_id, fetched_at, outcome, http_status,
+        final_url, content_hash, structure_hash, page_role,
+        hiring_availability, job_count, reason_code, evidence_json,
+        snapshot_path, duration_ms, metadata_json
+      ) VALUES (
+        @id, @sourceEndpointId, @runId, @fetchedAt, @outcome, @httpStatus,
+        @finalUrl, @contentHash, @structureHash, @pageRole,
+        @hiringAvailability, @jobCount, @reasonCode, @evidenceJson,
+        @snapshotPath, @durationMs, @metadataJson
+      )
+    `).run({
+      ...observation,
+      evidenceJson: encode(observation.evidence, []),
+      metadataJson: encode(observation.metadata, {}),
+    });
+    const succeeded = ['SUCCESS', 'NOT_MODIFIED', 'NO_OPENINGS'].includes(
+      observation.outcome,
+    );
+    const blocked = observation.outcome === 'BLOCKED';
+    const failures = succeeded ? 0 : Number(endpoint.consecutive_failures || 0) + 1;
+    const intervalHours = Number(endpoint.interval_hours) || 168;
+    const delayHours = succeeded
+      ? intervalHours
+      : Math.min(24 * 7, Math.max(4, 2 ** Math.min(7, failures)));
+    const nextCheckAt = new Date(
+      Date.parse(observation.fetchedAt) + delayHours * 3_600_000,
+    ).toISOString();
+    const verifiedPortal = endpoint.career_portal_id
+      ? database.prepare(`
+          SELECT verification_status
+          FROM career_portals
+          WHERE id = ?
+        `).get(endpoint.career_portal_id)?.verification_status === 'VERIFIED'
+      : false;
+    const queueLane = succeeded && verifiedPortal
+      ? 'PORTAL_MONITOR'
+      : 'PORTAL_RECOVERY';
+    database.prepare(`
+      UPDATE source_endpoints
+      SET state = @state,
+          etag = COALESCE(@etag, etag),
+          last_modified = COALESCE(@lastModified, last_modified),
+          content_hash = COALESCE(@contentHash, content_hash),
+          structure_hash = COALESCE(@structureHash, structure_hash),
+          last_checked_at = @lastCheckedAt,
+          last_success_at = CASE WHEN @succeeded = 1 THEN @lastCheckedAt ELSE last_success_at END,
+          next_check_at = @nextCheckAt,
+          consecutive_failures = @consecutiveFailures,
+          updated_at = @lastCheckedAt
+      WHERE id = @id
+    `).run({
+      id: endpoint.id,
+      state: blocked ? 'BLOCKED' : endpoint.state === 'RETIRED' ? 'RETIRED' : 'ACTIVE',
+      etag: observation.metadata.etag || null,
+      lastModified: observation.metadata.lastModified || null,
+      contentHash: observation.contentHash,
+      structureHash: observation.structureHash,
+      lastCheckedAt: observation.fetchedAt,
+      succeeded: succeeded ? 1 : 0,
+      nextCheckAt,
+      consecutiveFailures: failures,
+    });
+    database.prepare(`
+      UPDATE monitor_policies
+      SET next_due_at = @nextCheckAt,
+          queue_lane = @queueLane,
+          browser_allowed = @browserAllowed,
+          updated_at = @updatedAt
+      WHERE target_type = 'SOURCE_ENDPOINT'
+        AND target_id = @targetId
+    `).run({
+      nextCheckAt,
+      queueLane,
+      browserAllowed: queueLane === 'PORTAL_RECOVERY' ? 1 : 0,
+      updatedAt: observation.fetchedAt,
+      targetId: endpoint.id,
+    });
+    return mapFetchObservation(database.prepare(`
+      SELECT * FROM fetch_observations WHERE id = ?
+    `).get(observation.id));
+  }
+
+  function listFetchObservations({
+    sourceEndpointId = null,
+    outcome = null,
+    limit = 500,
+  } = {}) {
+    requireMigration();
+    const clauses = [];
+    const values = [];
+    if (sourceEndpointId) {
+      clauses.push('source_endpoint_id = ?');
+      values.push(sourceEndpointId);
+    }
+    if (outcome) {
+      clauses.push('outcome = ?');
+      values.push(outcome);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    values.push(Math.max(1, Math.min(5000, Math.trunc(Number(limit) || 500))));
+    return database.prepare(`
+      SELECT * FROM fetch_observations ${where}
+      ORDER BY fetched_at DESC, id
+      LIMIT ?
+    `).all(...values).map(mapFetchObservation);
+  }
+
+  function appendJobRevision(input) {
+    requireMigration();
+    const revision = createJobRevision(input);
+    if (!database.prepare('SELECT id FROM job_openings WHERE id = ?').get(revision.jobId)) {
+      throw new Error(`unknown JobOpening for JobRevision: ${revision.jobId}`);
+    }
+    database.prepare(`
+      INSERT OR IGNORE INTO job_revisions (
+        id, job_id, observation_id, revision_hash, change_type,
+        fields_json, changed_fields_json, observed_at
+      ) VALUES (
+        @id, @jobId, @observationId, @revisionHash, @changeType,
+        @fieldsJson, @changedFieldsJson, @observedAt
+      )
+    `).run({
+      ...revision,
+      fieldsJson: encode(revision.fields, {}),
+      changedFieldsJson: encode(revision.changedFields, []),
+    });
+    return database.prepare(`
+      SELECT * FROM job_revisions
+      WHERE job_id = ? AND revision_hash = ? AND change_type = ?
+    `).all(revision.jobId, revision.revisionHash, revision.changeType)
+      .map(mapJobRevision)[0] || revision;
+  }
+
+  function listJobRevisions({ jobId = null, limit = 1000 } = {}) {
+    requireMigration();
+    const bounded = Math.max(1, Math.min(5000, Math.trunc(Number(limit) || 1000)));
+    const rows = jobId
+      ? database.prepare(`
+          SELECT * FROM job_revisions
+          WHERE job_id = ?
+          ORDER BY observed_at DESC, id
+          LIMIT ?
+        `).all(jobId, bounded)
+      : database.prepare(`
+          SELECT * FROM job_revisions
+          ORDER BY observed_at DESC, id
+          LIMIT ?
+        `).all(bounded);
+    return rows.map(mapJobRevision);
+  }
+
+  function upsertMonitorPolicy(input) {
+    requireMigration();
+    const policy = createMonitorPolicy(input);
+    const existing = database.prepare(`
+      SELECT * FROM monitor_policies
+      WHERE target_type = ? AND target_id = ?
+    `).get(policy.targetType, policy.targetId);
+    const targetId = existing?.id || policy.id;
+    database.prepare(`
+      INSERT INTO monitor_policies (
+        id, target_type, target_id, queue_lane, priority, schedule_class,
+        interval_hours, browser_allowed, search_allowed,
+        consecutive_missing_threshold, last_scheduled_at, next_due_at,
+        enabled, reason, created_at, updated_at
+      ) VALUES (
+        @id, @targetType, @targetId, @queueLane, @priority, @scheduleClass,
+        @intervalHours, @browserAllowed, @searchAllowed,
+        @consecutiveMissingThreshold, @lastScheduledAt, @nextDueAt,
+        @enabled, @reason, @createdAt, @updatedAt
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        queue_lane = excluded.queue_lane,
+        priority = excluded.priority,
+        schedule_class = excluded.schedule_class,
+        interval_hours = excluded.interval_hours,
+        browser_allowed = excluded.browser_allowed,
+        search_allowed = excluded.search_allowed,
+        consecutive_missing_threshold = excluded.consecutive_missing_threshold,
+        last_scheduled_at = COALESCE(excluded.last_scheduled_at, monitor_policies.last_scheduled_at),
+        next_due_at = COALESCE(excluded.next_due_at, monitor_policies.next_due_at),
+        enabled = excluded.enabled,
+        reason = excluded.reason,
+        updated_at = excluded.updated_at
+    `).run({
+      ...policy,
+      id: targetId,
+      browserAllowed: policy.browserAllowed ? 1 : 0,
+      searchAllowed: policy.searchAllowed ? 1 : 0,
+      enabled: policy.enabled ? 1 : 0,
+    });
+    return mapMonitorPolicy(database.prepare(`
+      SELECT * FROM monitor_policies WHERE id = ?
+    `).get(targetId));
+  }
+
+  function listMonitorPolicies({
+    queueLane = null,
+    enabled = null,
+    dueAt = null,
+  } = {}) {
+    requireMigration();
+    const clauses = [];
+    const values = [];
+    if (queueLane) {
+      clauses.push('queue_lane = ?');
+      values.push(queueLane);
+    }
+    if (enabled != null) {
+      clauses.push('enabled = ?');
+      values.push(enabled ? 1 : 0);
+    }
+    if (dueAt) {
+      clauses.push('(next_due_at IS NULL OR next_due_at <= ?)');
+      values.push(dueAt);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return database.prepare(`
+      SELECT * FROM monitor_policies ${where}
+      ORDER BY priority DESC, COALESCE(next_due_at, ''), id
+    `).all(...values).map(mapMonitorPolicy);
   }
 
   function replaceVerificationEvidence(careerPortalId, evidence = []) {
@@ -1102,7 +1575,45 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     return event;
   }
 
+  function openingRevisionFields(opening, sourceTier, policy) {
+    return {
+      title: opening.title,
+      normalizedTitle: opening.normalizedTitle,
+      roleFamily: opening.roleFamily,
+      locations: [...(opening.locations || [])],
+      employmentType: opening.employmentType || null,
+      publishedAt: opening.publishedAt || null,
+      closesAt: opening.closesAt || null,
+      jobDetailUrl: opening.jobDetailUrl || null,
+      applyUrl: opening.applyUrl || null,
+      status: opening.status,
+      sourceTier,
+      recruitmentEventId: opening.recruitmentEventId || null,
+      qualityGrade: policy.qualityGrade,
+      publicationStatus: policy.publicationStatus,
+    };
+  }
+
+  function changedOpeningFields(previous, next) {
+    if (!previous) return Object.keys(next);
+    const previousFields = openingRevisionFields(
+      previous,
+      previous.sourceTier,
+      {
+        qualityGrade: previous.qualityGrade,
+        publicationStatus: previous.publicationStatus,
+      },
+    );
+    return Object.keys(next).filter((key) => (
+      JSON.stringify(previousFields[key]) !== JSON.stringify(next[key])
+    ));
+  }
+
   function writeOpening(opening, sourceTier, portalRow, eventRow = null) {
+    const previousRow = database.prepare(`
+      SELECT * FROM job_openings WHERE id = ?
+    `).get(opening.id);
+    const previous = previousRow ? mapOpening(previousRow) : null;
     const policy = evaluateJobPublication({
       opening: { ...opening, sourceTier },
       portal: {
@@ -1154,6 +1665,24 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
         updatedAt: opening.lastSeenAt || new Date().toISOString(),
       });
     }
+    const fields = openingRevisionFields(opening, sourceTier, policy);
+    const changedFields = changedOpeningFields(previous, fields);
+    const changeType = !previous
+      ? 'DISCOVERED'
+      : previous.status === 'CLOSED' && opening.status === 'ACTIVE'
+        ? 'REOPENED'
+        : previous.status !== 'CLOSED' && opening.status === 'CLOSED'
+          ? 'CLOSED'
+          : changedFields.length
+            ? 'UPDATED'
+            : 'SEEN';
+    appendJobRevision({
+      jobId: opening.id,
+      changeType,
+      fields,
+      changedFields,
+      observedAt: opening.lastSeenAt || new Date().toISOString(),
+    });
     return Object.freeze({ ...opening, ...policy, dedupeFingerprint: opening.id });
   }
 
@@ -2085,10 +2614,18 @@ export function openSqliteMarketDiscoveryRepository({ file } = {}) {
     completeRun,
     upsertCompany,
     upsertCareerPortal,
+    upsertSourceEndpoint,
+    listSourceEndpoints,
+    appendFetchObservation,
+    listFetchObservations,
     replaceVerificationEvidence,
     upsertRecruitmentEvent,
     upsertJobOpening,
     upsertPlatformJobOpening,
+    appendJobRevision,
+    listJobRevisions,
+    upsertMonitorPolicy,
+    listMonitorPolicies,
     upsertReviewTask,
     listReviewTasks,
     upsertJobAssignment,

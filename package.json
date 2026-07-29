@@ -1,6 +1,6 @@
 {
   "name": "lite-job-search",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Standalone China and North America job discovery, official-site verification and ATS crawling skill.",
   "type": "module",
   "private": false,
@@ -50,7 +50,10 @@
     "audit:company-regions": "node ./scripts/audit-company-market-regions.mjs",
     "repair:recruitment-data": "node ./scripts/repair-existing-recruitment-data.mjs",
     "report:product-closure": "node ./scripts/report-product-closure.mjs",
-    "maintenance:series": "node ./scripts/run-full-maintenance-series.mjs"
+    "maintenance:series": "node ./scripts/run-full-maintenance-series.mjs",
+    "monitor:network:prepare": "node ./scripts/prepare-monitoring-network.mjs",
+    "monitor:endpoints": "node ./scripts/run-known-endpoint-monitor.mjs",
+    "audit:cn-ats": "node ./scripts/audit-cn-ats-coverage.mjs"
   },
   "engines": {
     "node": ">=20"

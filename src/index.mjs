@@ -16,12 +16,37 @@ export { FileSearchCache, MemorySearchCache } from './runtime/cache.mjs';
 export { loadRuntimeConfig } from './runtime/config.mjs';
 export { discoverMarketJobs } from './application/discover-market-jobs.mjs';
 export { createSearchIntent } from './domain/search-intent.mjs';
+export {
+  createSourceEndpoint,
+  stableSourceEndpointId,
+  SOURCE_ENDPOINT_KINDS,
+  SOURCE_ENDPOINT_STATES,
+  SOURCE_ENDPOINT_TRANSPORTS,
+} from './domain/source-endpoint.mjs';
+export {
+  createFetchObservation,
+  FETCH_OUTCOMES,
+  OBSERVED_PAGE_ROLES,
+} from './domain/fetch-observation.mjs';
+export {
+  createJobRevision,
+  JOB_REVISION_TYPES,
+} from './domain/job-revision.mjs';
+export {
+  createMonitorPolicy,
+  MONITOR_QUEUE_LANES,
+  MONITOR_SCHEDULE_CLASSES,
+  MONITOR_TARGET_TYPES,
+} from './domain/monitor-policy.mjs';
 export { verifyCareerPortal } from './verification/verification-engine.mjs';
 export { openSqliteMarketDiscoveryRepository } from './storage/sqlite-job-repository.mjs';
 export { createMarketDiscoveryRuntime } from './runtime/create-market-discovery-runtime.mjs';
 export { resolveOccupationTaxonomy } from './taxonomy/occupation-taxonomy.mjs';
 export { buildQualityReport } from './quality/quality-report.mjs';
 export { runDiscoveryBatch } from './application/run-discovery-batch.mjs';
+export { buildMonitoringNetworkPlan } from './application/build-monitoring-network-plan.mjs';
+export { buildCnAtsCoverageReport } from './application/build-cn-ats-coverage-report.mjs';
+export { runKnownEndpointMonitor } from './application/run-known-endpoint-monitor.mjs';
 
 export {
   discoverCompanySites,

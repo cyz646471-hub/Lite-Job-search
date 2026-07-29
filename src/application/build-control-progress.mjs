@@ -123,6 +123,30 @@ export function buildControlProgress({
     .filter((event) => !scopeEnabled || scopedCompanyIds.has(event.companyId));
   const jobs = repository.listJobOpenings()
     .filter((job) => !scopeEnabled || scopedCompanyIds.has(job.companyId));
+  const sourceEndpoints = typeof repository.listSourceEndpoints === 'function'
+    ? repository.listSourceEndpoints()
+      .filter((endpoint) => !scopeEnabled || scopedCompanyIds.has(endpoint.companyId))
+    : [];
+  const endpointIds = new Set(sourceEndpoints.map((endpoint) => endpoint.id));
+  const fetchObservations = typeof repository.listFetchObservations === 'function'
+    ? repository.listFetchObservations({ limit: 5000 })
+      .filter((observation) => endpointIds.has(observation.sourceEndpointId))
+    : [];
+  const jobIds = new Set(jobs.map((job) => job.id));
+  const jobRevisions = typeof repository.listJobRevisions === 'function'
+    ? repository.listJobRevisions({ limit: 5000 })
+      .filter((revision) => jobIds.has(revision.jobId))
+    : [];
+  const monitorPolicies = typeof repository.listMonitorPolicies === 'function'
+    ? repository.listMonitorPolicies().filter((policy) => {
+      if (!scopeEnabled) return true;
+      if (policy.targetType === 'COMPANY') return scopedCompanyIds.has(policy.targetId);
+      if (policy.targetType === 'SOURCE_ENDPOINT') return endpointIds.has(policy.targetId);
+      return portals.some((portal) => (
+        portal.id === policy.targetId && scopedCompanyIds.has(portal.companyId)
+      ));
+    })
+    : [];
   const activePortals = portals.filter((portal) => !portal.supersededByPortalId);
   const candidatePortalCompanies = new Set(activePortals.map((portal) => portal.companyId).filter(Boolean));
   const verifiedEntryCompanies = new Set(activePortals
@@ -274,6 +298,26 @@ export function buildControlProgress({
       verifiedPortals: activePortals.filter((portal) => portal.verificationStatus === 'VERIFIED').length,
       recruitmentEvents: events.length,
       jobOpenings: jobs.length,
+    },
+    monitoringNetwork: {
+      endpoints: {
+        total: sourceEndpoints.length,
+        active: sourceEndpoints.filter((endpoint) => endpoint.state === 'ACTIVE').length,
+        blocked: sourceEndpoints.filter((endpoint) => endpoint.state === 'BLOCKED').length,
+      },
+      observations: {
+        total: fetchObservations.length,
+        outcomes: countBy(fetchObservations, (observation) => observation.outcome),
+      },
+      jobRevisions: {
+        total: jobRevisions.length,
+        changed: jobRevisions.filter((revision) => revision.changeType !== 'SEEN').length,
+        changeTypes: countBy(jobRevisions, (revision) => revision.changeType),
+      },
+      queues: countBy(
+        monitorPolicies.filter((policy) => policy.enabled),
+        (policy) => policy.queueLane,
+      ),
     },
     timing,
     failureReasons,
